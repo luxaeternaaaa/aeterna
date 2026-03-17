@@ -1,0 +1,48 @@
+[
+  {
+    "id": "latency-lgbm-v1",
+    "name": "Latency Spike Predictor",
+    "family": "LightGBM",
+    "version": "1.0.0",
+    "created_at": "2026-03-16T09:00:00Z",
+    "metrics": {
+      "synthetic_accuracy": 0.82,
+      "synthetic_precision": 0.78,
+      "synthetic_recall": 0.76
+    },
+    "status": "active",
+    "artifact_path": "ml/models/latency_model.onnx",
+    "metadata_path": "ml/models/latency_model.metadata.json",
+    "shap_preview_path": "ml/shap/latest.json",
+    "notes": "Falls back to metadata-driven inference when the ONNX artifact is unavailable.",
+    "inference_mode": "metadata-fallback"
+  },
+  {
+    "id": "anomaly-ae-v1",
+    "name": "Network Autoencoder",
+    "family": "PyTorch",
+    "version": "1.0.0",
+    "created_at": "2026-03-16T09:05:00Z",
+    "metrics": {
+      "reconstruction_auc": 0.87,
+      "false_positive_rate": 0.11
+    },
+    "status": "ready",
+    "notes": "Baseline anomaly detector remains heuristic until the exported autoencoder artifact is added.",
+    "inference_mode": "heuristic"
+  },
+  {
+    "id": "security-clf-v1",
+    "name": "Suspicious Event Classifier",
+    "family": "scikit-learn",
+    "version": "1.0.0",
+    "created_at": "2026-03-16T09:10:00Z",
+    "metrics": {
+      "accuracy": 0.89,
+      "precision": 0.84
+    },
+    "status": "ready",
+    "notes": "Local suspicious-session classifier is still summary-only in the current desktop baseline.",
+    "inference_mode": "heuristic"
+  }
+]

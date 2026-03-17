@@ -1,0 +1,10 @@
+{
+  "privacy_mode": "local-only",
+  "telemetry_retention_days": 14,
+  "sampling_interval_seconds": 5,
+  "active_profile": "balanced",
+  "allow_outbound_sync": false,
+  "telemetry_mode": "demo",
+  "automation_mode": "manual",
+  "automation_allowlist": []
+}

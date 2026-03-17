@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "build_timestamp": "2026-03-17T19:13:54.113326+00:00",
+  "git_commit": "development",
+  "runtime_schema_version": "3.0.0",
+  "sidecar_protocol_version": "3"
+}

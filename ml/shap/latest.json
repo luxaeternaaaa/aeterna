@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-03-17T19:13:54.329055+00:00",
+  "source": "metadata-fallback",
+  "summary": [
+    "frametime_ms dominates short-window spike risk.",
+    "cpu_usage and background_process_count are the strongest scheduler features."
+  ]
+}

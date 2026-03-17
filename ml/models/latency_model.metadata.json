@@ -1,0 +1,34 @@
+{
+  "version": "latency-fallback-v2",
+  "updated_at": "2026-03-17T19:13:54.329055+00:00",
+  "model_source": "metadata-fallback",
+  "metrics": {
+    "synthetic_accuracy": 0.82,
+    "synthetic_precision": 0.78,
+    "synthetic_recall": 0.76
+  },
+  "weights": {
+    "cpu_usage": 0.803,
+    "gpu_usage": 0.348,
+    "ram_usage": 0.286,
+    "frametime_ms": 2.282,
+    "background_process_count": 0.9494,
+    "anomaly_score": 0.8687
+  },
+  "intercept": -1.45,
+  "shap_preview": [
+    "frametime_ms dominates short-window spike risk.",
+    "cpu_usage and background_process_count are the strongest scheduler features."
+  ],
+  "recommendation_map": {
+    "process_priority": [
+      "Foreground scheduler pressure is elevated for the next window."
+    ],
+    "cpu_affinity": [
+      "CPU contention is rising faster than GPU load."
+    ],
+    "power_plan": [
+      "Frame time is drifting upward and sustained clocks may help."
+    ]
+  }
+}

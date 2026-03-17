@@ -1,0 +1,9 @@
+{
+  "telemetry_collect": false,
+  "network_optimizer": false,
+  "anomaly_detection": false,
+  "auto_security_scan": false,
+  "cloud_features": false,
+  "cloud_training": false
+}
+
