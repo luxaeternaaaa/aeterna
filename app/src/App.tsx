@@ -7,6 +7,7 @@ import { TweakPreviewModal } from './components/TweakPreviewModal'
 import { api } from './lib/api'
 import { readStartupCache, writeStartupCache } from './lib/cache'
 import { featureConsent } from './lib/consent'
+import { getPageChrome, type ThemeMode } from './lib/pageChrome'
 import {
   applyOptimizationTweak,
   attachOptimizationSession,
@@ -24,10 +25,13 @@ import { SecurityPage } from './pages/SecurityPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type {
   ApplyTweakRequest,
+  BenchmarkReport,
+  BenchmarkWindow,
   BootstrapPayload,
   BuildMetadata,
   DashboardPayload,
   FeatureFlags,
+  GameProfile,
   LogRecord,
   MlInferencePayload,
   ModelRecord,
@@ -39,12 +43,22 @@ import type {
   StartupDiagnostics,
   SystemSettings,
   TelemetryPoint,
+  TrustStatusPresentation,
 } from './types'
 
 type ConnectionState = { title: string; detail: string }
 type PendingConsent = { description: string; key: keyof FeatureFlags; title: string }
 type LoadedState = { dashboard: boolean; logs: boolean; optimization: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
-type PendingTweak = { changes: string[]; description: string; request: ApplyTweakRequest; risk: string; title: string }
+type PendingTweak = { changes: string[]; description: string; request: ApplyTweakRequest; risk: string; title: string; trust: TrustStatusPresentation }
+
+const THEME_STORAGE_KEY = 'aeterna-theme'
+
+function readInitialTheme(): ThemeMode {
+  if (typeof window === 'undefined') return 'light'
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+  if (stored === 'dark' || stored === 'light') return stored
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 const initialFlags: FeatureFlags = {
   telemetry_collect: false,
@@ -94,7 +108,7 @@ const initialOptimizationRuntime: OptimizationRuntimeState = {
 }
 const initialBuild: BuildMetadata = {
   version: '1.0.0',
-  build_timestamp: '1970-01-01T00:00:00Z',
+  build_timestamp: '',
   git_commit: 'development',
   runtime_schema_version: '3.0.0',
   sidecar_protocol_version: '3',
@@ -111,13 +125,17 @@ export default function App() {
   const bootStarted = useRef(false)
   const bootstrapRef = useRef<BootstrapPayload | null>(cache?.bootstrap ?? null)
   const dashboardRef = useRef<DashboardPayload | null>(cache?.dashboard ?? null)
+  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme)
   const [activePage, setActivePage] = useState<PageId>('dashboard')
   const [connection, setConnection] = useState<ConnectionState>(initialConnection(cache?.bootstrap ?? null))
   const [dashboard, setDashboard] = useState(cache?.dashboard ?? initialDashboard)
   const [featureFlags, setFeatureFlags] = useState(cache?.bootstrap?.settings.feature_flags ?? initialFlags)
   const [settings, setSettings] = useState(cache?.bootstrap?.settings.system ?? initialSystem)
   const [models, setModels] = useState<ModelRecord[]>(cache?.bootstrap?.models ?? [])
+  const [profiles, setProfiles] = useState<GameProfile[]>(cache?.bootstrap?.profiles ?? [])
   const [build, setBuild] = useState<BuildMetadata>(cache?.bootstrap?.build ?? initialBuild)
+  const [benchmarkBaseline, setBenchmarkBaseline] = useState<BenchmarkWindow | null>(cache?.bootstrap?.benchmark_baseline ?? null)
+  const [latestBenchmark, setLatestBenchmark] = useState<BenchmarkReport | null>(cache?.bootstrap?.latest_benchmark ?? null)
   const [logs, setLogs] = useState<LogRecord[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>(cache?.bootstrap?.last_snapshot_meta ? [cache.bootstrap.last_snapshot_meta] : [])
   const [security, setSecurity] = useState<SecuritySummary>(initialSecurity)
@@ -131,6 +149,7 @@ export default function App() {
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
   const [pendingTweak, setPendingTweak] = useState<PendingTweak | null>(null)
+  const [benchmarkBusy, setBenchmarkBusy] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
     logs: false,
@@ -139,13 +158,29 @@ export default function App() {
     security: false,
     snapshots: Boolean(cache?.bootstrap?.last_snapshot_meta),
   })
+  const undoReadyCount = optimizationRuntime.activity.filter((entry) => entry.can_undo).length
+  const pageChrome = getPageChrome({
+    activePage,
+    connectionTitle: connection.title,
+    logs,
+    models,
+    optimizationRuntime,
+    security,
+    session,
+    settings,
+    theme,
+    undoReadyCount,
+  })
 
   const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
     setFeatureFlags(nextBootstrap.settings.feature_flags)
     setSettings(nextBootstrap.settings.system)
     setModels(nextBootstrap.models)
+    setProfiles(nextBootstrap.profiles)
     setBuild(nextBootstrap.build)
+    setBenchmarkBaseline(nextBootstrap.benchmark_baseline)
+    setLatestBenchmark(nextBootstrap.latest_benchmark)
     setSession(nextBootstrap.session)
     setSnapshots(nextBootstrap.last_snapshot_meta ? [nextBootstrap.last_snapshot_meta] : [])
     if (nextDashboard) {
@@ -241,10 +276,27 @@ export default function App() {
     }
   })
 
+  const loadBenchmarkState = useEffectEvent(async () => {
+    const [baseline, latest] = await Promise.all([api.benchmarkBaseline(), api.benchmarkLatest()])
+    setBenchmarkBaseline(baseline)
+    setLatestBenchmark(latest)
+    if (bootstrapRef.current) {
+      const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline, latest_benchmark: latest }
+      bootstrapRef.current = nextBootstrap
+      writeStartupCache(nextBootstrap, dashboardRef.current)
+    }
+  })
+
   const mergeSnapshot = useEffectEvent((snapshot: SnapshotRecord | null) => {
     if (!snapshot || ['process-priority', 'cpu-affinity', 'power-plan'].includes(snapshot.kind)) return
     setSnapshots((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 12))
   })
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  }, [theme])
 
   useEffect(() => {
     if (bootStarted.current) return
@@ -304,11 +356,12 @@ export default function App() {
     if (activePage === 'dashboard' && !loaded.dashboard) void loadDashboard()
     if (activePage === 'optimization' && !loaded.optimization) void loadOptimization()
     if (activePage === 'optimization' && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
+    if ((activePage === 'dashboard' || activePage === 'optimization') && !benchmarkBaseline && !latestBenchmark) void loadBenchmarkState()
     if (activePage === 'security' && !loaded.security) void loadSecurity()
     if (activePage === 'logs' && !loaded.logs) void loadLogs()
     if (activePage === 'settings' && !loaded.snapshots) void loadSettingsData()
     if (activePage === 'models' && models.length === 0) void loadModels()
-  }, [activePage, loaded, loadDashboard, loadLogs, loadModels, loadOptimization, loadOptimizationRuntime, loadSecurity, loadSettingsData, models.length, selectedProcessId])
+  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadModels, loadOptimization, loadOptimizationRuntime, loadSecurity, loadSettingsData, models.length, selectedProcessId])
 
   const toggleFlag = async (key: keyof FeatureFlags, value: boolean) => {
     await api.updateFeatureFlags({ ...featureFlags, [key]: value })
@@ -367,6 +420,12 @@ export default function App() {
           'Apply Above normal process priority to the attached session only.',
           'Auto-restore the captured state when the tracked process exits or when you end the session.',
         ],
+        trust: {
+          current_state: `${name} at ${currentPriority}`,
+          target_state: `${name} at Above normal priority`,
+          policy_status: settings.automation_allowlist.includes('process_priority') ? 'allowed inside policy' : 'manual-only unless allowlisted',
+          rollback_available: true,
+        },
       })
     }
     if (request.kind === 'cpu_affinity') {
@@ -382,6 +441,12 @@ export default function App() {
           'Apply a safer balanced affinity preset to the attached session only.',
           'Auto-restore the original affinity when the session ends.',
         ],
+        trust: {
+          current_state: `${name} using ${currentAffinity}`,
+          target_state: `${name} using balanced affinity`,
+          policy_status: settings.automation_allowlist.includes('cpu_affinity') ? 'allowed inside policy' : 'manual-only unless allowlisted',
+          rollback_available: true,
+        },
       })
     }
     const plan = optimizationRuntime.power_plans.find((item) => item.guid === request.power_plan_guid)
@@ -396,6 +461,12 @@ export default function App() {
         'Switch Windows to the selected existing power plan for the active session.',
         'Auto-restore your original power plan after the session ends or on manual Undo.',
       ],
+      trust: {
+        current_state: activePlan?.name ?? 'Current power plan',
+        target_state: plan?.name ?? 'Selected plan',
+        policy_status: settings.automation_allowlist.includes('power_plan') ? 'allowed inside policy' : 'manual-only unless allowlisted',
+        rollback_available: true,
+      },
     })
   }
 
@@ -416,20 +487,54 @@ export default function App() {
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
   }
 
+  const captureBaseline = async () => {
+    setBenchmarkBusy(true)
+    try {
+      const baseline = await api.captureBenchmarkBaseline()
+      setBenchmarkBaseline(baseline)
+      if (bootstrapRef.current) {
+        const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline }
+        bootstrapRef.current = nextBootstrap
+        writeStartupCache(nextBootstrap, dashboardRef.current)
+      }
+    } finally {
+      setBenchmarkBusy(false)
+    }
+  }
+
+  const runBenchmark = async (profileId?: string) => {
+    setBenchmarkBusy(true)
+    try {
+      const report = await api.runBenchmark(profileId)
+      setLatestBenchmark(report)
+      if (bootstrapRef.current) {
+        const nextBootstrap = { ...bootstrapRef.current, latest_benchmark: report }
+        bootstrapRef.current = nextBootstrap
+        writeStartupCache(nextBootstrap, dashboardRef.current)
+      }
+    } finally {
+      setBenchmarkBusy(false)
+    }
+  }
+
   const renderPage = () => {
     if (activePage === 'dashboard' && !loaded.dashboard && dashboard.stats.length === 0) return <StartupSkeleton />
     if (activePage === 'optimization') {
       return (
         <OptimizationPage
+          benchmarkBaseline={benchmarkBaseline}
+          benchmarkBusy={benchmarkBusy}
           dashboard={dashboard}
           featureFlags={featureFlags}
           inference={inference}
+          latestBenchmark={latestBenchmark}
           onAttachSession={(request) => void attachOptimizationSession(request).then((nextState) => {
             setOptimizationRuntime(nextState)
             setSession(nextState.session)
             setSelectedProcessId(request.process_id)
             setLoaded((current) => ({ ...current, optimizationRuntime: true }))
           })}
+          onCaptureBaseline={() => void captureBaseline()}
           onEndSession={() => void endOptimizationSession().then((nextState) => {
             setOptimizationRuntime(nextState)
             setSession(nextState.session)
@@ -438,11 +543,13 @@ export default function App() {
           onPreviewTweak={previewTweak}
           onRefresh={(processId) => void loadOptimizationRuntime(processId)}
           onRollback={(snapshotId) => void rollbackTweak(snapshotId)}
+          onRunBenchmark={(profileId) => void runBenchmark(profileId)}
           onSelectProcess={(processId) => {
             setSelectedProcessId(processId)
             void loadOptimizationRuntime(processId)
           }}
           optimization={optimization}
+          profiles={profiles}
           runtimeState={optimizationRuntime}
           selectedProcessId={selectedProcessId}
         />
@@ -464,30 +571,52 @@ export default function App() {
           onUpdateAutomationAllowlist={(action, enabled) => void updateAutomationAllowlist(action, enabled)}
           onUpdateAutomationMode={(mode) => void updateAutomationMode(mode)}
           onToggleFlag={(key, value) => requestFlagChange(key, value)}
+          onUpdateTheme={(nextTheme) => setTheme(nextTheme)}
           onUpdateTelemetryMode={(mode) => void updateTelemetryMode(mode)}
           onUpdateProfile={(profile) => void updateProfile(profile)}
           settings={settings}
           snapshots={snapshots}
           startupDiagnostics={startupDiagnostics}
+          theme={theme}
         />
       )
     }
-    return <DashboardPage dashboard={dashboard} realtime={realtime} session={session} />
+    return (
+      <DashboardPage
+        benchmarkBaseline={benchmarkBaseline}
+        dashboard={dashboard}
+        latestBenchmark={latestBenchmark}
+        profiles={profiles}
+        realtime={realtime}
+        session={session}
+      />
+    )
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-6">
-      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 rounded-[2.5rem] border border-border bg-[#fbfbfb] p-4 md:grid-cols-[280px_1fr] md:p-5">
-        <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} />
-        <section className="rounded-[2rem] border border-border bg-white p-6 md:p-8">
-          <header className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
-            <div>
-              <p className="text-xs uppercase tracking-[0.25em] text-muted">Machine Learning Based Tool</p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-tight">Optimization and security for online games</h2>
+    <main className="min-h-screen bg-canvas p-4 md:p-6">
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 rounded-[2.5rem] border border-border bg-surface-elevated/80 p-4 shadow-float md:grid-cols-[300px_1fr] md:p-5">
+        <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))} theme={theme} />
+        <section className="rounded-[2rem] border border-border bg-surface p-6 shadow-panel md:p-8">
+          <header className="mb-8 border-b border-border pb-6">
+            <p className="text-xs uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p>
+            <div className="mt-4 max-w-[70rem]">
+              <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[3.25rem] leading-[0.96] md:text-[4rem]' : 'text-[2.35rem] leading-[1.02] md:text-[2.8rem]'}`}>
+                {pageChrome.title}
+              </h2>
+              <p className="mt-4 max-w-4xl text-base leading-8 text-muted">{pageChrome.subtitle}</p>
             </div>
-            <p className="max-w-md text-sm leading-6 text-muted">
-              Local-first desktop control with lazy startup, cached shell state, rollback, and opt-in machine learning.
-            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {pageChrome.badges.map((badge) => (
+                <span key={badge} className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
+                  {badge}
+                </span>
+              ))}
+            </div>
+            <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted/60 px-4 py-4 text-sm leading-6 text-muted">
+              <span className="mr-2 text-xs uppercase tracking-[0.18em] text-muted">Decision now</span>
+              <span className="font-medium text-text">{pageChrome.question}</span>
+            </div>
           </header>
           {renderPage()}
         </section>
@@ -511,6 +640,7 @@ export default function App() {
           onConfirm={() => void applyTweak()}
           risk={pendingTweak.risk}
           title={pendingTweak.title}
+          trust={pendingTweak.trust}
         />
       ) : null}
     </main>

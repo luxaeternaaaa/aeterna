@@ -9,10 +9,10 @@ def get_build_metadata() -> BuildMetadata:
             BUILD_METADATA_PATH,
             {
                 "version": "1.0.0",
-                "build_timestamp": "1970-01-01T00:00:00Z",
+                "build_timestamp": "",
                 "git_commit": "development",
-                "runtime_schema_version": "2.0.0",
-                "sidecar_protocol_version": "2",
+                "runtime_schema_version": "3.0.0",
+                "sidecar_protocol_version": "3",
             },
         )
     )

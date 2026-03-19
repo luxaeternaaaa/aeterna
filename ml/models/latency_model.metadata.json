@@ -1,6 +1,6 @@
 {
   "version": "latency-fallback-v2",
-  "updated_at": "2026-03-17T19:13:54.329055+00:00",
+  "updated_at": "2026-03-19T10:17:47.787308+00:00",
   "model_source": "metadata-fallback",
   "metrics": {
     "synthetic_accuracy": 0.82,

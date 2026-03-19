@@ -1,4 +1,6 @@
 import type {
+  BenchmarkReport,
+  BenchmarkWindow,
   BootstrapPayload,
   DashboardPayload,
   FeatureFlags,
@@ -27,6 +29,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
+  benchmarkBaseline: () => request<BenchmarkWindow | null>('/api/benchmark/baseline'),
+  benchmarkLatest: () => request<BenchmarkReport | null>('/api/benchmark/latest'),
+  captureBenchmarkBaseline: () => request<BenchmarkWindow>('/api/benchmark/capture-baseline', { method: 'POST' }),
+  runBenchmark: (profileId?: string) =>
+    request<BenchmarkReport>(profileId ? `/api/benchmark/run?profile_id=${encodeURIComponent(profileId)}` : '/api/benchmark/run', {
+      method: 'POST',
+    }),
   dashboard: () => request<DashboardPayload>('/api/dashboard'),
   featureFlags: () => request<FeatureFlags>('/api/settings/feature-flags'),
   updateFeatureFlags: (payload: FeatureFlags) =>

@@ -43,6 +43,8 @@ DEMO_TELEMETRY_PATH = GENERATED_DIR / "telemetry_demo.jsonl"
 LIVE_TELEMETRY_PATH = LIVE_DATA_DIR / "telemetry_live.jsonl"
 SESSION_STATE_PATH = LIVE_DATA_DIR / "session_state.json"
 STARTUP_DIAGNOSTICS_PATH = LIVE_DATA_DIR / "startup_diagnostics.json"
+BENCHMARK_BASELINE_PATH = LIVE_DATA_DIR / "benchmark_baseline.json"
+BENCHMARK_REPORTS_PATH = LIVE_DATA_DIR / "benchmark_reports.json"
 
 
 def ensure_directories() -> None:

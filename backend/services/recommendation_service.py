@@ -1,8 +1,10 @@
 from backend.schemas.api import RecommendationItem
+from backend.services.profile_service import match_profile
 
 
 def build_recommendations(latest: dict[str, float | str]) -> list[RecommendationItem]:
     items: list[RecommendationItem] = []
+    profile = match_profile(str(latest.get("game_name", "")))
     if latest["mode"] == "disabled":
         items.append(
             RecommendationItem(
@@ -12,6 +14,14 @@ def build_recommendations(latest: dict[str, float | str]) -> list[Recommendation
             )
         )
         return items
+    if profile:
+        items.append(
+            RecommendationItem(
+                title=f"Test the {profile.game} safe preset",
+                summary=profile.benchmark_expectation,
+                impact="medium",
+            )
+        )
     if float(latest["frametime_p95_ms"]) > 16:
         items.append(
             RecommendationItem(

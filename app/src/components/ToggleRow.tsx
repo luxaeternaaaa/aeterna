@@ -7,18 +7,18 @@ interface ToggleRowProps {
 
 export function ToggleRow({ checked, description, label, onChange }: ToggleRowProps) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-border px-4 py-4">
+    <div className="flex items-center justify-between gap-4 rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4">
       <div>
         <p className="text-sm font-medium text-text">{label}</p>
-        <p className="mt-1 text-sm text-muted">{description}</p>
+        <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative h-8 w-14 rounded-full border transition ${checked ? 'border-black bg-black' : 'border-border bg-hover'}`}
+        type="button"
+        className={`relative h-8 w-14 rounded-full border transition ${checked ? 'border-accent bg-accent-soft' : 'border-border-strong bg-surface'}`}
       >
-        <span className={`absolute top-1 h-6 w-6 rounded-full bg-white transition ${checked ? 'left-7' : 'left-1'}`} />
+        <span className={`absolute top-1 h-6 w-6 rounded-full shadow-panel transition ${checked ? 'left-7 bg-accent' : 'left-1 bg-surface-elevated'}`} />
       </button>
     </div>
   )
 }
-

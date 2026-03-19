@@ -49,6 +49,58 @@ export interface DashboardPayload {
   badge: string
 }
 
+export interface GameProfile {
+  id: string
+  game: string
+  title: string
+  detection_keywords: string[]
+  description: string
+  safe_preset: string
+  expected_benefit: string
+  risk_note: string
+  benchmark_expectation: string
+  allowed_actions: string[]
+}
+
+export interface BenchmarkWindow {
+  captured_at: string
+  sample_count: number
+  mode: 'demo' | 'live' | 'disabled'
+  capture_source: string
+  game_name: string
+  process_id?: number | null
+  fps_avg: number
+  frametime_avg_ms: number
+  frametime_p95_ms: number
+  frame_drop_ratio: number
+  cpu_total_pct: number
+  background_cpu_pct: number
+  anomaly_score: number
+  session_health: string
+}
+
+export interface BenchmarkDelta {
+  fps_avg: number
+  frametime_avg_ms: number
+  frametime_p95_ms: number
+  frame_drop_ratio: number
+  cpu_total_pct: number
+  background_cpu_pct: number
+  anomaly_score: number
+}
+
+export interface BenchmarkReport {
+  id: string
+  created_at: string
+  profile_id?: string | null
+  game_name: string
+  baseline: BenchmarkWindow
+  current: BenchmarkWindow
+  delta: BenchmarkDelta
+  verdict: 'improved' | 'mixed' | 'regressed'
+  summary: string
+}
+
 export interface FeatureFlags {
   telemetry_collect: boolean
   network_optimizer: boolean
@@ -200,6 +252,9 @@ export interface BootstrapPayload {
   session: SessionState
   detected_game: DetectedGame | null
   capture_status: CaptureStatus
+  profiles: GameProfile[]
+  benchmark_baseline: BenchmarkWindow | null
+  latest_benchmark: BenchmarkReport | null
   build: BuildMetadata
 }
 
@@ -282,6 +337,13 @@ export interface MlInferencePayload {
   model_version?: string
   model_source?: string
   shap_preview?: string[]
+}
+
+export interface TrustStatusPresentation {
+  current_state: string
+  target_state: string
+  policy_status: string
+  rollback_available: boolean
 }
 
 export interface StartupCachePayload {

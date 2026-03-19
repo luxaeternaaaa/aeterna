@@ -52,6 +52,58 @@ class DashboardPayload(BaseModel):
     badge: str
 
 
+class GameProfile(BaseModel):
+    id: str
+    game: str
+    title: str
+    detection_keywords: list[str] = Field(default_factory=list)
+    description: str
+    safe_preset: str
+    expected_benefit: str
+    risk_note: str
+    benchmark_expectation: str
+    allowed_actions: list[str] = Field(default_factory=list)
+
+
+class BenchmarkWindow(BaseModel):
+    captured_at: str
+    sample_count: int
+    mode: Literal["demo", "live", "disabled"]
+    capture_source: str
+    game_name: str
+    process_id: int | None = None
+    fps_avg: float
+    frametime_avg_ms: float
+    frametime_p95_ms: float
+    frame_drop_ratio: float
+    cpu_total_pct: float
+    background_cpu_pct: float
+    anomaly_score: float
+    session_health: str
+
+
+class BenchmarkDelta(BaseModel):
+    fps_avg: float
+    frametime_avg_ms: float
+    frametime_p95_ms: float
+    frame_drop_ratio: float
+    cpu_total_pct: float
+    background_cpu_pct: float
+    anomaly_score: float
+
+
+class BenchmarkReport(BaseModel):
+    id: str
+    created_at: str
+    profile_id: str | None = None
+    game_name: str
+    baseline: BenchmarkWindow
+    current: BenchmarkWindow
+    delta: BenchmarkDelta
+    verdict: Literal["improved", "mixed", "regressed"]
+    summary: str
+
+
 class FeatureFlags(BaseModel):
     telemetry_collect: bool = False
     network_optimizer: bool = False
@@ -193,4 +245,7 @@ class BootstrapPayload(BaseModel):
             source="counters-fallback", available=True, quality="idle", helper_available=False, note=None
         )
     )
+    profiles: list[GameProfile] = Field(default_factory=list)
+    benchmark_baseline: BenchmarkWindow | None = None
+    latest_benchmark: BenchmarkReport | None = None
     build: BuildMetadata

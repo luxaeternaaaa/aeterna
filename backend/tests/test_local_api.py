@@ -33,15 +33,43 @@ def test_bootstrap_payload_is_minimal_and_contains_shell_state(tmp_path) -> None
 
     assert response.status_code == 200
     payload = response.json()
-    assert sorted(payload.keys()) == ["build", "capture_status", "demo_mode", "detected_game", "last_snapshot_meta", "models", "session", "settings"]
+    assert sorted(payload.keys()) == [
+        "benchmark_baseline",
+        "build",
+        "capture_status",
+        "demo_mode",
+        "detected_game",
+        "last_snapshot_meta",
+        "latest_benchmark",
+        "models",
+        "profiles",
+        "session",
+        "settings",
+    ]
     assert payload["settings"]["feature_flags"]["telemetry_collect"] is False
     assert payload["settings"]["system"]["privacy_mode"] == "local-only"
     assert payload["settings"]["system"]["telemetry_mode"] == "demo"
     assert isinstance(payload["models"], list)
+    assert isinstance(payload["profiles"], list)
     assert isinstance(payload["demo_mode"], bool)
     assert payload["build"]["sidecar_protocol_version"] == "3"
     assert payload["session"]["state"] in {"idle", "detected", "attached", "active", "ended", "restored"}
     assert payload["capture_status"]["source"] in {"counters-fallback", "presentmon"}
+
+
+def test_benchmark_capture_and_run_create_local_proof(tmp_path) -> None:
+    client = load_client(str(tmp_path / "runtime"))
+
+    baseline = client.post("/api/benchmark/capture-baseline")
+    report = client.post("/api/benchmark/run")
+    latest = client.get("/api/benchmark/latest")
+
+    assert baseline.status_code == 200
+    assert report.status_code == 200
+    assert latest.status_code == 200
+    assert baseline.json()["sample_count"] > 0
+    assert report.json()["verdict"] in {"improved", "mixed", "regressed"}
+    assert latest.json()["id"] == report.json()["id"]
 
 
 def test_feature_flags_start_disabled_and_create_snapshot_on_update(tmp_path) -> None:
