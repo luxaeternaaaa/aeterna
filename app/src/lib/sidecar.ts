@@ -1,10 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 
 import type {
+  ApplyRegistryPresetRequest,
+  ApplyRegistryPresetResponse,
   ApplyTweakRequest,
   ApplyTweakResponse,
   AttachSessionRequest,
   MlInferencePayload,
+  MlRuntimeTruth,
   OptimizationRuntimeState,
   RollbackResponse,
   SidecarStatusPayload,
@@ -32,6 +35,8 @@ const fallbackState: OptimizationRuntimeState = {
     active_snapshot_ids: [],
     telemetry_source: 'demo',
     auto_restore_pending: false,
+    pending_registry_restore: false,
+    pending_registry_snapshot_id: null,
     capture_source: 'counters-fallback',
     capture_quality: 'idle',
   },
@@ -43,6 +48,7 @@ const fallbackState: OptimizationRuntimeState = {
     helper_available: false,
     note: null,
   },
+  registry_presets: [],
 }
 
 function isTauriRuntime() {
@@ -88,6 +94,10 @@ export async function applyOptimizationTweak(request: ApplyTweakRequest): Promis
   return invoke<ApplyTweakResponse>('apply_tweak', { request })
 }
 
+export async function applyRegistryPreset(request: ApplyRegistryPresetRequest): Promise<ApplyRegistryPresetResponse> {
+  return invoke<ApplyRegistryPresetResponse>('apply_registry_preset', { request })
+}
+
 export async function rollbackOptimizationTweak(snapshotId: string, processId?: number): Promise<RollbackResponse> {
   return invoke<RollbackResponse>('rollback_tweak', { snapshotId, processId })
 }
@@ -109,6 +119,15 @@ export async function runOptimizationInference(point: TelemetryPoint): Promise<M
         anomaly_score: point.anomaly_score,
       },
     })
+  } catch {
+    return null
+  }
+}
+
+export async function getMlRuntimeTruth(): Promise<MlRuntimeTruth | null> {
+  if (!isTauriRuntime()) return null
+  try {
+    return await invoke<MlRuntimeTruth>('ml_runtime_truth')
   } catch {
     return null
   }

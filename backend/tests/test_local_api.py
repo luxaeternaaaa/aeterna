@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 
 from fastapi.testclient import TestClient
@@ -49,6 +50,8 @@ def test_bootstrap_payload_is_minimal_and_contains_shell_state(tmp_path) -> None
     assert payload["settings"]["feature_flags"]["telemetry_collect"] is False
     assert payload["settings"]["system"]["privacy_mode"] == "local-only"
     assert payload["settings"]["system"]["telemetry_mode"] == "demo"
+    assert payload["settings"]["system"]["registry_presets_enabled"] is False
+    assert payload["settings"]["system"]["show_advanced_registry_details"] is False
     assert isinstance(payload["models"], list)
     assert isinstance(payload["profiles"], list)
     assert isinstance(payload["demo_mode"], bool)
@@ -68,8 +71,47 @@ def test_benchmark_capture_and_run_create_local_proof(tmp_path) -> None:
     assert report.status_code == 200
     assert latest.status_code == 200
     assert baseline.json()["sample_count"] > 0
-    assert report.json()["verdict"] in {"improved", "mixed", "regressed"}
+    assert report.json()["verdict"] in {"better", "mixed", "worse", "inconclusive"}
+    assert report.json()["recommended_next_step"]
     assert latest.json()["id"] == report.json()["id"]
+
+
+def test_benchmark_links_to_latest_runtime_action(tmp_path) -> None:
+    runtime_root = tmp_path / "runtime"
+    client = load_client(str(runtime_root))
+    activity_path = runtime_root / "data" / "logs" / "tweak_activity.json"
+    activity_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "activity-tweak-1",
+                    "timestamp": "2026-03-19T12:00:00+00:00",
+                    "category": "tweak",
+                    "action": "Priority applied",
+                    "detail": "Raised session priority.",
+                    "risk": "medium",
+                    "snapshot_id": "snapshot-1",
+                    "session_id": None,
+                    "action_id": "activity-tweak-1",
+                    "can_undo": True,
+                    "proof_link": None,
+                    "blocked_by_policy": False,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client.post("/api/benchmark/capture-baseline")
+    report = client.post("/api/benchmark/run")
+
+    assert report.status_code == 200
+    payload = report.json()
+    assert payload["action_id"] == "activity-tweak-1"
+    assert payload["snapshot_id"] == "snapshot-1"
+    stored_activity = json.loads(activity_path.read_text(encoding="utf-8"))
+    assert stored_activity[0]["proof_link"] == payload["id"]
+    assert any(entry["category"] == "proof" and entry["proof_link"] == payload["id"] for entry in stored_activity)
 
 
 def test_feature_flags_start_disabled_and_create_snapshot_on_update(tmp_path) -> None:
@@ -89,6 +131,7 @@ def test_feature_flags_start_disabled_and_create_snapshot_on_update(tmp_path) ->
     assert update.status_code == 200
     assert update.json()["telemetry_collect"] is True
     assert len(next_snapshots.json()) == len(initial_snapshots.json()) + 1
+    assert next_snapshots.json()[0]["surface"] == "config"
 
 
 def test_model_activation_changes_active_model_and_supports_diff_lookup(tmp_path) -> None:

@@ -2,6 +2,7 @@ import type { BuildMetadata, FeatureFlags, SnapshotRecord, StartupDiagnostics, S
 import { Panel } from '../components/Panel'
 import { ToggleRow } from '../components/ToggleRow'
 import { stateCopy } from '../lib/stateCopy'
+import { formatTimestamp } from '../lib/time'
 
 interface SettingsPageProps {
   build: BuildMetadata
@@ -9,8 +10,10 @@ interface SettingsPageProps {
   featureFlags: FeatureFlags
   onInspectSnapshot: (id: string) => void
   onRestoreSnapshot: (id: string) => void
+  onUpdateAdvancedRegistryDetails: (enabled: boolean) => void
   onUpdateAutomationAllowlist: (action: 'process_priority' | 'cpu_affinity' | 'power_plan', enabled: boolean) => void
   onUpdateAutomationMode: (mode: SystemSettings['automation_mode']) => void
+  onUpdateRegistryPresetsEnabled: (enabled: boolean) => void
   onToggleFlag: (key: keyof FeatureFlags, value: boolean) => void
   onUpdateTheme: (theme: 'dark' | 'light') => void
   onUpdateTelemetryMode: (mode: SystemSettings['telemetry_mode']) => void
@@ -23,7 +26,7 @@ interface SettingsPageProps {
 
 function buildSummary(build: BuildMetadata) {
   if (!build.build_timestamp) return stateCopy.buildPending
-  return `Build v${build.version} | Runtime schema ${build.runtime_schema_version} | Sidecar protocol ${build.sidecar_protocol_version} | Built ${new Date(build.build_timestamp).toLocaleString()} | Commit ${build.git_commit}`
+  return `Build v${build.version} | Runtime schema ${build.runtime_schema_version} | Sidecar protocol ${build.sidecar_protocol_version} | Built ${formatTimestamp(build.build_timestamp, 'Build time not recorded')} | Commit ${build.git_commit}`
 }
 
 export function SettingsPage(props: SettingsPageProps) {
@@ -33,9 +36,11 @@ export function SettingsPage(props: SettingsPageProps) {
     featureFlags,
     onInspectSnapshot,
     onRestoreSnapshot,
+    onUpdateAdvancedRegistryDetails,
     onToggleFlag,
     onUpdateAutomationAllowlist,
     onUpdateAutomationMode,
+    onUpdateRegistryPresetsEnabled,
     onUpdateProfile,
     onUpdateTheme,
     onUpdateTelemetryMode,
@@ -61,6 +66,7 @@ export function SettingsPage(props: SettingsPageProps) {
         <Panel title="Automation authority" subtitle="What the product may actually do after you turn automation on." variant="secondary">
           <div className="space-y-3">
             <ToggleRow checked={featureFlags.network_optimizer} label="Performance optimizer" description="Allow local scheduler and power-plan recommendations to become executable actions." onChange={(next) => onToggleFlag('network_optimizer', next)} />
+            <ToggleRow checked={settings.registry_presets_enabled} label="System presets" description="Allow allowlisted registry-backed presets that always create exact rollback snapshots and never run outside the trusted catalog." onChange={onUpdateRegistryPresetsEnabled} />
             <ToggleRow checked={settings.automation_allowlist.includes('process_priority')} label="Allow automated priority changes" description="Permit pre-approved session automation to raise process priority for detected games with rollback." onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)} />
             <ToggleRow checked={settings.automation_allowlist.includes('cpu_affinity')} label="Allow automated CPU affinity" description="Permit the balanced affinity preset only during an attached session." onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)} />
             <ToggleRow checked={settings.automation_allowlist.includes('power_plan')} label="Allow automated power plan switching" description="Permit power plan changes only with automatic restoration after the session ends." onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)} />
@@ -109,6 +115,7 @@ export function SettingsPage(props: SettingsPageProps) {
           <div className="mt-5 space-y-3">
             <ToggleRow checked={featureFlags.anomaly_detection} label="Anomaly detection" description="Run the anomaly model against local session telemetry." onChange={(next) => onToggleFlag('anomaly_detection', next)} />
             <ToggleRow checked={featureFlags.auto_security_scan} label="Automatic security scan" description="Classify suspicious sessions locally during active play." onChange={(next) => onToggleFlag('auto_security_scan', next)} />
+            <ToggleRow checked={settings.show_advanced_registry_details} label="Show advanced registry details" description="Expose exact hive, path, and value details in system preset previews for expert review." onChange={onUpdateAdvancedRegistryDetails} />
           </div>
           <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
             Compatibility mode keeps overlays, DLL injection, memory edits, and driver-level changes out of the current product path.
@@ -121,7 +128,7 @@ export function SettingsPage(props: SettingsPageProps) {
             </div>
             {startupDiagnostics ? (
               <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-                Startup diagnostics: launch {startupDiagnostics.launch_started_at ?? 'n/a'} | window {startupDiagnostics.window_visible_at ?? 'n/a'} | sidecar {startupDiagnostics.sidecar_ready_at ?? 'n/a'} | backend {startupDiagnostics.backend_ready_at ?? 'n/a'} | bootstrap {startupDiagnostics.bootstrap_loaded_at ?? 'n/a'}
+                Startup diagnostics: launch {formatTimestamp(startupDiagnostics.launch_started_at, 'not recorded')} | window {formatTimestamp(startupDiagnostics.window_visible_at, 'not recorded')} | sidecar {formatTimestamp(startupDiagnostics.sidecar_ready_at, 'not recorded')} | backend {formatTimestamp(startupDiagnostics.backend_ready_at, 'not recorded')} | bootstrap {formatTimestamp(startupDiagnostics.bootstrap_loaded_at, 'not recorded')}
               </div>
             ) : (
               <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
@@ -132,15 +139,15 @@ export function SettingsPage(props: SettingsPageProps) {
         </Panel>
       </section>
 
-      <Panel title="Rollback history" subtitle="Snapshots created before settings, model, and reversible runtime changes." variant="secondary">
+      <Panel title="Config & model snapshots" subtitle="Snapshots created before settings and model changes. Session rollback lives in Activity." variant="secondary">
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-3">
-            {snapshots.length === 0 ? <p className="text-sm text-muted">{stateCopy.noActivity}</p> : null}
+            {snapshots.length === 0 ? <p className="text-sm text-muted">{stateCopy.noConfigSnapshots}</p> : null}
             {snapshots.map((snapshot) => (
               <div key={snapshot.id} className="rounded-[1.5rem] border border-border bg-surface-muted/60 px-4 py-4">
                 <p className="text-sm font-medium">{snapshot.note}</p>
                 <p className="mt-1 text-sm text-muted">
-                  {snapshot.kind} | {new Date(snapshot.created_at).toLocaleString()}
+                  {snapshot.surface ?? 'config'} snapshot | {snapshot.kind} | {formatTimestamp(snapshot.created_at)}
                 </p>
                 <div className="mt-3 flex gap-3">
                   <button onClick={() => onInspectSnapshot(snapshot.id)} className="rounded-full border border-border bg-surface px-4 py-2 text-sm hover:bg-hover" type="button">

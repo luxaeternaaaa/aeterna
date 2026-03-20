@@ -54,6 +54,7 @@ class TelemetryModeTests(unittest.TestCase):
             row = reloaded.list_recent(limit=1)[0]
             self.assertEqual(row.mode, "disabled")
             self.assertEqual(row.game_name, "Telemetry disabled")
+            self.assertEqual(row.timestamp, "")
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 

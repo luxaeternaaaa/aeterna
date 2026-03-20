@@ -1,4 +1,6 @@
+from backend.services.benchmark_service import latest_baseline, latest_report
 from backend.services.feature_service import get_feature_flags
+from backend.services.runtime_state_service import get_session_state
 from backend.services.telemetry_service import list_recent
 
 
@@ -19,6 +21,9 @@ def get_security_summary() -> dict[str, object]:
 
 def get_optimization_summary() -> dict[str, object]:
     latest = list_recent(limit=1)[-1].model_dump()
+    baseline = latest_baseline()
+    report = latest_report()
+    session = get_session_state()
     probability = min(
         0.98,
         0.14
@@ -27,10 +32,40 @@ def get_optimization_summary() -> dict[str, object]:
         + float(latest["background_cpu_pct"]) / 180
         + int(latest["background_process_count"]) / 240,
     )
+    optimizer_enabled = get_feature_flags().network_optimizer
+    session_attached = session.state in {"attached", "active"}
+    next_action = "Attach a game session to inspect live state and capture a baseline."
+    primary_blocker = None
+    proof_state = "missing-baseline"
+    if baseline and not report:
+        proof_state = "baseline-ready"
+        next_action = (
+            "Enable Performance optimizer when you are ready to test a safe change."
+            if not optimizer_enabled
+            else "Test one safe change and run Compare now to prove whether the preset helped."
+        )
+    elif baseline and report:
+        proof_state = "comparison-ready"
+        next_action = (
+            "Review the latest proof before enabling new changes."
+            if not optimizer_enabled
+            else "Keep or rollback the last change based on the benchmark verdict before stacking another tweak."
+        )
+    if not session_attached:
+        next_action = "Attach a game session to inspect live state and capture a baseline."
+    elif not baseline:
+        next_action = "Capture a baseline before testing a safe change."
+    if not optimizer_enabled:
+        primary_blocker = (
+            "Performance optimizer is off. You can still attach a session and capture baseline, but apply remains blocked until you enable it."
+        )
     return {
-        "optimizer_enabled": get_feature_flags().network_optimizer,
+        "optimizer_enabled": optimizer_enabled,
         "risk_label": "high" if probability > 0.78 else "medium" if probability > 0.48 else "low",
         "spike_probability": round(probability, 2),
         "confidence": round(min(0.95, 0.55 + probability * 0.28), 2),
         "model_source": "local-summary",
+        "next_action": next_action,
+        "primary_blocker": primary_blocker,
+        "proof_state": proof_state,
     }

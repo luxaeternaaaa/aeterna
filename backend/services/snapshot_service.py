@@ -16,11 +16,12 @@ def create_snapshot(kind: str, source_path: str, payload: object, note: str) -> 
         "kind": kind,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "note": note,
+        "surface": "config",
         "source_path": source_path,
         "payload": payload,
     }
     write_json(SNAPSHOT_DIR / f"{snapshot_id}.json", record)
-    return SnapshotRecord(**{key: record[key] for key in ("id", "kind", "created_at", "note")})
+    return SnapshotRecord(**{key: record[key] for key in ("id", "kind", "created_at", "note", "surface")})
 
 
 def list_snapshots() -> list[SnapshotRecord]:
@@ -28,7 +29,17 @@ def list_snapshots() -> list[SnapshotRecord]:
     for path in sorted(SNAPSHOT_DIR.glob("*.json"), reverse=True):
         record = read_json(path, {})
         if record and {"source_path", "payload"}.issubset(record):
-            rows.append(SnapshotRecord(**{key: record[key] for key in ("id", "kind", "created_at", "note")}))
+            rows.append(
+                SnapshotRecord(
+                    **{
+                        "id": record["id"],
+                        "kind": record["kind"],
+                        "created_at": record["created_at"],
+                        "note": record["note"],
+                        "surface": record.get("surface", "config"),
+                    }
+                )
+            )
     return rows
 
 

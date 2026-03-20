@@ -5,12 +5,14 @@ from uuid import uuid4
 
 from backend.core.paths import BENCHMARK_BASELINE_PATH, BENCHMARK_REPORTS_PATH
 from backend.schemas.api import BenchmarkDelta, BenchmarkReport, BenchmarkWindow
+from backend.services.activity_service import append_proof_event, latest_action, link_proof
 from backend.services.json_store import read_json, write_json
 from backend.services.profile_service import get_profile, match_profile
+from backend.services.runtime_state_service import get_session_state
 from backend.services.telemetry_service import list_recent
 
 
-def _window_from_rows(rows: list[dict[str, object]]) -> BenchmarkWindow:
+def _window_from_rows(rows: list[dict[str, object]], session_id: str | None) -> BenchmarkWindow:
     if not rows:
         raise ValueError("No telemetry rows available for benchmark capture.")
     latest = rows[-1]
@@ -22,6 +24,7 @@ def _window_from_rows(rows: list[dict[str, object]]) -> BenchmarkWindow:
         capture_source=str(latest["capture_source"]),
         game_name=str(latest["game_name"]),
         process_id=latest.get("process_id"),
+        session_id=session_id,
         fps_avg=round(mean(float(row["fps_avg"]) for row in rows), 2),
         frametime_avg_ms=round(mean(float(row["frametime_avg_ms"]) for row in rows), 2),
         frametime_p95_ms=round(mean(float(row["frametime_p95_ms"]) for row in rows), 2),
@@ -52,12 +55,22 @@ def latest_report() -> BenchmarkReport | None:
 
 def capture_baseline(sample_limit: int = 36) -> BenchmarkWindow:
     rows = _recent_rows(limit=sample_limit)
-    baseline = _window_from_rows(rows)
+    baseline = _window_from_rows(rows, get_session_state().session_id)
     write_json(BENCHMARK_BASELINE_PATH, baseline.model_dump())
     return baseline
 
 
-def _verdict(delta: BenchmarkDelta) -> tuple[str, str]:
+def _evidence_quality(window: BenchmarkWindow) -> str:
+    if window.mode == "disabled":
+        return "disabled"
+    if window.mode == "demo":
+        return "demo"
+    if window.capture_source == "presentmon":
+        return "live"
+    return "degraded"
+
+
+def _verdict(delta: BenchmarkDelta) -> tuple[str, str, str]:
     score = 0
     if delta.fps_avg > 0:
         score += 1
@@ -74,17 +87,20 @@ def _verdict(delta: BenchmarkDelta) -> tuple[str, str]:
 
     if score >= 5:
         return (
-            "improved",
-            "The current session is measurably cleaner than the captured baseline. Trust the preset more than before, but keep the rollback path visible.",
+            "better",
+            "The current session is measurably cleaner than the captured baseline. This change looks worth keeping unless the next session disproves it.",
+            "Keep the change or run one more compare before stacking another action.",
         )
     if score <= 2:
         return (
-            "regressed",
-            "The current session is worse than the baseline in too many important signals. Treat this preset as unproven and restore before stacking more changes.",
+            "worse",
+            "The current session is worse than the baseline in too many important signals. Treat this change as unproven and restore it before stacking anything else.",
+            "Rollback the last change, then capture a fresh baseline before testing again.",
         )
     return (
         "mixed",
-        "Some metrics improved, but the evidence is still split. Keep testing one change at a time instead of declaring the preset good.",
+        "Some metrics improved, but the evidence is still split. The result is not clean enough to trust blindly.",
+        "Either rollback now or run one more controlled compare before keeping the change.",
     )
 
 
@@ -92,8 +108,10 @@ def run_benchmark(sample_limit: int = 36, profile_id: str | None = None) -> Benc
     baseline = latest_baseline()
     if not baseline:
         raise ValueError("Capture a baseline before running a comparison benchmark.")
-    current = _window_from_rows(_recent_rows(limit=sample_limit))
+    session = get_session_state()
+    current = _window_from_rows(_recent_rows(limit=sample_limit), session.session_id)
     profile = get_profile(profile_id) or match_profile(current.game_name) or match_profile(baseline.game_name)
+    linked_action = latest_action(session.session_id)
     delta = BenchmarkDelta(
         fps_avg=round(current.fps_avg - baseline.fps_avg, 2),
         frametime_avg_ms=round(current.frametime_avg_ms - baseline.frametime_avg_ms, 2),
@@ -103,20 +121,37 @@ def run_benchmark(sample_limit: int = 36, profile_id: str | None = None) -> Benc
         background_cpu_pct=round(current.background_cpu_pct - baseline.background_cpu_pct, 2),
         anomaly_score=round(current.anomaly_score - baseline.anomaly_score, 4),
     )
-    verdict, summary = _verdict(delta)
+    evidence_quality = _evidence_quality(current)
+    if linked_action is None:
+        verdict = "inconclusive"
+        summary = "No tested change is linked to this compare window yet. This result shows session drift, not proof of a specific action."
+        next_step = "Apply one safe change, then run Compare again so the verdict can be tied to a specific action."
+    elif baseline.session_id and current.session_id and baseline.session_id != current.session_id:
+        verdict = "inconclusive"
+        summary = "Baseline and compare belong to different attached sessions. This verdict is not trustworthy until you capture a fresh baseline."
+        next_step = "Capture a new baseline for the current session before comparing again."
+    else:
+        verdict, summary, next_step = _verdict(delta)
     report = BenchmarkReport(
         id=f"benchmark-{uuid4().hex[:10]}",
         created_at=current.captured_at,
         profile_id=profile.id if profile else profile_id,
         game_name=current.game_name,
+        session_id=current.session_id,
+        action_id=linked_action.id if linked_action else None,
+        snapshot_id=linked_action.snapshot_id if linked_action else None,
+        evidence_quality=evidence_quality,
         baseline=baseline,
         current=current,
         delta=delta,
         verdict=verdict,
         summary=summary,
+        recommended_next_step=next_step,
     )
     payload = read_json(BENCHMARK_REPORTS_PATH, [])
     rows = payload if isinstance(payload, list) else []
     rows.insert(0, report.model_dump())
     write_json(BENCHMARK_REPORTS_PATH, rows[:12])
+    link_proof(report.action_id, report.id)
+    append_proof_event(report)
     return report

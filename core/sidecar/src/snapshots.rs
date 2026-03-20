@@ -17,6 +17,19 @@ fn write_snapshot(snapshot: &TweakSnapshot) -> Result<(), String> {
     fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
+fn all_snapshots() -> Vec<TweakSnapshot> {
+    let mut paths = match fs::read_dir(snapshot_dir()) {
+        Ok(entries) => entries.flatten().collect::<Vec<_>>(),
+        Err(_) => return Vec::new(),
+    };
+    paths.sort_by_key(|entry| entry.file_name());
+    paths
+        .into_iter()
+        .filter_map(|entry| fs::read(entry.path()).ok())
+        .filter_map(|bytes| serde_json::from_slice::<TweakSnapshot>(&bytes).ok())
+        .collect()
+}
+
 pub fn create_snapshot(snapshot: TweakSnapshot) -> Result<SnapshotMeta, String> {
     write_snapshot(&snapshot)?;
     Ok(SnapshotMeta {
@@ -28,10 +41,7 @@ pub fn create_snapshot(snapshot: TweakSnapshot) -> Result<SnapshotMeta, String> 
 }
 
 pub fn latest_snapshot() -> Option<SnapshotMeta> {
-    let mut paths = fs::read_dir(snapshot_dir()).ok()?.flatten().collect::<Vec<_>>();
-    paths.sort_by_key(|entry| entry.file_name());
-    let path = paths.pop()?.path();
-    let snapshot = serde_json::from_slice::<TweakSnapshot>(&fs::read(path).ok()?).ok()?;
+    let snapshot = all_snapshots().pop()?;
     Some(SnapshotMeta {
         id: snapshot.id,
         kind: snapshot.kind,
@@ -46,9 +56,34 @@ pub fn load_snapshot(snapshot_id: &str) -> Result<TweakSnapshot, String> {
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid snapshot {snapshot_id}: {error}"))
 }
 
+pub fn save_snapshot(snapshot: &TweakSnapshot) -> Result<(), String> {
+    write_snapshot(snapshot)
+}
+
+pub fn mark_snapshot_applied(snapshot_id: &str) -> Result<TweakSnapshot, String> {
+    let mut snapshot = load_snapshot(snapshot_id)?;
+    snapshot.applied_at = Some(now().format(&Rfc3339).expect("current utc time should format as rfc3339"));
+    save_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+pub fn mark_snapshot_restored(snapshot_id: &str) -> Result<TweakSnapshot, String> {
+    let mut snapshot = load_snapshot(snapshot_id)?;
+    snapshot.restored_at = Some(now().format(&Rfc3339).expect("current utc time should format as rfc3339"));
+    save_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+pub fn pending_registry_restore() -> Option<TweakSnapshot> {
+    all_snapshots()
+        .into_iter()
+        .rev()
+        .find(|snapshot| snapshot.kind == "registry-preset" && snapshot.applied_at.is_some() && snapshot.restored_at.is_none())
+}
+
 pub fn next_snapshot(kind: &str, note: String, process: Option<crate::models::ProcessRestoreState>, power_plan_guid: Option<String>, power_plan_name: Option<String>) -> TweakSnapshot {
     let timestamp = now();
-    let stamp = timestamp.format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
+    let stamp = timestamp.format(&Rfc3339).expect("current utc time should format as rfc3339");
     let compact = timestamp.unix_timestamp_nanos() / 1_000_000;
     TweakSnapshot {
         id: format!("{compact}-{kind}"),
@@ -60,6 +95,11 @@ pub fn next_snapshot(kind: &str, note: String, process: Option<crate::models::Pr
         process,
         power_plan_guid,
         power_plan_name,
+        registry_preset_id: None,
+        registry_entries: Vec::new(),
+        requires_admin: false,
+        applied_at: None,
+        restored_at: None,
     }
 }
 
@@ -72,7 +112,7 @@ pub fn activity(
     session_id: Option<String>,
     can_undo: bool,
 ) -> ActivityEntry {
-    let timestamp = now().format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
+    let timestamp = now().format(&Rfc3339).expect("current utc time should format as rfc3339");
     ActivityEntry {
         id: format!("activity-{}", now().unix_timestamp_nanos() / 1_000_000),
         timestamp,
@@ -80,8 +120,11 @@ pub fn activity(
         action: action.into(),
         detail,
         risk: risk.into(),
+        action_id: snapshot_id.clone(),
         snapshot_id,
         session_id,
         can_undo,
+        proof_link: None,
+        blocked_by_policy: false,
     }
 }

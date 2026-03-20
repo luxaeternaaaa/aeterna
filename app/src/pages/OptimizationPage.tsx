@@ -1,4 +1,5 @@
 import type {
+  ApplyRegistryPresetRequest,
   ApplyTweakRequest,
   AttachSessionRequest,
   BenchmarkReport,
@@ -25,6 +26,7 @@ interface OptimizationPageProps {
   onAttachSession: (request: AttachSessionRequest) => void
   onCaptureBaseline: () => void
   onEndSession: () => void
+  onPreviewRegistryPreset: (request: ApplyRegistryPresetRequest) => void
   onPreviewTweak: (request: ApplyTweakRequest) => void
   onRefresh: (processId?: number) => void
   onRollback: (snapshotId: string) => void
@@ -86,8 +88,9 @@ function resolveProfile(profiles: GameProfile[], runtimeState: OptimizationRunti
 
 function benchmarkVerdict(report: BenchmarkReport | null) {
   if (!report) return 'No proof yet'
-  if (report.verdict === 'improved') return 'Improved'
-  if (report.verdict === 'regressed') return 'Regressed'
+  if (report.verdict === 'better') return 'Better'
+  if (report.verdict === 'worse') return 'Worse'
+  if (report.verdict === 'inconclusive') return 'Inconclusive'
   return 'Mixed'
 }
 
@@ -102,6 +105,7 @@ export function OptimizationPage(props: OptimizationPageProps) {
     onAttachSession,
     onCaptureBaseline,
     onEndSession,
+    onPreviewRegistryPreset,
     onPreviewTweak,
     onRefresh,
     onRollback,
@@ -128,19 +132,24 @@ export function OptimizationPage(props: OptimizationPageProps) {
           subtitle="The product should make the main workflow obvious: detect, attach, inspect, test, restore."
           variant="primary"
         >
-          {detectedBanner(runtimeState.detected_game, disabled, onAttachSession)}
+          {detectedBanner(runtimeState.detected_game, false, onAttachSession)}
+          {runtimeState.session.pending_registry_restore ? (
+            <div className="mt-4 rounded-[1.5rem] border border-border-strong bg-surface-muted px-4 py-4 text-sm leading-6 text-text">
+              A previous system preset is still active. Restore it before applying another registry-backed change.
+            </div>
+          ) : null}
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Policy status</p>
-              <p className="mt-2 text-base font-medium text-text">{disabled ? 'Blocked by settings' : 'Allowed manually'}</p>
+              <p className="mt-2 text-base font-medium text-text">{optimization.primary_blocker ?? (disabled ? 'Blocked by settings' : 'Allowed manually')}</p>
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Tracked session</p>
               <p className="mt-2 text-base font-medium text-text">{trackedProcessName}</p>
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Restore pending</p>
-              <p className="mt-2 text-base font-medium text-text">{runtimeState.session.auto_restore_pending ? 'Yes' : 'No'}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Next move</p>
+              <p className="mt-2 text-base font-medium text-text">{optimization.next_action ?? 'Capture a baseline and test one change.'}</p>
             </div>
           </div>
           <div className="mt-5 rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
@@ -190,7 +199,11 @@ export function OptimizationPage(props: OptimizationPageProps) {
               </button>
             ) : null}
           </div>
-          {disabled ? <p className="mt-4 text-sm text-muted">Performance optimizer is disabled in Settings, so the product is correctly refusing to apply tweaks.</p> : null}
+          {disabled ? (
+            <p className="mt-4 text-sm text-muted">
+              Performance optimizer is off in Settings. You can still attach a session and capture baseline, but applying changes stays blocked until you enable it.
+            </p>
+          ) : null}
         </Panel>
 
         <div className="space-y-6">
@@ -215,9 +228,9 @@ export function OptimizationPage(props: OptimizationPageProps) {
                 </p>
               </div>
             </div>
-            <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
-              {inference ? inference.summary : primaryRecommendation?.summary ?? 'Inference will populate after the runtime inspects the latest telemetry point.'}
-            </div>
+          <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
+            {inference ? inference.summary : primaryRecommendation?.summary ?? 'Inference will populate after the runtime inspects the latest telemetry point.'}
+          </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
                 {(inference?.model_source ?? optimization.model_source).replace('-', ' ')}
@@ -233,6 +246,43 @@ export function OptimizationPage(props: OptimizationPageProps) {
 
           <Panel title="Trust and proof" subtitle="Make the product prove itself before you trust a preset or wider automation." variant="utility">
             <div className="grid gap-3">
+              <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold tracking-tight text-text">System presets</p>
+                  <span className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
+                    {settingsLabel(runtimeState.registry_presets.length)}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-muted">
+                  Registry-backed presets stay manual, allowlisted, and baseline-gated. They are for proving a specific session change, not stacking mystery tweaks.
+                </p>
+                <div className="mt-4 space-y-3">
+                  {runtimeState.registry_presets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      className="w-full rounded-[1.25rem] border border-border bg-surface-muted/70 px-4 py-4 text-left hover:bg-hover disabled:cursor-not-allowed disabled:opacity-55"
+                      disabled={!preset.allowed_now}
+                      onClick={() => onPreviewRegistryPreset({ preset_id: preset.id, process_id: trackedProcessId ?? undefined })}
+                      type="button"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-text">{preset.title}</p>
+                        <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
+                          {preset.requires_admin ? 'Admin required' : 'User scope'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted">{preset.expected_benefit}</p>
+                      <p className="mt-2 text-sm leading-6 text-muted">
+                        {preset.allowed_now ? preset.target_state : preset.blocking_reason ?? preset.current_state}
+                      </p>
+                      {!preset.allowed_now && preset.next_action ? (
+                        <p className="mt-2 text-sm leading-6 text-text">{preset.next_action}</p>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold tracking-tight text-text">Profile</p>
@@ -260,6 +310,9 @@ export function OptimizationPage(props: OptimizationPageProps) {
                       ? `Baseline captured for ${benchmarkBaseline.game_name}. Run a comparison after testing a preset.`
                       : stateCopy.noBenchmark}
                 </p>
+                {latestBenchmark ? (
+                  <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark.recommended_next_step}</p>
+                ) : null}
                 {latestBenchmark ? (
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     <div className="rounded-[1.25rem] border border-border bg-surface-muted/70 px-3 py-3 text-sm text-muted">
@@ -328,4 +381,10 @@ export function OptimizationPage(props: OptimizationPageProps) {
       </section>
     </div>
   )
+}
+
+function settingsLabel(count: number) {
+  if (count === 0) return 'No presets'
+  if (count === 1) return '1 preset'
+  return `${count} presets`
 }

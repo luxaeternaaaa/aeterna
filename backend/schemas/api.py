@@ -72,6 +72,7 @@ class BenchmarkWindow(BaseModel):
     capture_source: str
     game_name: str
     process_id: int | None = None
+    session_id: str | None = None
     fps_avg: float
     frametime_avg_ms: float
     frametime_p95_ms: float
@@ -97,11 +98,16 @@ class BenchmarkReport(BaseModel):
     created_at: str
     profile_id: str | None = None
     game_name: str
+    session_id: str | None = None
+    action_id: str | None = None
+    snapshot_id: str | None = None
+    evidence_quality: Literal["live", "degraded", "demo", "disabled"] = "demo"
     baseline: BenchmarkWindow
     current: BenchmarkWindow
     delta: BenchmarkDelta
-    verdict: Literal["improved", "mixed", "regressed"]
+    verdict: Literal["better", "mixed", "worse", "inconclusive"]
     summary: str
+    recommended_next_step: str
 
 
 class FeatureFlags(BaseModel):
@@ -122,6 +128,8 @@ class SystemSettings(BaseModel):
     telemetry_mode: Literal["demo", "live", "disabled"] = "demo"
     automation_mode: Literal["manual", "assisted", "trusted_profiles"] = "manual"
     automation_allowlist: list[Literal["process_priority", "cpu_affinity", "power_plan"]] = Field(default_factory=list)
+    registry_presets_enabled: bool = False
+    show_advanced_registry_details: bool = False
 
 
 class ModelRecord(BaseModel):
@@ -145,6 +153,22 @@ class SnapshotRecord(BaseModel):
     kind: str
     created_at: str
     note: str
+    surface: Literal["config"] = "config"
+
+
+class ActivityEntry(BaseModel):
+    id: str
+    timestamp: str
+    category: str
+    action: str
+    detail: str
+    risk: str
+    snapshot_id: str | None = None
+    session_id: str | None = None
+    action_id: str | None = None
+    can_undo: bool
+    proof_link: str | None = None
+    blocked_by_policy: bool = False
 
 
 class LogRecord(BaseModel):
@@ -179,6 +203,9 @@ class OptimizationSummary(BaseModel):
     spike_probability: float
     confidence: float
     model_source: str = "heuristic"
+    next_action: str | None = None
+    primary_blocker: str | None = None
+    proof_state: Literal["missing-baseline", "baseline-ready", "comparison-ready", "blocked"] | None = None
 
 
 class BuildMetadata(BaseModel):
@@ -220,6 +247,8 @@ class SessionState(BaseModel):
     active_snapshot_ids: list[str] = Field(default_factory=list)
     telemetry_source: Literal["demo", "live", "disabled"] = "demo"
     auto_restore_pending: bool = False
+    pending_registry_restore: bool = False
+    pending_registry_snapshot_id: str | None = None
     detected_candidate_name: str | None = None
     detected_candidate_pid: int | None = None
     recommended_profile_id: str | None = None

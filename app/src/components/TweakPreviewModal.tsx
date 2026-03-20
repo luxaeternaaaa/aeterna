@@ -49,7 +49,21 @@ export function TweakPreviewModal({ changes, description, onCancel, onConfirm, r
             <p className="text-xs uppercase tracking-[0.18em] text-muted">Rollback</p>
             <p className="mt-2 text-sm leading-6 text-text">{trust.rollback_available ? 'Available immediately' : 'Not available'}</p>
           </div>
+          <div className="rounded-2xl border border-border bg-surface-muted/60 px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Scope</p>
+            <p className="mt-2 text-sm leading-6 text-text">{trust.scope ?? 'session'}</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-surface-muted/60 px-4 py-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Admin</p>
+            <p className="mt-2 text-sm leading-6 text-text">{trust.admin_required ? 'Required for this action' : 'Not required'}</p>
+          </div>
         </div>
+        {trust.blocking_reason ? (
+          <div className="mt-4 rounded-2xl border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-text">
+            <p>Blocking reason: {trust.blocking_reason}</p>
+            {trust.next_action ? <p className="mt-2">Next action: {trust.next_action}</p> : null}
+          </div>
+        ) : null}
         <label className="mt-5 flex items-start gap-3 rounded-2xl border border-border bg-surface-muted/60 px-4 py-4 text-sm text-text">
           <input checked={confirmed} className="mt-1 h-4 w-4 accent-accent" onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
           <span>I understand the effect of this tweak on my device and I want Aeterna to apply it now.</span>
@@ -58,7 +72,7 @@ export function TweakPreviewModal({ changes, description, onCancel, onConfirm, r
           <button className="rounded-full border border-border px-4 py-2 text-sm hover:bg-hover" onClick={onCancel} type="button">
             Cancel
           </button>
-          <button className="rounded-full bg-text px-4 py-2 text-sm text-surface disabled:opacity-45" disabled={!confirmed} onClick={onConfirm} type="button">
+          <button className="rounded-full bg-text px-4 py-2 text-sm text-surface disabled:opacity-45" disabled={!confirmed || Boolean(trust.blocking_reason)} onClick={onConfirm} type="button">
             Apply tweak
           </button>
         </div>

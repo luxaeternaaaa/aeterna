@@ -69,6 +69,7 @@ export interface BenchmarkWindow {
   capture_source: string
   game_name: string
   process_id?: number | null
+  session_id?: string | null
   fps_avg: number
   frametime_avg_ms: number
   frametime_p95_ms: number
@@ -94,11 +95,16 @@ export interface BenchmarkReport {
   created_at: string
   profile_id?: string | null
   game_name: string
+  session_id?: string | null
+  action_id?: string | null
+  snapshot_id?: string | null
+  evidence_quality: 'live' | 'degraded' | 'demo' | 'disabled'
   baseline: BenchmarkWindow
   current: BenchmarkWindow
   delta: BenchmarkDelta
-  verdict: 'improved' | 'mixed' | 'regressed'
+  verdict: 'better' | 'mixed' | 'worse' | 'inconclusive'
   summary: string
+  recommended_next_step: string
 }
 
 export interface FeatureFlags {
@@ -119,6 +125,8 @@ export interface SystemSettings {
   telemetry_mode: 'demo' | 'live' | 'disabled'
   automation_mode: 'manual' | 'assisted' | 'trusted_profiles'
   automation_allowlist: Array<'process_priority' | 'cpu_affinity' | 'power_plan'>
+  registry_presets_enabled: boolean
+  show_advanced_registry_details: boolean
 }
 
 export interface ModelRecord {
@@ -142,6 +150,7 @@ export interface SnapshotRecord {
   kind: string
   created_at: string
   note: string
+  surface?: 'config'
 }
 
 export interface LogRecord {
@@ -166,6 +175,9 @@ export interface OptimizationSummary {
   spike_probability: number
   confidence: number
   model_source: string
+  next_action?: string
+  primary_blocker?: string | null
+  proof_state?: 'missing-baseline' | 'baseline-ready' | 'comparison-ready' | 'blocked'
 }
 
 export interface HealthPayload {
@@ -219,6 +231,8 @@ export interface SessionState {
   active_snapshot_ids: string[]
   telemetry_source: 'demo' | 'live' | 'disabled'
   auto_restore_pending: boolean
+  pending_registry_restore: boolean
+  pending_registry_snapshot_id?: string | null
   detected_candidate_name?: string | null
   detected_candidate_pid?: number | null
   recommended_profile_id?: string | null
@@ -242,6 +256,24 @@ export interface CaptureStatus {
   quality: string
   helper_available: boolean
   note?: string | null
+}
+
+export interface RegistryPresetSummary {
+  id: string
+  title: string
+  category: string
+  risk: string
+  requires_admin: boolean
+  requires_baseline: boolean
+  allowed_now: boolean
+  blocking_reason?: string | null
+  next_action?: string | null
+  expected_benefit: string
+  current_state: string
+  target_state: string
+  affected_values_count: number
+  scope: string
+  advanced_details: string[]
 }
 
 export interface BootstrapPayload {
@@ -288,7 +320,10 @@ export interface ActivityEntry {
   risk: string
   snapshot_id: string | null
   session_id: string | null
+  action_id?: string | null
   can_undo: boolean
+  proof_link?: string | null
+  blocked_by_policy: boolean
 }
 
 export interface OptimizationRuntimeState {
@@ -296,6 +331,7 @@ export interface OptimizationRuntimeState {
   advanced_processes: ProcessSummary[]
   selected_process: SelectedProcessState | null
   power_plans: PowerPlanSummary[]
+  registry_presets: RegistryPresetSummary[]
   activity: ActivityEntry[]
   last_snapshot: SnapshotRecord | null
   session: SessionState
@@ -311,6 +347,11 @@ export interface ApplyTweakRequest {
   power_plan_guid?: string
 }
 
+export interface ApplyRegistryPresetRequest {
+  preset_id: string
+  process_id?: number
+}
+
 export interface AttachSessionRequest {
   process_id: number
   process_name: string
@@ -320,6 +361,15 @@ export interface ApplyTweakResponse {
   state: OptimizationRuntimeState
   snapshot: SnapshotRecord
   activity: ActivityEntry
+}
+
+export interface ApplyRegistryPresetResponse {
+  status: 'applied' | 'blocked'
+  state: OptimizationRuntimeState
+  snapshot: SnapshotRecord | null
+  activity: ActivityEntry
+  blocking_reason?: string | null
+  next_action?: string | null
 }
 
 export interface RollbackResponse {
@@ -339,11 +389,23 @@ export interface MlInferencePayload {
   shap_preview?: string[]
 }
 
+export interface MlRuntimeTruth {
+  runtime_mode: 'onnx' | 'fallback' | 'unavailable'
+  model_source: string
+  model_version?: string | null
+  active_label: string
+  summary: string
+}
+
 export interface TrustStatusPresentation {
   current_state: string
   target_state: string
   policy_status: string
   rollback_available: boolean
+  blocking_reason?: string | null
+  next_action?: string | null
+  admin_required?: boolean
+  scope?: string
 }
 
 export interface StartupCachePayload {

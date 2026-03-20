@@ -46,6 +46,10 @@ pub fn session_state_path() -> PathBuf {
     runtime_data_dir().join("session_state.json")
 }
 
+pub fn benchmark_baseline_path() -> PathBuf {
+    runtime_data_dir().join("benchmark_baseline.json")
+}
+
 pub fn startup_diagnostics_path() -> PathBuf {
     runtime_data_dir().join("startup_diagnostics.json")
 }

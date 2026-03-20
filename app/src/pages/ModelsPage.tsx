@@ -1,17 +1,28 @@
-import type { ModelRecord } from '../types'
+import type { MlInferencePayload, MlRuntimeTruth, ModelRecord } from '../types'
 import { Panel } from '../components/Panel'
 import { stateCopy } from '../lib/stateCopy'
+import { formatTimestamp } from '../lib/time'
 
 interface ModelsPageProps {
+  inference: MlInferencePayload | null
   models: ModelRecord[]
   onActivate: (id: string) => void
   onRollback: (id: string) => void
+  runtimeTruth: MlRuntimeTruth | null
 }
 
-export function ModelsPage({ models, onActivate, onRollback }: ModelsPageProps) {
+export function ModelsPage({ inference, models, onActivate, onRollback, runtimeTruth }: ModelsPageProps) {
   const activeModel = models.find((model) => model.status.toLowerCase().includes('active')) ?? models[0] ?? null
   const onnxModels = models.filter((model) => model.inference_mode === 'onnx').length
   const fallbackModels = models.filter((model) => model.inference_mode !== 'onnx').length
+  const runtimeLabel =
+    runtimeTruth?.runtime_mode === 'onnx'
+      ? runtimeTruth.active_label
+      : runtimeTruth?.runtime_mode === 'fallback'
+        ? 'Fallback runtime available'
+        : activeModel
+          ? activeModel.name
+          : 'No runtime recommendation path'
 
   return (
     <div className="space-y-6">
@@ -23,21 +34,33 @@ export function ModelsPage({ models, onActivate, onRollback }: ModelsPageProps) 
         >
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Active model</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-text">{activeModel ? activeModel.name : 'No active model'}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Current runtime</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-text">{runtimeLabel}</p>
               <p className="mt-2 text-sm leading-6 text-muted">
-                {activeModel ? `${activeModel.family} | v${activeModel.version}` : 'The runtime has not loaded any artifact yet.'}
+                {runtimeTruth
+                  ? runtimeTruth.summary
+                  : activeModel
+                    ? `${activeModel.family} | v${activeModel.version}`
+                    : 'No runtime-backed or fallback recommendation path has been loaded yet.'}
               </p>
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">ONNX ready</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{onnxModels}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Catalog entries currently backed by a real ONNX execution path.</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Runtime mode</p>
+              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{runtimeTruth?.runtime_mode ?? 'unavailable'}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                {runtimeTruth?.runtime_mode === 'onnx'
+                  ? 'Recommendations are backed by a runtime inference path.'
+                  : runtimeTruth?.runtime_mode === 'fallback'
+                    ? 'Recommendations can still run, but only as fallback guidance.'
+                    : 'No recommendation authority is currently available.'}
+              </p>
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Fallback only</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{fallbackModels}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Entries that still depend on metadata or heuristic behavior.</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Registered artifacts</p>
+              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{models.length}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                {onnxModels} ONNX-ready, {fallbackModels} fallback-only catalog entries.
+              </p>
             </div>
           </div>
         </Panel>
@@ -49,13 +72,19 @@ export function ModelsPage({ models, onActivate, onRollback }: ModelsPageProps) 
         >
           <div className="space-y-3">
             <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              ONNX entries are the only ones that count as real runtime inference.
+              {runtimeTruth?.runtime_mode === 'onnx'
+                ? 'Current recommendations are runtime-backed. Benchmark proof still outranks model output.'
+                : 'Fallback runtime is advisory only. It can rank pressure, but it does not prove a tweak helped.'}
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              Fallback entries stay visible so the UI never pretends the inference stack is more mature than it is.
+              {runtimeTruth?.runtime_mode === 'fallback'
+                ? `Current source: ${runtimeTruth.model_source}. Keep it visible so the UI never pretends the inference stack is more mature than it is.`
+                : 'Fallback entries stay visible so the UI never pretends the inference stack is more mature than it is.'}
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              Model metrics matter only if they are paired with a working local runtime path and visible explainability.
+              {inference
+                ? `Latest recommendation confidence ${(inference.confidence * 100).toFixed(0)}%. Treat it as ranking guidance until Compare closes the proof loop.`
+                : 'Model metrics matter only if they are paired with a working local runtime path and visible explainability.'}
             </div>
           </div>
         </Panel>
@@ -78,7 +107,7 @@ export function ModelsPage({ models, onActivate, onRollback }: ModelsPageProps) 
                 <div>
                   <p className="text-base font-semibold tracking-tight text-text">{model.name}</p>
                   <p className="mt-1 text-sm text-muted">
-                    {model.family} | v{model.version} | {new Date(model.created_at).toLocaleString()}
+                    {model.family} | v{model.version} | {formatTimestamp(model.created_at, 'Artifact time not recorded')}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">

@@ -3,6 +3,7 @@ import { useDeferredValue, useMemo, useState } from 'react'
 import type { ActivityEntry, LogRecord } from '../types'
 import { Panel } from '../components/Panel'
 import { stateCopy } from '../lib/stateCopy'
+import { formatTimestamp } from '../lib/time'
 
 interface LogsPageProps {
   activity: ActivityEntry[]
@@ -27,8 +28,8 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
     <div className="space-y-6">
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel
-          title="Rollback timeline"
-          subtitle="Every reversible change should stay visible, explainable, and easy to inspect."
+          title="Runtime timeline"
+          subtitle="Every session change, proof event, and rollback step should stay visible, explainable, and easy to inspect."
           variant="primary"
         >
           <div className="grid gap-3 md:grid-cols-3">
@@ -52,7 +53,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
 
         <Panel
           title="Diagnostics posture"
-          subtitle="Support logs stay available, but they never outrank the user-facing rollback history."
+          subtitle="Support logs stay available, but they never outrank the user-facing runtime history."
           variant="utility"
         >
           <div className="space-y-3">
@@ -60,7 +61,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
               Developer logs exist for troubleshooting, not as the main product narrative.
             </div>
             <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              If a user cannot understand what changed from the left column alone, the product is still hiding too much behind implementation detail.
+              Runtime rollback lives here. Settings and model snapshots stay in Settings so the product does not mix session undo with config history.
             </div>
           </div>
         </Panel>
@@ -94,6 +95,9 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
                   <div className="flex flex-wrap gap-2">
                     <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{item.category}</span>
                     <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{item.risk}</span>
+                    {item.blocked_by_policy ? (
+                      <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">Blocked by policy</span>
+                    ) : null}
                     <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
                       {item.can_undo ? 'Undo ready' : 'Recorded'}
                     </span>
@@ -101,12 +105,22 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
                 </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div className="rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    Session {item.session_id ?? 'n/a'} | Snapshot {item.snapshot_id ?? 'n/a'}
+                    Session {item.session_id ?? 'n/a'} | Action {item.action_id ?? 'n/a'}
                   </div>
                   <div className="rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    {new Date(item.timestamp).toLocaleString()}
+                    {formatTimestamp(item.timestamp)}
                   </div>
                 </div>
+                {item.snapshot_id ? (
+                  <div className="mt-3 rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
+                    Snapshot {item.snapshot_id}
+                  </div>
+                ) : null}
+                {item.proof_link ? (
+                  <div className="mt-3 rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
+                    Benchmark {item.proof_link}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -134,7 +148,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
                   </div>
                   <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{log.severity}</span>
                 </div>
-                <p className="mt-3 text-sm text-muted">{new Date(log.timestamp).toLocaleString()}</p>
+                <p className="mt-3 text-sm text-muted">{formatTimestamp(log.timestamp)}</p>
               </div>
             ))}
           </div>

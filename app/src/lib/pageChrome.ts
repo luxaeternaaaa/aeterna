@@ -1,4 +1,4 @@
-import type { LogRecord, ModelRecord, OptimizationRuntimeState, PageId, SecuritySummary, SessionState, SystemSettings } from '../types'
+import type { LogRecord, MlRuntimeTruth, ModelRecord, OptimizationRuntimeState, PageId, SecuritySummary, SessionState, SystemSettings } from '../types'
 
 export type ThemeMode = 'dark' | 'light'
 
@@ -14,6 +14,7 @@ type PageChromeInput = {
   activePage: PageId
   connectionTitle: string
   logs: LogRecord[]
+  mlRuntimeTruth: MlRuntimeTruth | null
   models: ModelRecord[]
   optimizationRuntime: OptimizationRuntimeState
   security: SecuritySummary
@@ -34,7 +35,7 @@ function telemetryBadge(mode: SystemSettings['telemetry_mode']) {
 }
 
 export function getPageChrome(input: PageChromeInput): PageChrome {
-  const { activePage, connectionTitle, logs, models, optimizationRuntime, security, session, settings, theme, undoReadyCount } = input
+  const { activePage, connectionTitle, logs, mlRuntimeTruth, models, optimizationRuntime, security, session, settings, theme, undoReadyCount } = input
   const onnxModels = models.filter((model) => model.inference_mode === 'onnx').length
   const fallbackModels = models.filter((model) => model.inference_mode !== 'onnx').length
 
@@ -73,13 +74,17 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
         title: 'ML reality check',
         subtitle: 'Separate real runtime-backed inference from fallback behavior so the interface never oversells the ML layer.',
         question: 'What is actually real here, and should I trust the model output yet?',
-        badges: [`${models.length} registered`, `${onnxModels} ONNX`, `${fallbackModels} fallback`],
+        badges: [
+          `${models.length} registered`,
+          mlRuntimeTruth ? `Runtime ${mlRuntimeTruth.runtime_mode}` : `${onnxModels} ONNX`,
+          `${fallbackModels} fallback`,
+        ],
       }
     case 'logs':
       return {
         eyebrow: 'Activity',
-        title: 'Rollback history',
-        subtitle: 'Track every reversible change so the optimizer feels inspectable and recoverable instead of magical.',
+        title: 'Activity & rollback',
+        subtitle: 'Track runtime changes, proof events, and restores so the optimizer feels inspectable and recoverable instead of magical.',
         question: 'What changed, what can still be undone, and what failed without explanation?',
         badges: [`${optimizationRuntime.activity.length} activity`, `${undoReadyCount} undo-ready`, `${logs.length} diagnostics`],
       }

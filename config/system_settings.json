@@ -6,5 +6,7 @@
   "allow_outbound_sync": false,
   "telemetry_mode": "demo",
   "automation_mode": "manual",
-  "automation_allowlist": []
+  "automation_allowlist": [],
+  "registry_presets_enabled": false,
+  "show_advanced_registry_details": false
 }

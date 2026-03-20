@@ -13,13 +13,15 @@ use crate::{
     activity,
     models::{CaptureStatus, DetectedGame, SessionState},
     paths::{feature_flags_path, live_telemetry_path, session_state_path, system_settings_path},
-    power, presentmon,
+    power, presentmon, registry,
     processes::{self, logical_processor_count},
     snapshots,
 };
 
 fn now() -> String {
-    OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("current utc time should format as rfc3339")
 }
 
 fn read_json(path: std::path::PathBuf, fallback: Value) -> Value {
@@ -77,6 +79,8 @@ pub fn read_session_state() -> SessionState {
             telemetry_source: telemetry_mode(),
             capture_source: "counters-fallback".into(),
             capture_quality: "idle".into(),
+            pending_registry_restore: false,
+            pending_registry_snapshot_id: None,
             ..SessionState::default()
         })
 }
@@ -84,6 +88,22 @@ pub fn read_session_state() -> SessionState {
 fn write_session_state(state: &SessionState) {
     let payload = serde_json::to_value(state).unwrap_or_else(|_| json!({ "state": "idle" }));
     write_json(session_state_path(), &payload);
+}
+
+pub fn sync_pending_restore_state() {
+    let mut session = read_session_state();
+    if let Some(snapshot) = snapshots::pending_registry_restore() {
+        session.pending_registry_restore = true;
+        session.pending_registry_snapshot_id = Some(snapshot.id.clone());
+        session.auto_restore_pending = true;
+        if session.capture_reason.is_none() {
+            session.capture_reason = Some("A previous system preset still needs to be restored before another one can be applied.".into());
+        }
+    } else {
+        session.pending_registry_restore = false;
+        session.pending_registry_snapshot_id = None;
+    }
+    write_session_state(&session);
 }
 
 fn append_live_point(point: Value) {
@@ -99,6 +119,7 @@ fn session_identifier(pid: u32) -> String {
 }
 
 pub fn attach_session(process_id: u32, process_name: String, helper_available: bool) -> SessionState {
+    sync_pending_restore_state();
     let mut session = read_session_state();
     let attached_at = now();
     session.session_id = Some(session_identifier(process_id));
@@ -109,7 +130,7 @@ pub fn attach_session(process_id: u32, process_name: String, helper_available: b
     session.attached_at = Some(attached_at.clone());
     session.last_seen_at = Some(attached_at);
     session.telemetry_source = telemetry_mode();
-    session.auto_restore_pending = !session.active_snapshot_ids.is_empty();
+    session.auto_restore_pending = !session.active_snapshot_ids.is_empty() || session.pending_registry_restore;
     session.detected_candidate_pid = Some(process_id);
     session.detected_candidate_name = Some(process_name.clone());
     session.recommended_profile_id = recommended_profile(&process_name);
@@ -142,6 +163,7 @@ pub fn end_session() -> Result<SessionState, String> {
     session.process_id = None;
     session.process_name = None;
     write_session_state(&session);
+    sync_pending_restore_state();
     Ok(session)
 }
 
@@ -163,7 +185,7 @@ pub fn untrack_snapshot(snapshot_id: &str) {
     session.active_snapshot_ids.retain(|item| item != snapshot_id);
     if session.active_snapshot_ids.is_empty() {
         session.active_tweaks.clear();
-        session.auto_restore_pending = false;
+        session.auto_restore_pending = session.pending_registry_restore;
     }
     write_session_state(&session);
 }
@@ -207,6 +229,10 @@ fn restore_for_session_end(session: &mut SessionState, restore_process_state: bo
         if let Some(guid) = snapshot.power_plan_guid.as_deref() {
             let _ = power::set_active_power_plan(guid);
         }
+        if !snapshot.registry_entries.is_empty() {
+            let _ = registry::restore_snapshot(&snapshot);
+        }
+        let _ = snapshots::mark_snapshot_restored(snapshot_id);
         let _ = activity::append(snapshots::activity(
             "restore",
             "Automatic restore",
@@ -219,7 +245,7 @@ fn restore_for_session_end(session: &mut SessionState, restore_process_state: bo
     }
     session.active_tweaks.clear();
     session.active_snapshot_ids.clear();
-    session.auto_restore_pending = false;
+    session.auto_restore_pending = session.pending_registry_restore;
     session.restored_at = Some(now());
     Ok(())
 }

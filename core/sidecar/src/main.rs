@@ -6,6 +6,7 @@ mod policy;
 mod power;
 mod presentmon;
 mod processes;
+mod registry;
 mod snapshots;
 mod telemetry;
 
@@ -17,8 +18,9 @@ use std::{
 };
 
 use models::{
-    ApplyTweakRequest, ApplyTweakResponse, AttachSessionRequest, InspectRequest, IpcRequest, IpcResponse,
-    MlInferenceRequest, OptimizationStatePayload, RollbackRequest, RollbackResponse, StartupDiagnostics,
+    ApplyRegistryPresetRequest, ApplyRegistryPresetResponse, ApplyTweakRequest, ApplyTweakResponse, AttachSessionRequest,
+    InspectRequest, IpcRequest, IpcResponse, MlInferenceRequest, OptimizationStatePayload, RollbackRequest,
+    RollbackResponse, StartupDiagnostics,
 };
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -33,7 +35,9 @@ use windows_sys::Win32::{
 const SYNCHRONIZE_ACCESS: u32 = 0x00100000;
 
 fn now() -> String {
-    OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("current utc time should format as rfc3339")
 }
 
 fn write_startup_diagnostics() {
@@ -79,6 +83,7 @@ fn recommended_power_plan_guid(profile: &str) -> Result<Option<String>, String> 
 }
 
 fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> {
+    telemetry::sync_pending_restore_state();
     let advanced_processes = processes::list_processes(24)?;
     let selected_process = process_id
         .map(|pid| {
@@ -98,6 +103,7 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
         advanced_processes,
         selected_process,
         power_plans: power::list_power_plans()?,
+        registry_presets: registry::preset_summaries(&session, policy::system_settings().show_advanced_registry_details),
         activity: activity::list_recent(12),
         last_snapshot: snapshots::latest_snapshot(),
         session,
@@ -160,6 +166,7 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             draft.session_id = session_id.clone();
             let snapshot = snapshots::create_snapshot(draft)?;
             processes::apply_priority(pid, request.priority.as_deref().unwrap_or("above_normal"))?;
+            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
             telemetry::track_tweak(&snapshot.id, "process_priority");
             let entry = activity::append(snapshots::activity(
                 "tweak",
@@ -186,6 +193,7 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             draft.session_id = session_id.clone();
             let snapshot = snapshots::create_snapshot(draft)?;
             processes::apply_affinity(pid, request.affinity_preset.as_deref().unwrap_or("balanced_threads"))?;
+            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
             telemetry::track_tweak(&snapshot.id, "cpu_affinity");
             let entry = activity::append(snapshots::activity(
                 "tweak",
@@ -211,6 +219,7 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             draft.session_id = session_id.clone();
             let snapshot = snapshots::create_snapshot(draft)?;
             power::set_active_power_plan(&target)?;
+            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
             telemetry::track_tweak(&snapshot.id, "power_plan");
             let entry = activity::append(snapshots::activity(
                 "tweak",
@@ -227,6 +236,70 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
     }
 }
 
+fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyRegistryPresetResponse, String> {
+    let session = telemetry::read_session_state();
+    let session_id = session.session_id.clone();
+    let summaries = registry::preset_summaries(&session, true);
+    let summary = summaries
+        .into_iter()
+        .find(|preset| preset.id == request.preset_id)
+        .ok_or_else(|| format!("Unknown registry preset: {}", request.preset_id))?;
+    if let Some(reason) = summary.blocking_reason.clone() {
+        let entry = activity::append(models::ActivityEntry {
+            id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+            timestamp: now(),
+            category: "blocked".into(),
+            action: "System preset blocked".into(),
+            detail: reason.clone(),
+            risk: summary.risk.clone(),
+            snapshot_id: None,
+            session_id: session_id.clone(),
+            action_id: None,
+            can_undo: false,
+            proof_link: None,
+            blocked_by_policy: true,
+        })?;
+        return Ok(ApplyRegistryPresetResponse {
+            status: "blocked".into(),
+            state: inspect(request.process_id.or(session.process_id))?,
+            snapshot: None,
+            activity: entry,
+            blocking_reason: Some(reason),
+            next_action: summary.next_action,
+        });
+    }
+    policy::require_registry_preset_allowed(&session, summary.requires_admin)?;
+    let draft = registry::build_snapshot(&request.preset_id, session_id.clone())?;
+    let snapshot = snapshots::create_snapshot(draft)?;
+    let stored = snapshots::load_snapshot(&snapshot.id)?;
+    registry::apply_snapshot(&stored)?;
+    let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+    telemetry::track_tweak(&snapshot.id, &format!("registry:{}", request.preset_id));
+    telemetry::sync_pending_restore_state();
+    let entry = activity::append(models::ActivityEntry {
+        id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+        timestamp: now(),
+        category: "registry".into(),
+        action: "System preset applied".into(),
+        detail: format!("Applied {}.", summary.title),
+        risk: summary.risk,
+        snapshot_id: Some(snapshot.id.clone()),
+        session_id,
+        action_id: Some(snapshot.id.clone()),
+        can_undo: true,
+        proof_link: None,
+        blocked_by_policy: false,
+    })?;
+    Ok(ApplyRegistryPresetResponse {
+        status: "applied".into(),
+        state: inspect(request.process_id.or(session.process_id))?,
+        snapshot: Some(snapshot),
+        activity: entry,
+        blocking_reason: None,
+        next_action: None,
+    })
+}
+
 fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
     let snapshot = snapshots::load_snapshot(&request.snapshot_id)?;
     if let Some(process) = snapshot.process.as_ref() {
@@ -235,10 +308,15 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
     if let Some(guid) = snapshot.power_plan_guid.as_deref() {
         power::set_active_power_plan(guid)?;
     }
+    if !snapshot.registry_entries.is_empty() {
+        registry::restore_snapshot(&snapshot)?;
+    }
+    let _ = snapshots::mark_snapshot_restored(&request.snapshot_id);
     telemetry::untrack_snapshot(&request.snapshot_id);
+    telemetry::sync_pending_restore_state();
     let entry = activity::append(snapshots::activity(
-        "restore",
-        "Rollback completed",
+        if snapshot.registry_entries.is_empty() { "restore" } else { "registry-restore" },
+        if snapshot.registry_entries.is_empty() { "Rollback completed" } else { "System preset restored" },
         format!("Restored {}.", snapshot.note),
         "low",
         Some(snapshot.id.clone()),
@@ -271,12 +349,16 @@ fn dispatch(request: IpcRequest) -> Result<Value, String> {
         "apply_tweak" => Ok(json!(apply(
             serde_json::from_value::<ApplyTweakRequest>(request.payload).map_err(|error| error.to_string())?
         )?)),
+        "apply_registry_preset" => Ok(json!(apply_registry_preset(
+            serde_json::from_value::<ApplyRegistryPresetRequest>(request.payload).map_err(|error| error.to_string())?
+        )?)),
         "rollback" => Ok(json!(rollback(
             serde_json::from_value::<RollbackRequest>(request.payload).map_err(|error| error.to_string())?
         )?)),
         "ml_inference" => Ok(json!(ml::infer(
             serde_json::from_value::<MlInferenceRequest>(request.payload).map_err(|error| error.to_string())?
         ))),
+        "ml_runtime_truth" => Ok(json!(ml::runtime_truth())),
         _ => Err(format!("Unknown command: {}", request.command)),
     }
 }
@@ -301,6 +383,7 @@ fn spawn_parent_watch(parent_pid: u32) {
 fn main() {
     let _ = paths::ensure_runtime_dirs();
     write_startup_diagnostics();
+    telemetry::sync_pending_restore_state();
     telemetry::spawn_collector();
     if let Some(value) = std::env::args()
         .collect::<Vec<_>>()

@@ -9,9 +9,11 @@ import { readStartupCache, writeStartupCache } from './lib/cache'
 import { featureConsent } from './lib/consent'
 import { getPageChrome, type ThemeMode } from './lib/pageChrome'
 import {
+  applyRegistryPreset,
   applyOptimizationTweak,
   attachOptimizationSession,
   endOptimizationSession,
+  getMlRuntimeTruth,
   inspectOptimization,
   rollbackOptimizationTweak,
   runOptimizationInference,
@@ -24,7 +26,10 @@ import { OptimizationPage } from './pages/OptimizationPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type {
+  ApplyRegistryPresetRequest,
+  ApplyRegistryPresetResponse,
   ApplyTweakRequest,
+  ApplyTweakResponse,
   BenchmarkReport,
   BenchmarkWindow,
   BootstrapPayload,
@@ -34,6 +39,7 @@ import type {
   GameProfile,
   LogRecord,
   MlInferencePayload,
+  MlRuntimeTruth,
   ModelRecord,
   OptimizationSummary,
   OptimizationRuntimeState,
@@ -49,7 +55,9 @@ import type {
 type ConnectionState = { title: string; detail: string }
 type PendingConsent = { description: string; key: keyof FeatureFlags; title: string }
 type LoadedState = { dashboard: boolean; logs: boolean; optimization: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
-type PendingTweak = { changes: string[]; description: string; request: ApplyTweakRequest; risk: string; title: string; trust: TrustStatusPresentation }
+type PendingAction =
+  | { changes: string[]; description: string; request: ApplyTweakRequest; risk: string; title: string; trust: TrustStatusPresentation; kind: 'tweak' }
+  | { changes: string[]; description: string; request: ApplyRegistryPresetRequest; risk: string; title: string; trust: TrustStatusPresentation; kind: 'registry' }
 
 const THEME_STORAGE_KEY = 'aeterna-theme'
 
@@ -77,10 +85,21 @@ const initialSystem: SystemSettings = {
   telemetry_mode: 'demo',
   automation_mode: 'manual',
   automation_allowlist: [],
+  registry_presets_enabled: false,
+  show_advanced_registry_details: false,
 }
 const initialDashboard: DashboardPayload = { stats: [], history: [], recommendations: [], session_health: 'Loading', mode: 'demo', badge: 'Loading' }
 const initialSecurity: SecuritySummary = { status: 'low', label: 'normal-session', confidence: 0.89, auto_scan_enabled: false }
-const initialOptimization: OptimizationSummary = { optimizer_enabled: false, risk_label: 'low', spike_probability: 0.18, confidence: 0.62, model_source: 'local-summary' }
+const initialOptimization: OptimizationSummary = {
+  optimizer_enabled: false,
+  risk_label: 'low',
+  spike_probability: 0.18,
+  confidence: 0.62,
+  model_source: 'local-summary',
+  next_action: 'Attach a game session and capture a baseline before testing a safe preset.',
+  primary_blocker: 'Performance optimizer is disabled in Settings.',
+  proof_state: 'blocked',
+}
 const initialOptimizationRuntime: OptimizationRuntimeState = {
   processes: [],
   advanced_processes: [],
@@ -94,6 +113,8 @@ const initialOptimizationRuntime: OptimizationRuntimeState = {
     active_snapshot_ids: [],
     telemetry_source: 'demo',
     auto_restore_pending: false,
+    pending_registry_restore: false,
+    pending_registry_snapshot_id: null,
     capture_source: 'counters-fallback',
     capture_quality: 'idle',
   },
@@ -105,6 +126,7 @@ const initialOptimizationRuntime: OptimizationRuntimeState = {
     helper_available: false,
     note: null,
   },
+  registry_presets: [],
 }
 const initialBuild: BuildMetadata = {
   version: '1.0.0',
@@ -129,8 +151,8 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard')
   const [connection, setConnection] = useState<ConnectionState>(initialConnection(cache?.bootstrap ?? null))
   const [dashboard, setDashboard] = useState(cache?.dashboard ?? initialDashboard)
-  const [featureFlags, setFeatureFlags] = useState(cache?.bootstrap?.settings.feature_flags ?? initialFlags)
-  const [settings, setSettings] = useState(cache?.bootstrap?.settings.system ?? initialSystem)
+  const [featureFlags, setFeatureFlags] = useState({ ...initialFlags, ...(cache?.bootstrap?.settings.feature_flags ?? {}) })
+  const [settings, setSettings] = useState({ ...initialSystem, ...(cache?.bootstrap?.settings.system ?? {}) })
   const [models, setModels] = useState<ModelRecord[]>(cache?.bootstrap?.models ?? [])
   const [profiles, setProfiles] = useState<GameProfile[]>(cache?.bootstrap?.profiles ?? [])
   const [build, setBuild] = useState<BuildMetadata>(cache?.bootstrap?.build ?? initialBuild)
@@ -143,12 +165,13 @@ export default function App() {
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
   const [session, setSession] = useState(cache?.bootstrap?.session ?? initialOptimizationRuntime.session)
   const [inference, setInference] = useState<MlInferencePayload | null>(null)
+  const [mlRuntimeTruth, setMlRuntimeTruth] = useState<MlRuntimeTruth | null>(null)
   const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null)
   const [realtime, setRealtime] = useState<TelemetryPoint | null>(cache?.dashboard?.history.at(-1) ?? null)
   const [diffText, setDiffText] = useState('')
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
-  const [pendingTweak, setPendingTweak] = useState<PendingTweak | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
@@ -163,6 +186,7 @@ export default function App() {
     activePage,
     connectionTitle: connection.title,
     logs,
+    mlRuntimeTruth,
     models,
     optimizationRuntime,
     security,
@@ -174,8 +198,8 @@ export default function App() {
 
   const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
-    setFeatureFlags(nextBootstrap.settings.feature_flags)
-    setSettings(nextBootstrap.settings.system)
+    setFeatureFlags({ ...initialFlags, ...nextBootstrap.settings.feature_flags })
+    setSettings({ ...initialSystem, ...nextBootstrap.settings.system })
     setModels(nextBootstrap.models)
     setProfiles(nextBootstrap.profiles)
     setBuild(nextBootstrap.build)
@@ -228,11 +252,15 @@ export default function App() {
   const loadOptimizationRuntime = useEffectEvent(async (processId?: number) => {
     const nextState = await inspectOptimization(processId)
     const sample = realtime ?? dashboardRef.current?.history.at(-1) ?? dashboard.history.at(-1) ?? null
-    const nextInference = sample ? await runOptimizationInference(sample) : null
+    const [nextInference, nextRuntimeTruth] = await Promise.all([
+      sample ? runOptimizationInference(sample) : Promise.resolve(null),
+      getMlRuntimeTruth(),
+    ])
     startTransition(() => {
       setOptimizationRuntime(nextState)
       setSession(nextState.session)
       setInference(nextInference)
+      setMlRuntimeTruth(nextRuntimeTruth)
       setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     })
   })
@@ -255,8 +283,8 @@ export default function App() {
         }
       : null
     startTransition(() => {
-      setFeatureFlags(nextFlags)
-      setSettings(nextSettings)
+      setFeatureFlags({ ...initialFlags, ...nextFlags })
+      setSettings({ ...initialSystem, ...nextSettings })
       setSnapshots(nextSnapshots)
       setLoaded((current) => ({ ...current, snapshots: true }))
     })
@@ -285,11 +313,6 @@ export default function App() {
       bootstrapRef.current = nextBootstrap
       writeStartupCache(nextBootstrap, dashboardRef.current)
     }
-  })
-
-  const mergeSnapshot = useEffectEvent((snapshot: SnapshotRecord | null) => {
-    if (!snapshot || ['process-priority', 'cpu-affinity', 'power-plan'].includes(snapshot.kind)) return
-    setSnapshots((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 12))
   })
 
   useEffect(() => {
@@ -354,8 +377,8 @@ export default function App() {
 
   useEffect(() => {
     if (activePage === 'dashboard' && !loaded.dashboard) void loadDashboard()
-    if (activePage === 'optimization' && !loaded.optimization) void loadOptimization()
-    if (activePage === 'optimization' && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
+    if ((activePage === 'dashboard' || activePage === 'optimization') && !loaded.optimization) void loadOptimization()
+    if ((activePage === 'optimization' || activePage === 'models') && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
     if ((activePage === 'dashboard' || activePage === 'optimization') && !benchmarkBaseline && !latestBenchmark) void loadBenchmarkState()
     if (activePage === 'security' && !loaded.security) void loadSecurity()
     if (activePage === 'logs' && !loaded.logs) void loadLogs()
@@ -400,6 +423,18 @@ export default function App() {
     await loadSettingsData()
   }
 
+  const updateRegistryPresetsEnabled = async (enabled: boolean) => {
+    await api.updateSystem({ ...settings, registry_presets_enabled: enabled })
+    await loadSettingsData()
+    await loadOptimizationRuntime(selectedProcessId ?? undefined)
+  }
+
+  const updateAdvancedRegistryDetails = async (enabled: boolean) => {
+    await api.updateSystem({ ...settings, show_advanced_registry_details: enabled })
+    await loadSettingsData()
+    await loadOptimizationRuntime(selectedProcessId ?? undefined)
+  }
+
   const inspectSnapshot = async (id: string) => setDiffText((await api.snapshotDiff(id)).diff)
   const restoreSnapshot = async (id: string) => {
     await api.restoreSnapshot(id)
@@ -410,7 +445,8 @@ export default function App() {
     if (request.kind === 'process_priority') {
       const name = optimizationRuntime.selected_process?.name ?? 'selected process'
       const currentPriority = optimizationRuntime.selected_process?.priority_label ?? 'Normal'
-      return setPendingTweak({
+      return setPendingAction({
+        kind: 'tweak',
         request,
         title: 'Raise process priority',
         description: `Aeterna will raise ${name} from ${currentPriority} to Above normal priority using the Windows scheduler. This change is session scoped, rollback-safe, and never touches game memory.`,
@@ -425,13 +461,17 @@ export default function App() {
           target_state: `${name} at Above normal priority`,
           policy_status: settings.automation_allowlist.includes('process_priority') ? 'allowed inside policy' : 'manual-only unless allowlisted',
           rollback_available: true,
+          blocking_reason: null,
+          admin_required: false,
+          scope: 'session',
         },
       })
     }
     if (request.kind === 'cpu_affinity') {
       const name = optimizationRuntime.selected_process?.name ?? 'selected process'
       const currentAffinity = optimizationRuntime.selected_process?.affinity_label ?? 'Current affinity'
-      return setPendingTweak({
+      return setPendingAction({
+        kind: 'tweak',
         request,
         title: 'Apply balanced CPU affinity',
         description: `Aeterna will move ${name} from ${currentAffinity} to a reversible balanced affinity preset. Expert one-thread-per-core reduction stays out of the default safe path.`,
@@ -446,12 +486,16 @@ export default function App() {
           target_state: `${name} using balanced affinity`,
           policy_status: settings.automation_allowlist.includes('cpu_affinity') ? 'allowed inside policy' : 'manual-only unless allowlisted',
           rollback_available: true,
+          blocking_reason: null,
+          admin_required: false,
+          scope: 'session',
         },
       })
     }
     const plan = optimizationRuntime.power_plans.find((item) => item.guid === request.power_plan_guid)
     const activePlan = optimizationRuntime.power_plans.find((item) => item.active)
-    setPendingTweak({
+    setPendingAction({
+      kind: 'tweak',
       request,
       title: `Switch power plan to ${plan?.name ?? 'selected plan'}`,
       description: `Aeterna will switch Windows from ${activePlan?.name ?? 'the current plan'} to ${plan?.name ?? 'the selected plan'} for the attached session and keep your original scheme in a rollback snapshot.`,
@@ -466,17 +510,70 @@ export default function App() {
         target_state: plan?.name ?? 'Selected plan',
         policy_status: settings.automation_allowlist.includes('power_plan') ? 'allowed inside policy' : 'manual-only unless allowlisted',
         rollback_available: true,
+        blocking_reason: null,
+        admin_required: false,
+        scope: 'session',
+      },
+    })
+  }
+
+  const previewRegistryPreset = (request: ApplyRegistryPresetRequest) => {
+    const preset = optimizationRuntime.registry_presets.find((item) => item.id === request.preset_id)
+    if (!preset) return
+    setPendingAction({
+      kind: 'registry',
+      request,
+      title: preset.title,
+      description: `${preset.expected_benefit} This preset is allowlisted, reversible, and should only be trusted after a baseline and comparison.`,
+      risk: preset.risk,
+      changes: [
+        `Create an exact rollback snapshot for ${preset.affected_values_count} registry value${preset.affected_values_count === 1 ? '' : 's'}.`,
+        `Apply the preset at ${preset.scope}.`,
+        preset.requires_admin ? 'Request administrator approval only for this one action.' : 'Apply the preset without machine-wide elevation.',
+        ...preset.advanced_details,
+      ],
+      trust: {
+        current_state: preset.current_state,
+        target_state: preset.target_state,
+        policy_status: preset.allowed_now ? 'allowed inside policy' : 'blocked by policy',
+        rollback_available: true,
+        blocking_reason: preset.blocking_reason ?? null,
+        next_action: preset.next_action ?? null,
+        admin_required: preset.requires_admin,
+        scope: preset.scope,
       },
     })
   }
 
   const applyTweak = async () => {
-    if (!pendingTweak) return
-    const result = await applyOptimizationTweak(pendingTweak.request)
+    if (!pendingAction) return
+    const result: ApplyTweakResponse | ApplyRegistryPresetResponse =
+      pendingAction.kind === 'tweak'
+        ? await applyOptimizationTweak(pendingAction.request)
+        : await applyRegistryPreset(pendingAction.request)
+    if (pendingAction.kind === 'registry' && 'status' in result && result.status === 'blocked') {
+      setOptimizationRuntime(result.state)
+      setSession(result.state.session)
+      await loadOptimization()
+      setPendingAction((current) =>
+        current && current.kind === 'registry'
+          ? {
+              ...current,
+              trust: {
+                ...current.trust,
+                blocking_reason: result.blocking_reason ?? current.trust.blocking_reason,
+                next_action: result.next_action ?? current.trust.next_action,
+              },
+            }
+          : current,
+      )
+      return
+    }
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
-    mergeSnapshot(result.snapshot)
-    setPendingTweak(null)
+    await loadOptimization()
+    await loadBenchmarkState()
+    setPendingAction(null)
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
   }
 
@@ -484,6 +581,8 @@ export default function App() {
     const result = await rollbackOptimizationTweak(snapshotId, selectedProcessId ?? undefined)
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
+    await loadOptimization()
+    await loadBenchmarkState()
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
   }
 
@@ -507,6 +606,7 @@ export default function App() {
     try {
       const report = await api.runBenchmark(profileId)
       setLatestBenchmark(report)
+      await loadOptimizationRuntime(selectedProcessId ?? undefined)
       if (bootstrapRef.current) {
         const nextBootstrap = { ...bootstrapRef.current, latest_benchmark: report }
         bootstrapRef.current = nextBootstrap
@@ -541,6 +641,7 @@ export default function App() {
             setLoaded((current) => ({ ...current, optimizationRuntime: true }))
           })}
           onPreviewTweak={previewTweak}
+          onPreviewRegistryPreset={previewRegistryPreset}
           onRefresh={(processId) => void loadOptimizationRuntime(processId)}
           onRollback={(snapshotId) => void rollbackTweak(snapshotId)}
           onRunBenchmark={(profileId) => void runBenchmark(profileId)}
@@ -557,7 +658,15 @@ export default function App() {
     }
     if (activePage === 'security') return <SecurityPage security={security} />
     if (activePage === 'models') {
-      return <ModelsPage models={models} onActivate={(id) => void api.activateModel(id).then(loadModels)} onRollback={(id) => void api.rollbackModel(id).then(loadModels)} />
+      return (
+        <ModelsPage
+          inference={inference}
+          models={models}
+          onActivate={(id) => void api.activateModel(id).then(loadModels)}
+          onRollback={(id) => void api.rollbackModel(id).then(loadModels)}
+          runtimeTruth={mlRuntimeTruth}
+        />
+      )
     }
     if (activePage === 'logs') return <LogsPage activity={optimizationRuntime.activity} logs={logs} />
     if (activePage === 'settings') {
@@ -570,6 +679,8 @@ export default function App() {
           onRestoreSnapshot={(id) => void restoreSnapshot(id)}
           onUpdateAutomationAllowlist={(action, enabled) => void updateAutomationAllowlist(action, enabled)}
           onUpdateAutomationMode={(mode) => void updateAutomationMode(mode)}
+          onUpdateAdvancedRegistryDetails={(enabled) => void updateAdvancedRegistryDetails(enabled)}
+          onUpdateRegistryPresetsEnabled={(enabled) => void updateRegistryPresetsEnabled(enabled)}
           onToggleFlag={(key, value) => requestFlagChange(key, value)}
           onUpdateTheme={(nextTheme) => setTheme(nextTheme)}
           onUpdateTelemetryMode={(mode) => void updateTelemetryMode(mode)}
@@ -586,6 +697,7 @@ export default function App() {
         benchmarkBaseline={benchmarkBaseline}
         dashboard={dashboard}
         latestBenchmark={latestBenchmark}
+        optimization={optimization}
         profiles={profiles}
         realtime={realtime}
         session={session}
@@ -632,15 +744,15 @@ export default function App() {
           title={pendingConsent.title}
         />
       ) : null}
-      {pendingTweak ? (
+      {pendingAction ? (
         <TweakPreviewModal
-          changes={pendingTweak.changes}
-          description={pendingTweak.description}
-          onCancel={() => setPendingTweak(null)}
+          changes={pendingAction.changes}
+          description={pendingAction.description}
+          onCancel={() => setPendingAction(null)}
           onConfirm={() => void applyTweak()}
-          risk={pendingTweak.risk}
-          title={pendingTweak.title}
-          trust={pendingTweak.trust}
+          risk={pendingAction.risk}
+          title={pendingAction.title}
+          trust={pendingAction.trust}
         />
       ) : null}
     </main>

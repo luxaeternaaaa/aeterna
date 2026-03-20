@@ -58,6 +58,26 @@ pub struct PowerPlanSummary {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct RegistryPresetSummary {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub risk: String,
+    pub requires_admin: bool,
+    pub requires_baseline: bool,
+    pub allowed_now: bool,
+    pub blocking_reason: Option<String>,
+    pub next_action: Option<String>,
+    pub expected_benefit: String,
+    pub current_state: String,
+    pub target_state: String,
+    pub affected_values_count: usize,
+    pub scope: String,
+    #[serde(default)]
+    pub advanced_details: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ActivityEntry {
     pub id: String,
     pub timestamp: String,
@@ -69,7 +89,13 @@ pub struct ActivityEntry {
     pub snapshot_id: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub action_id: Option<String>,
     pub can_undo: bool,
+    #[serde(default)]
+    pub proof_link: Option<String>,
+    #[serde(default)]
+    pub blocked_by_policy: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -111,6 +137,10 @@ pub struct SessionState {
     #[serde(default)]
     pub auto_restore_pending: bool,
     #[serde(default)]
+    pub pending_registry_restore: bool,
+    #[serde(default)]
+    pub pending_registry_snapshot_id: Option<String>,
+    #[serde(default)]
     pub detected_candidate_name: Option<String>,
     #[serde(default)]
     pub detected_candidate_pid: Option<u32>,
@@ -130,6 +160,8 @@ pub struct OptimizationStatePayload {
     pub advanced_processes: Vec<ProcessSummary>,
     pub selected_process: Option<SelectedProcessState>,
     pub power_plans: Vec<PowerPlanSummary>,
+    #[serde(default)]
+    pub registry_presets: Vec<RegistryPresetSummary>,
     pub activity: Vec<ActivityEntry>,
     pub last_snapshot: Option<SnapshotMeta>,
     pub session: SessionState,
@@ -158,10 +190,28 @@ pub struct ApplyTweakRequest {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct ApplyRegistryPresetRequest {
+    pub preset_id: String,
+    pub process_id: Option<u32>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ApplyTweakResponse {
     pub state: OptimizationStatePayload,
     pub snapshot: SnapshotMeta,
     pub activity: ActivityEntry,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ApplyRegistryPresetResponse {
+    pub status: String,
+    pub state: OptimizationStatePayload,
+    pub snapshot: Option<SnapshotMeta>,
+    pub activity: ActivityEntry,
+    #[serde(default)]
+    pub blocking_reason: Option<String>,
+    #[serde(default)]
+    pub next_action: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -203,6 +253,15 @@ pub struct MlInferencePayload {
     pub shap_preview: Vec<String>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct MlRuntimeTruth {
+    pub runtime_mode: String,
+    pub model_source: String,
+    pub model_version: Option<String>,
+    pub active_label: String,
+    pub summary: String,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct MlModelMetadata {
     pub version: String,
@@ -223,6 +282,36 @@ pub struct ProcessRestoreState {
     pub affinity_mask: u64,
 }
 
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub enum RegistryHive {
+    Hkcu,
+    Hklm,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub enum RegistryValueType {
+    RegSz,
+    RegDword,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "value")]
+pub enum RegistryValueData {
+    Sz(String),
+    Dword(u32),
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct RegistrySnapshotEntry {
+    pub hive: RegistryHive,
+    pub path: String,
+    pub value_name: String,
+    pub value_type: RegistryValueType,
+    pub old_value: Option<RegistryValueData>,
+    pub existed_before: bool,
+    pub target_value: RegistryValueData,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct TweakSnapshot {
     pub id: String,
@@ -236,6 +325,16 @@ pub struct TweakSnapshot {
     pub process: Option<ProcessRestoreState>,
     pub power_plan_guid: Option<String>,
     pub power_plan_name: Option<String>,
+    #[serde(default)]
+    pub registry_preset_id: Option<String>,
+    #[serde(default)]
+    pub registry_entries: Vec<RegistrySnapshotEntry>,
+    #[serde(default)]
+    pub requires_admin: bool,
+    #[serde(default)]
+    pub applied_at: Option<String>,
+    #[serde(default)]
+    pub restored_at: Option<String>,
 }
 
 fn default_scope() -> String {

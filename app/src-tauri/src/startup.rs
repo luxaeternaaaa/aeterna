@@ -7,7 +7,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::sidecar_models::StartupDiagnostics;
 
 fn now() -> String {
-    OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("current utc time should format as rfc3339")
 }
 
 #[derive(Default)]

@@ -15,8 +15,9 @@ use serde_json::{json, Value};
 use tauri::{path::BaseDirectory, AppHandle, Manager, State};
 
 use crate::sidecar_models::{
-    ApplyTweakRequest, ApplyTweakResponse, AttachSessionRequest, MlInferencePayload, MlInferenceRequest,
-    OptimizationStatePayload, RollbackResponse, SidecarStatusPayload,
+    ApplyRegistryPresetRequest, ApplyRegistryPresetResponse, ApplyTweakRequest, ApplyTweakResponse,
+    AttachSessionRequest, MlInferencePayload, MlInferenceRequest, MlRuntimeTruth, OptimizationStatePayload,
+    RollbackResponse, SidecarStatusPayload,
 };
 use crate::startup::{mark_sidecar_ready, StartupState};
 
@@ -227,6 +228,17 @@ pub fn apply_tweak(
 }
 
 #[tauri::command]
+pub fn apply_registry_preset(
+    app: AppHandle,
+    state: State<'_, SidecarState>,
+    request: ApplyRegistryPresetRequest,
+) -> Result<ApplyRegistryPresetResponse, String> {
+    let mut process = state.0.lock().expect("sidecar state poisoned");
+    ensure_sidecar(&app, &mut process)?;
+    send_command(&mut process, "apply_registry_preset", json!(request))
+}
+
+#[tauri::command]
 pub fn attach_session(
     app: AppHandle,
     state: State<'_, SidecarState>,
@@ -265,6 +277,13 @@ pub fn run_ml_inference(
     let mut process = state.0.lock().expect("sidecar state poisoned");
     ensure_sidecar(&app, &mut process)?;
     send_command(&mut process, "ml_inference", json!(payload))
+}
+
+#[tauri::command]
+pub fn ml_runtime_truth(app: AppHandle, state: State<'_, SidecarState>) -> Result<MlRuntimeTruth, String> {
+    let mut process = state.0.lock().expect("sidecar state poisoned");
+    ensure_sidecar(&app, &mut process)?;
+    send_command(&mut process, "ml_runtime_truth", json!({}))
 }
 
 pub fn warm_sidecar(app: &AppHandle) -> Result<(), String> {

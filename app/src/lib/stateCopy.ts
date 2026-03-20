@@ -6,6 +6,7 @@ export const stateCopy = {
   modelsEmpty:
     'No model artifacts are registered yet. The UI should not pretend the ML layer is stronger than the runtime actually is.',
   noActivity: 'Nothing reversible has been recorded yet.',
+  noConfigSnapshots: 'No settings or model snapshots have been recorded yet.',
   noDetectedGame:
     'No stable game candidate has been detected yet. Keep a supported game in the foreground for a few seconds or use manual process tools as a fallback.',
   noSession:

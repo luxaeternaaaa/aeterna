@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs};
 
 use crate::{
-    models::{MlInferencePayload, MlInferenceRequest, MlModelMetadata},
+    models::{MlInferencePayload, MlInferenceRequest, MlModelMetadata, MlRuntimeTruth},
     paths::ml_metadata_path,
 };
 
@@ -12,7 +12,7 @@ fn sigmoid(value: f64) -> f64 {
 fn default_metadata() -> MlModelMetadata {
     MlModelMetadata {
         version: "fallback-v1".into(),
-        updated_at: "1970-01-01T00:00:00Z".into(),
+        updated_at: String::new(),
         model_source: "metadata-fallback".into(),
         metrics: BTreeMap::from([
             ("roc_auc".into(), 0.79),
@@ -50,6 +50,44 @@ fn load_metadata() -> MlModelMetadata {
         .unwrap_or_else(default_metadata)
 }
 
+fn runtime_mode(source: &str) -> &'static str {
+    if source.contains("onnx") {
+        "onnx"
+    } else if source.contains("fallback") {
+        "fallback"
+    } else {
+        "unavailable"
+    }
+}
+
+pub fn runtime_truth() -> MlRuntimeTruth {
+    let metadata = load_metadata();
+    let mode = runtime_mode(&metadata.model_source);
+    let active_label = match mode {
+        "onnx" => format!("ONNX runtime {}", metadata.version),
+        "fallback" => "Fallback runtime available".into(),
+        _ => "No runtime recommendation path".into(),
+    };
+    let summary = match mode {
+        "onnx" => format!(
+            "Local runtime-backed inference is available via {}. Treat compare results as proof, and ML as advisory ranking.",
+            metadata.version
+        ),
+        "fallback" => format!(
+            "Fallback inference is available via {}. It can rank likely session pressure, but it does not replace benchmark proof.",
+            metadata.version
+        ),
+        _ => "No runtime recommendation path is currently available.".into(),
+    };
+    MlRuntimeTruth {
+        runtime_mode: mode.into(),
+        model_source: metadata.model_source,
+        model_version: Some(metadata.version),
+        active_label,
+        summary,
+    }
+}
+
 fn feature_value(payload: &MlInferenceRequest, key: &str) -> f64 {
     match key {
         "cpu_process_pct" => payload.cpu_process_pct / 100.0,
@@ -67,6 +105,7 @@ fn feature_value(payload: &MlInferenceRequest, key: &str) -> f64 {
 
 pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let metadata = load_metadata();
+    let mode = runtime_mode(&metadata.model_source);
     let score = metadata
         .weights
         .iter()
@@ -104,7 +143,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         ),
         factors,
         model_version: Some(metadata.version),
-        model_source: Some(metadata.model_source),
+        model_source: Some(if mode == "unavailable" { "unavailable".into() } else { metadata.model_source }),
         shap_preview: metadata.shap_preview,
     }
 }

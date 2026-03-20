@@ -44,7 +44,7 @@ def _normalize_demo(row: dict[str, object]) -> dict[str, object]:
     frametime_avg_ms = float(row.get("frametime_ms", 1000.0 / fps_avg))
     frametime_p95_ms = float(row.get("frametime_p95_ms", frametime_avg_ms * 1.3))
     return {
-        "timestamp": row.get("timestamp", "1970-01-01T00:00:00Z"),
+        "timestamp": str(row.get("timestamp") or ""),
         "capture_source": "demo",
         "source": "demo",
         "mode": "demo",
@@ -74,7 +74,7 @@ def _normalize_demo(row: dict[str, object]) -> dict[str, object]:
 
 def _disabled_row() -> dict[str, object]:
     return {
-        "timestamp": "1970-01-01T00:00:00Z",
+        "timestamp": "",
         "capture_source": "counters-fallback",
         "source": "live",
         "mode": "disabled",
