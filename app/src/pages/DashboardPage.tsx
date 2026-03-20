@@ -2,12 +2,14 @@ import type { BenchmarkReport, BenchmarkWindow, DashboardPayload, GameProfile, O
 import { LineChart } from '../components/LineChart'
 import { MetricCard } from '../components/MetricCard'
 import { Panel } from '../components/Panel'
+import { getEvidenceStage, getProofStage, getSessionStage, getWorkflowStep } from '../lib/productState'
 import { stateCopy } from '../lib/stateCopy'
 
 interface DashboardPageProps {
   benchmarkBaseline: BenchmarkWindow | null
   dashboard: DashboardPayload
   latestBenchmark: BenchmarkReport | null
+  onOpenOptimization: () => void
   optimization: OptimizationSummary
   profiles: GameProfile[]
   realtime?: TelemetryPoint | null
@@ -31,51 +33,61 @@ function verdictLabel(report: BenchmarkReport | null) {
   return 'Mixed'
 }
 
-export function DashboardPage({ benchmarkBaseline, dashboard, latestBenchmark, optimization, profiles, realtime, session }: DashboardPageProps) {
+export function DashboardPage({
+  benchmarkBaseline,
+  dashboard,
+  latestBenchmark,
+  onOpenOptimization,
+  optimization,
+  profiles,
+  realtime,
+  session,
+}: DashboardPageProps) {
   const values = dashboard.history.map((point) => point.frametime_p95_ms || point.frametime_avg_ms || point.ping)
   const currentSample = realtime ?? dashboard.history.at(-1) ?? null
-  const secondaryRecommendations = dashboard.recommendations
-  const telemetryState =
-    dashboard.mode === 'live' ? 'Live telemetry' : dashboard.mode === 'demo' ? 'Demo mode' : 'Telemetry disabled'
   const stats = dashboard.stats.slice(0, 4)
   const profile = resolveProfile(profiles, session, currentSample)
+  const sessionStage = getSessionStage(session)
+  const evidence = getEvidenceStage(dashboard.mode, session)
+  const proof = getProofStage(optimization, benchmarkBaseline, latestBenchmark)
+  const nextStep = getWorkflowStep({
+    benchmarkBaseline,
+    detectedGame: null,
+    featureFlags: {
+      anomaly_detection: false,
+      auto_security_scan: false,
+      cloud_features: false,
+      cloud_training: false,
+      network_optimizer: optimization.optimizer_enabled,
+      telemetry_collect: dashboard.mode !== 'disabled',
+    },
+    latestBenchmark,
+    optimization,
+    session,
+  })
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-        <Panel
-          title="Session health"
-          subtitle="Read the current pressure, not just the prettiest number."
-          variant="primary"
-        >
-          <div className="grid gap-4 md:grid-cols-[0.72fr_1.28fr]">
-            <div className="rounded-[1.65rem] border border-border-strong bg-surface-muted/80 px-5 py-5">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Current posture</p>
+      <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
+        <Panel title="Current pressure" subtitle="This is the shortest honest read of the session right now." variant="primary">
+          <div className="grid gap-4 md:grid-cols-[0.74fr_1.26fr]">
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Session status</p>
               <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{dashboard.session_health}</p>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                {session.state === 'active'
-                  ? 'A session is active. Watch frametime and background pressure before adding more tweaks.'
-                  : 'No live session is locked in yet. Treat this screen as orientation, not evidence.'}
-              </p>
+              <p className="mt-3 text-sm leading-6 text-muted">{sessionStage.detail}</p>
               <div className="mt-5 flex flex-wrap gap-2">
-                <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{telemetryState}</span>
-                <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">Session {session.state}</span>
-                <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                  Capture {currentSample?.capture_source ?? 'pending'}
-                </span>
+                <span className="status-chip">{sessionStage.label}</span>
+                <span className="status-chip">{evidence.label}</span>
+                <span className="status-chip">{proof.label}</span>
               </div>
             </div>
-            <div className="rounded-[1.65rem] border border-border bg-surface px-5 py-5">
+            <div className="summary-card">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted">Frametime view</p>
-                  <p className="mt-2 text-sm leading-6 text-muted">This is the graph that should decide whether you trust the session.</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted">Frametime trend</p>
+                  <p className="mt-2 text-sm leading-6 text-muted">Use this to judge whether the session is stable enough before you touch anything.</p>
                 </div>
-                {currentSample ? (
-                  <div className="rounded-full border border-border bg-surface-muted px-3 py-2 text-xs uppercase tracking-[0.18em] text-muted">
-                    p95 {currentSample.frametime_p95_ms.toFixed(1)} ms
-                  </div>
-                ) : null}
+                {currentSample ? <span className="status-chip">p95 {currentSample.frametime_p95_ms.toFixed(1)} ms</span> : null}
               </div>
               <div className="mt-5">
                 <LineChart values={values} />
@@ -83,109 +95,68 @@ export function DashboardPage({ benchmarkBaseline, dashboard, latestBenchmark, o
             </div>
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
+            <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Foreground</p>
-              <p className="mt-2 text-base font-medium text-text">{currentSample?.game_name ?? 'No active session'}</p>
+              <p className="mt-2 text-base font-medium text-text">{currentSample?.game_name ?? 'No attached session yet'}</p>
             </div>
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
+            <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Background pressure</p>
-              <p className="mt-2 text-base font-medium text-text">
-                {currentSample ? `${currentSample.background_cpu_pct.toFixed(0)}% CPU` : 'Not measured yet'}
-              </p>
+              <p className="mt-2 text-base font-medium text-text">{currentSample ? `${currentSample.background_cpu_pct.toFixed(0)}% CPU` : 'Waiting for live evidence'}</p>
             </div>
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
+            <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Memory pressure</p>
-              <p className="mt-2 text-base font-medium text-text">
-                {currentSample ? `${currentSample.memory_pressure_pct.toFixed(0)}%` : 'Waiting for samples'}
-              </p>
+              <p className="mt-2 text-base font-medium text-text">{currentSample ? `${currentSample.memory_pressure_pct.toFixed(0)}%` : 'Waiting for live evidence'}</p>
             </div>
           </div>
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Next move" subtitle="The screen should tell you what to do next, not just what it knows." variant="secondary">
-            <div className="rounded-[1.65rem] border border-border-strong bg-surface-muted/80 px-5 py-5">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-base font-medium text-text">Primary next action</p>
-                <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                  {optimization.proof_state ?? 'decision'}
-                </span>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-muted">{optimization.next_action ?? 'Attach a session to begin the trust loop.'}</p>
-              {optimization.primary_blocker ? (
-                <div className="mt-3 rounded-[1.25rem] border border-border bg-surface px-4 py-3 text-sm leading-6 text-text">
-                  {optimization.primary_blocker}
-                </div>
-              ) : null}
+          <Panel title="Next safe step" subtitle="One clear move matters more than six descriptive cards." variant="secondary">
+            <div className="rounded-[1.65rem] border border-accent/30 bg-accent-soft/55 px-5 py-5">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Do this next</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-text">{nextStep.label}</p>
+              <p className="mt-3 text-sm leading-6 text-muted">{nextStep.detail}</p>
+              <button className="button-primary mt-5" onClick={onOpenOptimization} type="button">
+                Open session controls
+              </button>
             </div>
-            {secondaryRecommendations.length ? (
-              <div className="mt-4 space-y-3">
-                {secondaryRecommendations.map((item) => (
-                  <div key={item.title} className="rounded-[1.5rem] border border-border bg-surface-muted/60 px-4 py-4">
+            {dashboard.recommendations.length ? (
+              <div className="space-y-3">
+                {dashboard.recommendations.slice(0, 2).map((item) => (
+                  <div key={item.title} className="summary-card">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-text">{item.title}</p>
-                      <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                        {item.impact}
-                      </span>
+                      <p className="text-sm font-semibold tracking-tight text-text">{item.title}</p>
+                      <span className="status-chip">{item.impact}</span>
                     </div>
                     <p className="mt-2 text-sm leading-6 text-muted">{item.summary}</p>
                   </div>
                 ))}
               </div>
-            ) : null}
+            ) : (
+              <div className="empty-state">
+                <p className="text-base font-semibold tracking-tight text-text">No recommendation yet</p>
+                <p className="mt-2 text-sm leading-6 text-muted">Once the app sees a real or demo session, this area will reduce the next step to one safe action.</p>
+              </div>
+            )}
           </Panel>
 
-          <Panel title="Proof and trust" subtitle="A serious optimizer should show what it knows, what it has proven, and what is still assumption." variant="utility">
+          <Panel title="Proof and trust" subtitle="Trust should come from evidence and reversibility, not from long explanations." variant="utility">
             <div className="space-y-3">
-              <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4">
+              <div className="summary-card">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold tracking-tight text-text">Latest benchmark</p>
-                  <span className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                    {verdictLabel(latestBenchmark)}
-                  </span>
+                  <span className="status-chip">{verdictLabel(latestBenchmark)}</span>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-muted">
-                  {latestBenchmark ? latestBenchmark.summary : stateCopy.noBenchmark}
-                </p>
-                {latestBenchmark ? (
-                  <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark.recommended_next_step}</p>
-                ) : null}
-                {latestBenchmark ? (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div className="rounded-[1.25rem] border border-border bg-surface-muted/70 px-3 py-3 text-sm text-muted">
-                      Frametime p95 delta {latestBenchmark.delta.frametime_p95_ms > 0 ? '+' : ''}
-                      {latestBenchmark.delta.frametime_p95_ms.toFixed(2)} ms
-                    </div>
-                    <div className="rounded-[1.25rem] border border-border bg-surface-muted/70 px-3 py-3 text-sm text-muted">
-                      CPU contention delta {latestBenchmark.delta.cpu_total_pct > 0 ? '+' : ''}
-                      {latestBenchmark.delta.cpu_total_pct.toFixed(2)}%
-                    </div>
-                  </div>
-                ) : null}
+                <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark ? latestBenchmark.summary : stateCopy.noBenchmark}</p>
+                {latestBenchmark ? <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark.recommended_next_step}</p> : null}
                 {!latestBenchmark && benchmarkBaseline ? (
-                  <p className="mt-3 text-sm leading-6 text-muted">
-                    Baseline captured for {benchmarkBaseline.game_name}. Run a comparison after testing a preset.
-                  </p>
+                  <p className="mt-3 text-sm leading-6 text-muted">Baseline captured for {benchmarkBaseline.game_name}. The next honest step is one reversible change and then Compare.</p>
                 ) : null}
               </div>
-
-              <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4">
-                <p className="text-sm font-semibold tracking-tight text-text">Recommended profile</p>
-                <p className="mt-3 text-sm leading-6 text-muted">
-                  {profile ? profile.description : stateCopy.noProfile}
-                </p>
-                {profile ? (
-                  <>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {profile.allowed_actions.map((action) => (
-                        <span key={action} className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                          {action.replace('_', ' ')}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="mt-3 text-sm leading-6 text-muted">{profile.benchmark_expectation}</p>
-                  </>
-                ) : null}
+              <div className="summary-card">
+                <p className="text-sm font-semibold tracking-tight text-text">Matched profile</p>
+                <p className="mt-3 text-sm leading-6 text-muted">{profile ? profile.description : stateCopy.noProfile}</p>
+                {profile ? <p className="mt-3 text-sm leading-6 text-muted">{profile.benchmark_expectation}</p> : null}
               </div>
             </div>
           </Panel>

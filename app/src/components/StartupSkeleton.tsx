@@ -1,6 +1,12 @@
 export function StartupSkeleton() {
   return (
     <div className="animate-pulse space-y-6">
+      <div className="empty-state animate-none">
+        <p className="text-base font-semibold tracking-tight text-text">Preparing the local runtime</p>
+        <p className="mt-2 text-sm leading-6 text-muted">
+          Aeterna is loading the session shell, local services, and the first evidence surface. This screen should only last a moment.
+        </p>
+      </div>
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-[1.75rem] border border-border bg-surface-muted p-6 shadow-panel">
           <div className="h-3 w-24 rounded-full bg-hover" />

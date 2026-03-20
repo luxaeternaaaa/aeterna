@@ -1,21 +1,47 @@
-import type { LogRecord, MlRuntimeTruth, ModelRecord, OptimizationRuntimeState, PageId, SecuritySummary, SessionState, SystemSettings } from '../types'
+import type {
+  BenchmarkReport,
+  BenchmarkWindow,
+  DashboardPayload,
+  FeatureFlags,
+  LogRecord,
+  MlRuntimeTruth,
+  ModelRecord,
+  OptimizationRuntimeState,
+  OptimizationSummary,
+  PageId,
+  SecuritySummary,
+  SessionState,
+  SystemSettings,
+} from '../types'
+import { getAuthorityStage, getEvidenceStage, getModelPosture, getProofStage, getSessionStage, getWorkflowStep } from './productState'
 
 export type ThemeMode = 'dark' | 'light'
+
+type ChromeSignal = {
+  detail: string
+  label: string
+  value: string
+}
 
 export type PageChrome = {
   eyebrow: string
   title: string
   subtitle: string
-  question: string
-  badges: string[]
+  signals: [ChromeSignal, ChromeSignal, ChromeSignal]
+  details: string[]
 }
 
 type PageChromeInput = {
   activePage: PageId
+  benchmarkBaseline: BenchmarkWindow | null
   connectionTitle: string
+  dashboard: DashboardPayload
+  featureFlags: FeatureFlags
+  latestBenchmark: BenchmarkReport | null
   logs: LogRecord[]
   mlRuntimeTruth: MlRuntimeTruth | null
   models: ModelRecord[]
+  optimization: OptimizationSummary
   optimizationRuntime: OptimizationRuntimeState
   security: SecuritySummary
   session: SessionState
@@ -25,76 +51,121 @@ type PageChromeInput = {
 }
 
 function formatAutomationMode(mode: SystemSettings['automation_mode']) {
-  return mode === 'trusted_profiles' ? 'trusted profiles' : mode
+  return mode === 'trusted_profiles' ? 'Trusted profiles' : mode.charAt(0).toUpperCase() + mode.slice(1)
 }
 
-function telemetryBadge(mode: SystemSettings['telemetry_mode']) {
+function formatTelemetryMode(mode: SystemSettings['telemetry_mode']) {
   if (mode === 'live') return 'Live telemetry'
   if (mode === 'demo') return 'Demo telemetry'
   return 'Telemetry off'
 }
 
 export function getPageChrome(input: PageChromeInput): PageChrome {
-  const { activePage, connectionTitle, logs, mlRuntimeTruth, models, optimizationRuntime, security, session, settings, theme, undoReadyCount } = input
-  const onnxModels = models.filter((model) => model.inference_mode === 'onnx').length
-  const fallbackModels = models.filter((model) => model.inference_mode !== 'onnx').length
+  const {
+    activePage,
+    benchmarkBaseline,
+    connectionTitle,
+    dashboard,
+    featureFlags,
+    latestBenchmark,
+    logs,
+    mlRuntimeTruth,
+    models,
+    optimization,
+    optimizationRuntime,
+    security,
+    session,
+    settings,
+    theme,
+    undoReadyCount,
+  } = input
+  const evidence = getEvidenceStage(dashboard.mode, optimizationRuntime.capture_status)
+  const proof = getProofStage(optimization, benchmarkBaseline, latestBenchmark)
+  const sessionStage = getSessionStage(session, optimizationRuntime)
+  const authority = getAuthorityStage(featureFlags, settings)
+  const workflow = getWorkflowStep({
+    benchmarkBaseline,
+    detectedGame: optimizationRuntime.detected_game,
+    featureFlags,
+    latestBenchmark,
+    optimization,
+    session,
+  })
 
   switch (activePage) {
     case 'dashboard':
       return {
         eyebrow: 'Dashboard',
-        title: 'Control room',
-        subtitle: 'Read the session, find the pressure point, and decide the next safe move without scrolling through policy screens.',
-        question: 'Is this session healthy enough to keep playing, or does it need intervention now?',
-        badges: [telemetryBadge(settings.telemetry_mode), `Session ${session.state}`, connectionTitle],
+        title: 'Current session',
+        subtitle: 'See whether the session is healthy, what the app actually knows, and what safe move comes next.',
+        signals: [
+          { label: 'Current status', value: dashboard.session_health, detail: sessionStage.detail },
+          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
+          { label: 'Evidence quality', value: evidence.label, detail: evidence.detail },
+        ],
+        details: [sessionStage.label, proof.label, authority.label],
       }
     case 'optimization':
       return {
         eyebrow: 'Optimization',
-        title: 'Operate the session',
-        subtitle: 'Attach a game, inspect the current machine state, and apply only the changes that can be explained and rolled back.',
-        question: 'What is attached, what is blocked, and which reversible test is worth trying next?',
-        badges: [
-          `Automation ${formatAutomationMode(settings.automation_mode)}`,
-          `Capture ${optimizationRuntime.capture_status.quality}`,
-          `Restore ${optimizationRuntime.session.auto_restore_pending ? 'pending' : 'ready'}`,
+        title: 'Run one safe test',
+        subtitle: 'Attach a session, capture proof, and change one thing at a time so every win stays explainable.',
+        signals: [
+          { label: 'Current status', value: sessionStage.label, detail: sessionStage.detail },
+          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
+          { label: 'Authority', value: authority.label, detail: authority.detail },
         ],
+        details: [proof.label, evidence.label, connectionTitle],
       }
     case 'security':
       return {
-        eyebrow: 'Security',
-        title: 'Trust posture',
-        subtitle: 'Show the boundaries, current local classification, and the product rules that stop the optimizer from becoming shady.',
-        question: 'Can this product be trusted on a real gaming machine with real anti-cheat risk?',
-        badges: [`Status ${security.status}`, security.auto_scan_enabled ? 'Automatic scan' : 'Manual scan', 'Local only'],
+        eyebrow: 'Safety rules',
+        title: 'Why this stays trustworthy',
+        subtitle: 'This page explains the boundaries behind the product, not the daily workflow itself.',
+        signals: [
+          { label: 'Current status', value: security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern', detail: 'Local safety signals describe caution, not anti-cheat certainty.' },
+          { label: 'Next safe step', value: authority.label, detail: authority.label === 'Blocked' ? authority.detail : 'Stay in Manual or Assisted mode until the product has proof on your machine.' },
+          { label: 'Evidence quality', value: 'Local only', detail: 'Logs, scanning, and rollback stay on-device unless you explicitly change policy.' },
+        ],
+        details: [formatTelemetryMode(settings.telemetry_mode), security.auto_scan_enabled ? 'Auto scan on' : 'Manual scan', proof.label],
       }
-    case 'models':
+    case 'models': {
+      const posture = getModelPosture(mlRuntimeTruth, models.length)
       return {
         eyebrow: 'Models',
-        title: 'ML reality check',
-        subtitle: 'Separate real runtime-backed inference from fallback behavior so the interface never oversells the ML layer.',
-        question: 'What is actually real here, and should I trust the model output yet?',
-        badges: [
-          `${models.length} registered`,
-          mlRuntimeTruth ? `Runtime ${mlRuntimeTruth.runtime_mode}` : `${onnxModels} ONNX`,
-          `${fallbackModels} fallback`,
+        title: 'Recommendation posture',
+        subtitle: 'Use this page to understand how real the recommendation layer is before you let it influence a session.',
+        signals: [
+          { label: 'Current status', value: posture.label, detail: posture.detail },
+          { label: 'Next safe step', value: 'Trust proof first', detail: 'Benchmark proof still outranks model confidence or catalog metadata.' },
+          { label: 'Evidence quality', value: evidence.label, detail: evidence.detail },
         ],
+        details: [`${models.length} artifacts`, mlRuntimeTruth?.runtime_mode === 'onnx' ? 'Runtime-backed path' : 'Advisory path', proof.label],
       }
+    }
     case 'logs':
       return {
         eyebrow: 'Activity',
-        title: 'Activity & rollback',
-        subtitle: 'Track runtime changes, proof events, and restores so the optimizer feels inspectable and recoverable instead of magical.',
-        question: 'What changed, what can still be undone, and what failed without explanation?',
-        badges: [`${optimizationRuntime.activity.length} activity`, `${undoReadyCount} undo-ready`, `${logs.length} diagnostics`],
+        title: 'What changed and how to undo it',
+        subtitle: 'Use this page to confirm what actually ran, what is still reversible, and where proof links back to action.',
+        signals: [
+          { label: 'Current status', value: undoReadyCount > 0 ? 'Undo ready' : 'No undo yet', detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} are still available.` : 'Nothing reversible has been recorded yet.' },
+          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
+          { label: 'Evidence quality', value: `${optimizationRuntime.activity.length} events`, detail: `${logs.length} support log${logs.length === 1 ? '' : 's'} stay secondary to the rollback timeline.` },
+        ],
+        details: [proof.label, authority.label, sessionStage.label],
       }
     case 'settings':
       return {
         eyebrow: 'Settings',
-        title: 'Policy and defaults',
-        subtitle: 'Decide what the product may observe, automate, and store before any optional capability is allowed to act.',
-        question: 'How much authority has this app been given, and is that authority still justified?',
-        badges: [settings.active_profile, `Automation ${formatAutomationMode(settings.automation_mode)}`, `${theme === 'dark' ? 'Dark' : 'Light'} theme`],
+        title: 'Policy before automation',
+        subtitle: 'Decide what Aeterna may observe, change, and remember before you ask it to act on your machine.',
+        signals: [
+          { label: 'Current status', value: authority.label, detail: authority.detail },
+          { label: 'Next safe step', value: featureFlags.network_optimizer ? 'Tune policy' : 'Allow safe changes', detail: featureFlags.network_optimizer ? 'Keep automation narrow and rollback-first.' : 'Performance changes stay blocked until you allow them here.' },
+          { label: 'Evidence quality', value: formatTelemetryMode(settings.telemetry_mode), detail: `Theme ${theme === 'dark' ? 'Dark' : 'Light'} | ${settings.telemetry_retention_days} day retention.` },
+        ],
+        details: [formatAutomationMode(settings.automation_mode), settings.active_profile, connectionTitle],
       }
   }
 }

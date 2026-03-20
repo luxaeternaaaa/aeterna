@@ -1,4 +1,8 @@
 export type PageId = 'dashboard' | 'optimization' | 'security' | 'models' | 'logs' | 'settings'
+export type EvidenceStage = 'Live' | 'Degraded' | 'Demo' | 'Unavailable'
+export type SessionStageLabel = 'No session' | 'Attached' | 'Testing' | 'Restored' | 'Blocked'
+export type ProofStageLabel = 'No baseline' | 'Ready to test' | 'Comparison ready' | 'Inconclusive'
+export type AuthorityStageLabel = 'Blocked' | 'Manual' | 'Assisted' | 'Trusted'
 
 export interface TelemetryPoint {
   timestamp: string

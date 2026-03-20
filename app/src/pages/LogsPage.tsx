@@ -1,6 +1,7 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 
 import type { ActivityEntry, LogRecord } from '../types'
+import { EmptyState } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
 import { stateCopy } from '../lib/stateCopy'
 import { formatTimestamp } from '../lib/time'
@@ -8,9 +9,10 @@ import { formatTimestamp } from '../lib/time'
 interface LogsPageProps {
   activity: ActivityEntry[]
   logs: LogRecord[]
+  onOpenOptimization: () => void
 }
 
-export function LogsPage({ activity, logs }: LogsPageProps) {
+export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const filteredActivity = useMemo(
@@ -28,8 +30,8 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
     <div className="space-y-6">
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel
-          title="Runtime timeline"
-          subtitle="Every session change, proof event, and rollback step should stay visible, explainable, and easy to inspect."
+          title="Rollback timeline"
+          subtitle="This is where the product proves what changed and whether you can still walk it back."
           variant="primary"
         >
           <div className="grid gap-3 md:grid-cols-3">
@@ -52,8 +54,8 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
         </Panel>
 
         <Panel
-          title="Diagnostics posture"
-          subtitle="Support logs stay available, but they never outrank the user-facing runtime history."
+          title="Support logs"
+          subtitle="Diagnostics stay available, but they never outrank the user-facing rollback story."
           variant="utility"
         >
           <div className="space-y-3">
@@ -70,7 +72,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
       <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
         <Panel
           title="Activity & Rollback"
-          subtitle="What changed, why it changed, and whether it can still be undone."
+          subtitle="The timeline should answer what changed, why it happened, and whether it is still reversible."
           variant="primary"
         >
           <input
@@ -81,9 +83,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
           />
           <div className="space-y-3">
             {filteredActivity.length === 0 ? (
-              <div className="rounded-[1.5rem] border border-dashed border-border-strong bg-surface-muted/60 px-4 py-4 text-sm leading-6 text-muted">
-                {stateCopy.noActivity}
-              </div>
+              <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="No reversible history yet" />
             ) : null}
             {filteredActivity.map((item) => (
               <div key={item.id} className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4">
@@ -128,7 +128,7 @@ export function LogsPage({ activity, logs }: LogsPageProps) {
 
         <Panel
           title="Developer logs"
-          subtitle="Low-priority support output for diagnostics, not a substitute for a trustworthy product timeline."
+          subtitle="Support output for troubleshooting, not a substitute for the product timeline."
           variant="secondary"
         >
           <div className="space-y-3">

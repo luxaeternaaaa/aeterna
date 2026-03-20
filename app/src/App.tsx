@@ -184,10 +184,15 @@ export default function App() {
   const undoReadyCount = optimizationRuntime.activity.filter((entry) => entry.can_undo).length
   const pageChrome = getPageChrome({
     activePage,
+    benchmarkBaseline,
     connectionTitle: connection.title,
+    dashboard,
+    featureFlags,
+    latestBenchmark,
     logs,
     mlRuntimeTruth,
     models,
+    optimization,
     optimizationRuntime,
     security,
     session,
@@ -640,6 +645,7 @@ export default function App() {
             setSession(nextState.session)
             setLoaded((current) => ({ ...current, optimizationRuntime: true }))
           })}
+          onOpenSettings={() => setActivePage('settings')}
           onPreviewTweak={previewTweak}
           onPreviewRegistryPreset={previewRegistryPreset}
           onRefresh={(processId) => void loadOptimizationRuntime(processId)}
@@ -653,6 +659,7 @@ export default function App() {
           profiles={profiles}
           runtimeState={optimizationRuntime}
           selectedProcessId={selectedProcessId}
+          settings={settings}
         />
       )
     }
@@ -668,7 +675,7 @@ export default function App() {
         />
       )
     }
-    if (activePage === 'logs') return <LogsPage activity={optimizationRuntime.activity} logs={logs} />
+    if (activePage === 'logs') return <LogsPage activity={optimizationRuntime.activity} logs={logs} onOpenOptimization={() => setActivePage('optimization')} />
     if (activePage === 'settings') {
       return (
         <SettingsPage
@@ -697,6 +704,7 @@ export default function App() {
         benchmarkBaseline={benchmarkBaseline}
         dashboard={dashboard}
         latestBenchmark={latestBenchmark}
+        onOpenOptimization={() => setActivePage('optimization')}
         optimization={optimization}
         profiles={profiles}
         realtime={realtime}
@@ -712,22 +720,27 @@ export default function App() {
         <section className="rounded-[2rem] border border-border bg-surface p-6 shadow-panel md:p-8">
           <header className="mb-8 border-b border-border pb-6">
             <p className="text-xs uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p>
-            <div className="mt-4 max-w-[70rem]">
-              <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[3.25rem] leading-[0.96] md:text-[4rem]' : 'text-[2.35rem] leading-[1.02] md:text-[2.8rem]'}`}>
+            <div className="mt-4 max-w-[68rem]">
+              <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[2.6rem] leading-[0.98] md:text-[3.1rem]' : 'text-[2rem] leading-[1.02] md:text-[2.45rem]'}`}>
                 {pageChrome.title}
               </h2>
-              <p className="mt-4 max-w-4xl text-base leading-8 text-muted">{pageChrome.subtitle}</p>
+              <p className="mt-3 max-w-4xl text-base leading-7 text-muted">{pageChrome.subtitle}</p>
             </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              {pageChrome.badges.map((badge) => (
-                <span key={badge} className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                  {badge}
-                </span>
+            <div className="mt-6 grid gap-3 xl:grid-cols-3">
+              {pageChrome.signals.map((signal) => (
+                <div key={signal.label} className="summary-card">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted">{signal.label}</p>
+                  <p className="mt-2 text-xl font-semibold tracking-tight text-text md:text-2xl">{signal.value}</p>
+                  <p className="mt-2 text-sm leading-6 text-muted">{signal.detail}</p>
+                </div>
               ))}
             </div>
-            <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted/60 px-4 py-4 text-sm leading-6 text-muted">
-              <span className="mr-2 text-xs uppercase tracking-[0.18em] text-muted">Decision now</span>
-              <span className="font-medium text-text">{pageChrome.question}</span>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {pageChrome.details.map((detail) => (
+                <span key={detail} className="status-chip">
+                  {detail}
+                </span>
+              ))}
             </div>
           </header>
           {renderPage()}

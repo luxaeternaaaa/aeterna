@@ -6,7 +6,7 @@ interface LineChartProps {
 
 export function LineChart({ values }: LineChartProps) {
   if (values.length === 0) {
-    return <div className="flex h-32 items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-surface-muted text-sm text-muted">{stateCopy.chartEmpty}</div>
+    return <div className="empty-state flex h-32 items-center justify-center text-center text-sm text-muted">{stateCopy.chartEmpty}</div>
   }
 
   const max = Math.max(...values, 1)

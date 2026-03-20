@@ -12,8 +12,8 @@ export function SecurityPage({ security }: SecurityPageProps) {
     <div className="space-y-6">
       <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <Panel
-          title="Current risk posture"
-          subtitle="Security exists here to protect trust in the optimizer, not to pretend this app is an anti-cheat tool."
+          title="Current safety posture"
+          subtitle="These signals help you decide how cautious to be. They do not pretend to be an anti-cheat verdict."
           variant="primary"
         >
           <div className="grid gap-3 md:grid-cols-[0.92fr_1.08fr]">
@@ -33,20 +33,20 @@ export function SecurityPage({ security }: SecurityPageProps) {
               <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-muted">Confidence</p>
                 <p className="mt-3 text-2xl font-semibold tracking-tight text-text">{(security.confidence * 100).toFixed(0)}%</p>
-                <p className="mt-2 text-sm leading-6 text-muted">How strongly the local classifier believes the current label.</p>
+                <p className="mt-2 text-sm leading-6 text-muted">How stable the local safety signal is right now.</p>
               </div>
               <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Scanning mode</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-muted">Review mode</p>
                 <p className="mt-3 text-2xl font-semibold tracking-tight text-text">{security.auto_scan_enabled ? 'Automatic' : 'Manual'}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">Automatic scanning stays opt-in; the default is explicit, local review.</p>
+                <p className="mt-2 text-sm leading-6 text-muted">Automatic review stays opt-in. The default is explicit, local inspection.</p>
               </div>
             </div>
           </div>
         </Panel>
 
         <Panel
-          title="Privacy posture"
-          subtitle="The product stays understandable by refusing hidden sync, hidden privilege, and anti-cheat-looking behavior."
+          title="Trust boundaries"
+          subtitle="These defaults are here to keep Aeterna inspectable instead of magical."
           variant="secondary"
         >
           <div className="space-y-3">
@@ -67,7 +67,7 @@ export function SecurityPage({ security }: SecurityPageProps) {
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <Panel
           title="Hard boundaries"
-          subtitle="These are non-negotiable product rules, not soft marketing promises."
+          subtitle="These are hard rules. If one of them would be broken, the product path is wrong."
           variant="secondary"
         >
           <div className="grid gap-3 md:grid-cols-2">
@@ -85,8 +85,8 @@ export function SecurityPage({ security }: SecurityPageProps) {
         </Panel>
 
         <Panel
-          title="Operator guidance"
-          subtitle="What to do next when the product is asking for caution."
+          title="When to slow down"
+          subtitle="Use these rules when the app is asking for caution before another change."
           variant="utility"
         >
           <div className="space-y-3">

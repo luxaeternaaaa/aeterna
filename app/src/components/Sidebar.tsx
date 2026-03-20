@@ -28,7 +28,7 @@ interface SidebarProps {
 
 export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme }: SidebarProps) {
   return (
-    <aside className="flex h-full flex-col rounded-[2rem] border border-border bg-surface/85 p-5 shadow-panel backdrop-blur-xl">
+    <aside className="flex h-full flex-col rounded-[2rem] border border-border bg-surface/88 p-5 shadow-panel backdrop-blur-xl">
       <div className="mb-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -39,15 +39,13 @@ export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme
               </div>
               <div className="min-w-0">
                 <h1 className="text-[1.8rem] font-semibold leading-[1.02] tracking-tight text-text">Session control</h1>
-                <p className="mt-1 text-sm leading-6 text-muted">Competitive, session-first desktop optimization.</p>
+                <p className="mt-1 text-sm leading-6 text-muted">One reversible session change at a time.</p>
               </div>
             </div>
           </div>
           <ThemeToggle onToggle={onToggleTheme} theme={theme} />
         </div>
-        <p className="mt-5 text-sm leading-6 text-muted">
-          Rollback-safe tweaks, local telemetry, and on-device recommendations without the usual Windows "magic optimizer" nonsense.
-        </p>
+        <p className="mt-5 text-sm leading-6 text-muted">Attach a session, capture proof, try one safe test, and always keep rollback close.</p>
       </div>
       <nav className="space-y-2">
         {items.map(({ icon: Icon, id, label }) => (
@@ -57,7 +55,7 @@ export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme
             className={clsx(
               'flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-sm transition',
               activePage === id
-                ? 'border-border-strong bg-active text-text shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_10px_22px_rgba(15,23,42,0.05)]'
+                ? 'border-accent/35 bg-accent-soft/55 text-text shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_10px_22px_rgba(15,23,42,0.05)]'
                 : 'border-transparent text-muted hover:border-border hover:bg-hover hover:text-text',
             )}
             type="button"
@@ -79,7 +77,7 @@ export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme
         <div className="mt-4 rounded-2xl border border-border bg-surface px-3 py-3 text-xs leading-5 text-muted">
           Theme: <span className="font-medium text-text">{theme === 'dark' ? 'Dark' : 'Light'}</span>
           <br />
-          Focus: fewer claims, clearer state, and changes you can always walk back.
+          Focus: clearer state, faster proof, and changes you can always walk back.
         </div>
       </div>
     </aside>

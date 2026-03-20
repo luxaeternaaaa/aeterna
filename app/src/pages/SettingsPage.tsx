@@ -53,23 +53,23 @@ export function SettingsPage(props: SettingsPageProps) {
   return (
     <div className="space-y-6">
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Panel title="Privacy defaults" subtitle="What the product is allowed to observe, export, and retain." variant="primary">
+        <Panel title="Privacy defaults" subtitle="Decide what Aeterna may observe and retain before you ask it to help." variant="primary">
           <div className="space-y-3">
-            <ToggleRow checked={featureFlags.telemetry_collect} label="Telemetry collection" description="Store local telemetry samples for dashboards and ML inputs." onChange={(next) => onToggleFlag('telemetry_collect', next)} />
-            <ToggleRow checked={featureFlags.cloud_features} label="Cloud features" description="Keep any future outbound synchronization or shared analytics disabled until explicitly approved." onChange={(next) => onToggleFlag('cloud_features', next)} />
-            <ToggleRow checked={featureFlags.cloud_training} label="Cloud training" description="Keep model training strictly on-device until the user decides otherwise." onChange={(next) => onToggleFlag('cloud_training', next)} />
+            <ToggleRow checked={featureFlags.telemetry_collect} label="Telemetry collection" description="Store local samples for dashboards and recommendations." onChange={(next) => onToggleFlag('telemetry_collect', next)} />
+            <ToggleRow checked={featureFlags.cloud_features} label="Cloud features" description="Keep outbound sync and shared analytics off until you explicitly allow them." onChange={(next) => onToggleFlag('cloud_features', next)} />
+            <ToggleRow checked={featureFlags.cloud_training} label="Cloud training" description="Keep model training on-device until you decide otherwise." onChange={(next) => onToggleFlag('cloud_training', next)} />
           </div>
           <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
             Mode {settings.privacy_mode} | Telemetry {settings.telemetry_mode} | Retention {settings.telemetry_retention_days} days | Sampling every {settings.sampling_interval_seconds}s
           </div>
         </Panel>
-        <Panel title="Automation authority" subtitle="What the product may actually do after you turn automation on." variant="secondary">
+        <Panel title="Automation authority" subtitle="Keep automation narrow enough that every change stays explainable and reversible." variant="secondary">
           <div className="space-y-3">
-            <ToggleRow checked={featureFlags.network_optimizer} label="Performance optimizer" description="Allow local scheduler and power-plan recommendations to become executable actions." onChange={(next) => onToggleFlag('network_optimizer', next)} />
-            <ToggleRow checked={settings.registry_presets_enabled} label="System presets" description="Allow allowlisted registry-backed presets that always create exact rollback snapshots and never run outside the trusted catalog." onChange={onUpdateRegistryPresetsEnabled} />
-            <ToggleRow checked={settings.automation_allowlist.includes('process_priority')} label="Allow automated priority changes" description="Permit pre-approved session automation to raise process priority for detected games with rollback." onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)} />
-            <ToggleRow checked={settings.automation_allowlist.includes('cpu_affinity')} label="Allow automated CPU affinity" description="Permit the balanced affinity preset only during an attached session." onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)} />
-            <ToggleRow checked={settings.automation_allowlist.includes('power_plan')} label="Allow automated power plan switching" description="Permit power plan changes only with automatic restoration after the session ends." onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)} />
+            <ToggleRow checked={featureFlags.network_optimizer} label="Performance optimizer" description="Allow scheduler and power-plan suggestions to become real actions." onChange={(next) => onToggleFlag('network_optimizer', next)} />
+            <ToggleRow checked={settings.registry_presets_enabled} label="System presets" description="Allow rollback-safe, allowlisted presets from the trusted catalog only." onChange={onUpdateRegistryPresetsEnabled} />
+            <ToggleRow checked={settings.automation_allowlist.includes('process_priority')} label="Allow automated priority changes" description="Permit approved session automation to adjust process priority with rollback." onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)} />
+            <ToggleRow checked={settings.automation_allowlist.includes('cpu_affinity')} label="Allow automated CPU affinity" description="Permit the balanced affinity preset during an attached session." onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)} />
+            <ToggleRow checked={settings.automation_allowlist.includes('power_plan')} label="Allow automated power plan switching" description="Permit power plan changes only when the original one can be restored automatically." onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)} />
           </div>
           <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
             Automation mode <span className="font-medium text-text">{settings.automation_mode.replace('_', ' ')}</span>. Policy-governed automation never bypasses rollback and only runs inside your approved allowlist.
@@ -78,7 +78,7 @@ export function SettingsPage(props: SettingsPageProps) {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Panel title="Session behavior" subtitle="Defaults that affect how the product behaves during real gameplay." variant="secondary">
+        <Panel title="Session behavior" subtitle="These defaults shape how the app behaves when a real session is attached." variant="secondary">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4 text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Profile</span>
@@ -114,14 +114,14 @@ export function SettingsPage(props: SettingsPageProps) {
           </div>
           <div className="mt-5 space-y-3">
             <ToggleRow checked={featureFlags.anomaly_detection} label="Anomaly detection" description="Run the anomaly model against local session telemetry." onChange={(next) => onToggleFlag('anomaly_detection', next)} />
-            <ToggleRow checked={featureFlags.auto_security_scan} label="Automatic security scan" description="Classify suspicious sessions locally during active play." onChange={(next) => onToggleFlag('auto_security_scan', next)} />
-            <ToggleRow checked={settings.show_advanced_registry_details} label="Show advanced registry details" description="Expose exact hive, path, and value details in system preset previews for expert review." onChange={onUpdateAdvancedRegistryDetails} />
+            <ToggleRow checked={featureFlags.auto_security_scan} label="Automatic safety review" description="Run local safety checks during active play." onChange={(next) => onToggleFlag('auto_security_scan', next)} />
+            <ToggleRow checked={settings.show_advanced_registry_details} label="Show advanced registry details" description="Expose exact registry paths and values in preset previews for expert review." onChange={onUpdateAdvancedRegistryDetails} />
           </div>
           <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
             Compatibility mode keeps overlays, DLL injection, memory edits, and driver-level changes out of the current product path.
           </div>
         </Panel>
-        <Panel title="Diagnostics and build state" subtitle="Support-facing truth that should never masquerade as user-facing product value." variant="utility">
+        <Panel title="Diagnostics and build state" subtitle="Support-facing truth that helps debugging, not daily decision-making." variant="utility">
           <div className="space-y-3">
             <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
               {buildSummary(build)}
@@ -139,7 +139,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </Panel>
       </section>
 
-      <Panel title="Config & model snapshots" subtitle="Snapshots created before settings and model changes. Session rollback lives in Activity." variant="secondary">
+      <Panel title="Config & model snapshots" subtitle="Snapshots created before settings and model changes. Session rollback stays in Activity." variant="secondary">
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-3">
             {snapshots.length === 0 ? <p className="text-sm text-muted">{stateCopy.noConfigSnapshots}</p> : null}

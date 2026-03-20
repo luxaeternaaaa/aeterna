@@ -9,12 +9,12 @@
   --color-surface-muted: 243 245 248;
   --color-text: 19 24 31;
   --color-muted: 88 97 112;
-  --color-border: 206 213 223;
-  --color-border-strong: 165 175 189;
-  --color-hover: 233 238 244;
-  --color-active: 222 229 237;
-  --color-accent: 198 145 46;
-  --color-accent-soft: 246 236 208;
+  --color-border: 194 202 214;
+  --color-border-strong: 106 118 137;
+  --color-hover: 229 235 244;
+  --color-active: 214 224 239;
+  --color-accent: 36 94 210;
+  --color-accent-soft: 221 233 255;
   --color-success: 55 126 89;
   --color-success-soft: 230 244 236;
   --color-warning: 160 112 48;
@@ -44,8 +44,8 @@
   --color-border-strong: 63 72 86;
   --color-hover: 28 34 42;
   --color-active: 36 43 53;
-  --color-accent: 213 168 79;
-  --color-accent-soft: 54 44 24;
+  --color-accent: 111 156 255;
+  --color-accent-soft: 28 42 74;
   --color-success: 98 187 137;
   --color-success-soft: 27 49 38;
   --color-warning: 213 168 79;
@@ -104,7 +104,45 @@ textarea {
     transform 180ms ease;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.16);
+}
+
 ::selection {
   background: rgb(var(--color-accent-soft));
   color: rgb(var(--color-text));
+}
+
+@layer components {
+  .button-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-accent px-5 py-3 text-sm font-medium text-white shadow-panel transition hover:brightness-105 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .button-secondary {
+    @apply inline-flex items-center justify-center rounded-full border border-border-strong bg-surface px-4 py-2.5 text-sm font-medium text-text transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .button-quiet {
+    @apply inline-flex items-center justify-center rounded-full border border-border bg-surface-muted px-4 py-2.5 text-sm font-medium text-text transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .status-chip {
+    @apply rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted;
+  }
+
+  .surface-card {
+    @apply rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4;
+  }
+
+  .summary-card {
+    @apply rounded-[1.5rem] border border-border bg-surface px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)];
+  }
+
+  .empty-state {
+    @apply rounded-[1.5rem] border border-dashed border-border-strong bg-surface-muted px-5 py-5;
+  }
 }
