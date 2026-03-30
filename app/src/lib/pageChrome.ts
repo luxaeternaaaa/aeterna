@@ -13,11 +13,11 @@ import type {
   SessionState,
   SystemSettings,
 } from '../types'
-import { getAuthorityStage, getEvidenceStage, getModelPosture, getProofStage, getSessionStage, getWorkflowStep } from './productState'
+import { getAuthorityStage, getEvidenceStage, getModelPosture, getProofStage, getSessionStage, getSurfaceState, getWorkflowStep } from './productState'
 
 export type ThemeMode = 'dark' | 'light'
 
-type ChromeSignal = {
+type ChromeSurface = {
   detail: string
   label: string
   value: string
@@ -25,10 +25,12 @@ type ChromeSignal = {
 
 export type PageChrome = {
   eyebrow: string
-  title: string
+  optionalSecondaryStatus?: ChromeSurface
+  primaryAction: ChromeSurface
+  primaryStatus: ChromeSurface
+  proofState: ChromeSurface
   subtitle: string
-  signals: [ChromeSignal, ChromeSignal, ChromeSignal]
-  details: string[]
+  title: string
 }
 
 type PageChromeInput = {
@@ -83,6 +85,7 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
   const proof = getProofStage(optimization, benchmarkBaseline, latestBenchmark)
   const sessionStage = getSessionStage(session, optimizationRuntime)
   const authority = getAuthorityStage(featureFlags, settings)
+  const surfaceState = getSurfaceState({ activePage, authority, evidence, proof, sessionStage })
   const workflow = getWorkflowStep({
     benchmarkBaseline,
     detectedGame: optimizationRuntime.detected_game,
@@ -97,75 +100,79 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
       return {
         eyebrow: 'Dashboard',
         title: 'Current session',
-        subtitle: 'See whether the session is healthy, what the app actually knows, and what safe move comes next.',
-        signals: [
-          { label: 'Current status', value: dashboard.session_health, detail: sessionStage.detail },
-          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
-          { label: 'Evidence quality', value: evidence.label, detail: evidence.detail },
-        ],
-        details: [sessionStage.label, proof.label, authority.label],
+        subtitle: 'See what is happening and take one safe next step.',
+        primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
+        primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
+        proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
+        optionalSecondaryStatus: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
       }
     case 'optimization':
       return {
         eyebrow: 'Optimization',
         title: 'Run one safe test',
-        subtitle: 'Attach a session, capture proof, and change one thing at a time so every win stays explainable.',
-        signals: [
-          { label: 'Current status', value: sessionStage.label, detail: sessionStage.detail },
-          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
-          { label: 'Authority', value: authority.label, detail: authority.detail },
-        ],
-        details: [proof.label, evidence.label, connectionTitle],
+        subtitle: 'Attach a game, capture proof, then change one thing at a time.',
+        primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
+        primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
+        proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
+        optionalSecondaryStatus: { label: 'Authority', value: authority.label, detail: authority.detail },
       }
     case 'security':
       return {
-        eyebrow: 'Safety rules',
-        title: 'Why this stays trustworthy',
-        subtitle: 'This page explains the boundaries behind the product, not the daily workflow itself.',
-        signals: [
-          { label: 'Current status', value: security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern', detail: 'Local safety signals describe caution, not anti-cheat certainty.' },
-          { label: 'Next safe step', value: authority.label, detail: authority.label === 'Blocked' ? authority.detail : 'Stay in Manual or Assisted mode until the product has proof on your machine.' },
-          { label: 'Evidence quality', value: 'Local only', detail: 'Logs, scanning, and rollback stay on-device unless you explicitly change policy.' },
-        ],
-        details: [formatTelemetryMode(settings.telemetry_mode), security.auto_scan_enabled ? 'Auto scan on' : 'Manual scan', proof.label],
+        eyebrow: 'Safety',
+        title: 'Trust and boundaries',
+        subtitle: 'Keep every session reversible, local, and safe for games.',
+        primaryStatus: {
+          label: 'Safety status',
+          value: security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern',
+          detail: 'Local safety signals tell you when to slow down.',
+        },
+        primaryAction: {
+          label: 'Best next step',
+          value: authority.label === 'Blocked' ? 'Review Settings' : 'Stay in manual control',
+          detail: authority.label === 'Blocked' ? authority.detail : 'Use proof and undo before you trust automation.',
+        },
+        proofState: { label: 'Data path', value: 'Local only', detail: 'Logs, scanning, and rollback stay on-device unless you change policy.' },
+        optionalSecondaryStatus: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: security.auto_scan_enabled ? 'Automatic safety review is on.' : 'Safety review stays manual by default.' },
       }
     case 'models': {
       const posture = getModelPosture(mlRuntimeTruth, models.length)
       return {
         eyebrow: 'Models',
-        title: 'Recommendation posture',
-        subtitle: 'Use this page to understand how real the recommendation layer is before you let it influence a session.',
-        signals: [
-          { label: 'Current status', value: posture.label, detail: posture.detail },
-          { label: 'Next safe step', value: 'Trust proof first', detail: 'Benchmark proof still outranks model confidence or catalog metadata.' },
-          { label: 'Evidence quality', value: evidence.label, detail: evidence.detail },
-        ],
-        details: [`${models.length} artifacts`, mlRuntimeTruth?.runtime_mode === 'onnx' ? 'Runtime-backed path' : 'Advisory path', proof.label],
+        title: 'Recommendations',
+        subtitle: 'Treat model advice as guidance until proof says otherwise.',
+        primaryStatus: { label: 'Model status', value: posture.label, detail: posture.detail },
+        primaryAction: { label: 'Best next step', value: 'Trust proof first', detail: 'Benchmark proof outranks confidence scores or catalog hints.' },
+        proofState: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
+        optionalSecondaryStatus: { label: 'Catalog', value: `${models.length} artifact${models.length === 1 ? '' : 's'}`, detail: mlRuntimeTruth?.runtime_mode === 'onnx' ? 'A runtime-backed path is available.' : 'Recommendations are still advisory.' },
       }
     }
     case 'logs':
       return {
         eyebrow: 'Activity',
-        title: 'What changed and how to undo it',
-        subtitle: 'Use this page to confirm what actually ran, what is still reversible, and where proof links back to action.',
-        signals: [
-          { label: 'Current status', value: undoReadyCount > 0 ? 'Undo ready' : 'No undo yet', detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} are still available.` : 'Nothing reversible has been recorded yet.' },
-          { label: 'Next safe step', value: workflow.label, detail: workflow.detail },
-          { label: 'Evidence quality', value: `${optimizationRuntime.activity.length} events`, detail: `${logs.length} support log${logs.length === 1 ? '' : 's'} stay secondary to the rollback timeline.` },
-        ],
-        details: [proof.label, authority.label, sessionStage.label],
+        title: 'History and undo',
+        subtitle: 'See what changed and walk it back when needed.',
+        primaryStatus: {
+          label: 'Undo status',
+          value: undoReadyCount > 0 ? 'Undo ready' : 'History empty',
+          detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} can still be undone.` : 'Run one safe test and undo will appear here.',
+        },
+        primaryAction: { label: 'Best next step', value: workflow.label, detail: workflow.detail },
+        proofState: { label: 'Recorded', value: `${optimizationRuntime.activity.length} event${optimizationRuntime.activity.length === 1 ? '' : 's'}`, detail: `${logs.length} support log${logs.length === 1 ? '' : 's'} stay secondary to the undo trail.` },
+        optionalSecondaryStatus: { label: 'Proof', value: proof.label, detail: proof.detail },
       }
     case 'settings':
       return {
         eyebrow: 'Settings',
-        title: 'Policy before automation',
-        subtitle: 'Decide what Aeterna may observe, change, and remember before you ask it to act on your machine.',
-        signals: [
-          { label: 'Current status', value: authority.label, detail: authority.detail },
-          { label: 'Next safe step', value: featureFlags.network_optimizer ? 'Tune policy' : 'Allow safe changes', detail: featureFlags.network_optimizer ? 'Keep automation narrow and rollback-first.' : 'Performance changes stay blocked until you allow them here.' },
-          { label: 'Evidence quality', value: formatTelemetryMode(settings.telemetry_mode), detail: `Theme ${theme === 'dark' ? 'Dark' : 'Light'} | ${settings.telemetry_retention_days} day retention.` },
-        ],
-        details: [formatAutomationMode(settings.automation_mode), settings.active_profile, connectionTitle],
+        title: 'Safe changes',
+        subtitle: 'Choose what Aeterna may change before automation begins.',
+        primaryStatus: { label: 'Change policy', value: authority.label, detail: authority.detail },
+        primaryAction: {
+          label: 'Best next step',
+          value: featureFlags.network_optimizer ? 'Review allowed actions' : 'Allow safe changes',
+          detail: featureFlags.network_optimizer ? 'Keep automation narrow and rollback-first.' : 'Performance changes stay blocked until you allow them here.',
+        },
+        proofState: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: `Theme ${theme === 'dark' ? 'Dark' : 'Light'} | ${settings.telemetry_retention_days} day retention.` },
+        optionalSecondaryStatus: { label: 'Session mode', value: formatAutomationMode(settings.automation_mode), detail: `${settings.active_profile} profile | ${connectionTitle}` },
       }
   }
 }

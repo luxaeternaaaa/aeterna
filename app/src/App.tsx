@@ -137,7 +137,7 @@ const initialBuild: BuildMetadata = {
 }
 
 function initialConnection(cache: BootstrapPayload | null): ConnectionState {
-  if (!cache) return { title: 'Optimization runtime starting', detail: 'Preparing the local sidecar and cached shell state...' }
+  if (!cache) return { title: 'Runtime starting', detail: 'Preparing the local sidecar and cached shell state.' }
   return toConnection({ state: 'starting', ready: false, launched_by_app: false }, cache.demo_mode)
 }
 
@@ -200,6 +200,9 @@ export default function App() {
     theme,
     undoReadyCount,
   })
+  const chromeStatuses = [pageChrome.primaryStatus, pageChrome.proofState, pageChrome.optionalSecondaryStatus].filter(
+    (item): item is NonNullable<typeof item> => Boolean(item),
+  )
 
   const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
@@ -347,8 +350,8 @@ export default function App() {
         if (disposed) return
         setConnection(
           cache?.bootstrap
-            ? { title: 'Using cached local data', detail: 'Refreshing the desktop services in background...' }
-            : { title: 'Optimization runtime starting', detail: 'Waiting for the local bootstrap to become available...' },
+            ? { title: 'Using cached local data', detail: 'Refreshing desktop services in the background.' }
+            : { title: 'Runtime starting', detail: 'Waiting for the local bootstrap to become available.' },
         )
       }
     }
@@ -715,32 +718,33 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-canvas p-4 md:p-6">
-      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 rounded-[2.5rem] border border-border bg-surface-elevated/80 p-4 shadow-float md:grid-cols-[300px_1fr] md:p-5">
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 rounded-[2.5rem] bg-surface-elevated/70 p-4 shadow-float md:grid-cols-[300px_1fr] md:p-5">
         <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))} theme={theme} />
-        <section className="rounded-[2rem] border border-border bg-surface p-6 shadow-panel md:p-8">
-          <header className="mb-8 border-b border-border pb-6">
+        <section className="rounded-[2rem] bg-surface p-6 shadow-panel ring-1 ring-inset ring-border/60 md:p-8">
+          <header className="mb-10">
             <p className="text-xs uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p>
-            <div className="mt-4 max-w-[68rem]">
-              <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[2.6rem] leading-[0.98] md:text-[3.1rem]' : 'text-[2rem] leading-[1.02] md:text-[2.45rem]'}`}>
-                {pageChrome.title}
-              </h2>
-              <p className="mt-3 max-w-4xl text-base leading-7 text-muted">{pageChrome.subtitle}</p>
-            </div>
-            <div className="mt-6 grid gap-3 xl:grid-cols-3">
-              {pageChrome.signals.map((signal) => (
-                <div key={signal.label} className="summary-card">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted">{signal.label}</p>
-                  <p className="mt-2 text-xl font-semibold tracking-tight text-text md:text-2xl">{signal.value}</p>
-                  <p className="mt-2 text-sm leading-6 text-muted">{signal.detail}</p>
+            <div className="mt-4 flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-[62rem]">
+                <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[2.6rem] leading-[0.98] md:text-[3.1rem]' : 'text-[2rem] leading-[1.02] md:text-[2.45rem]'}`}>
+                  {pageChrome.title}
+                </h2>
+                <p className="mt-3 max-w-4xl text-base leading-7 text-muted">{pageChrome.subtitle}</p>
+                <div className="mt-6 rounded-[1.5rem] bg-surface-muted/82 px-5 py-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted">{pageChrome.primaryAction.label}</p>
+                  <p className="mt-2 text-lg font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
+                  <p className="mt-2 text-sm leading-6 text-muted">{pageChrome.primaryAction.detail}</p>
                 </div>
-              ))}
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              {pageChrome.details.map((detail) => (
-                <span key={detail} className="status-chip">
-                  {detail}
-                </span>
-              ))}
+              </div>
+
+              <div className="rounded-[1.75rem] bg-surface-muted/82 px-5 py-5 xl:w-[22rem]">
+                {chromeStatuses.map((item, index) => (
+                  <div key={`${item.label}-${item.value}`} className={index === 0 ? '' : 'mt-4 border-t border-border/65 pt-4'}>
+                    <p className="text-xs uppercase tracking-[0.18em] text-muted">{item.label}</p>
+                    <p className="mt-2 text-lg font-semibold tracking-tight text-text">{item.value}</p>
+                    <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </header>
           {renderPage()}

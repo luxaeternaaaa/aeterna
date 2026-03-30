@@ -12,7 +12,6 @@ export function MetricCard({ detail, label, value }: StatCard) {
         </div>
         <p className="mt-5 text-[2.6rem] font-semibold tracking-tight text-text">{value}</p>
       </div>
-      <div className="mt-5 h-px bg-border/80" />
       <p className="mt-4 text-sm leading-6 text-muted">{detail}</p>
     </Panel>
   )

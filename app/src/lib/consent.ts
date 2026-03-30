@@ -8,26 +8,26 @@ export type ConsentCopy = {
 export const featureConsent: Record<keyof FeatureFlags, ConsentCopy> = {
   telemetry_collect: {
     title: 'Enable telemetry collection',
-    description: 'Stores local session metrics for dashboards, rollback-safe analytics, and model input windows. No outbound sync is enabled by default.',
+    description: 'Save local session metrics for dashboards and proof. Nothing is sent anywhere unless you turn that on yourself.',
   },
   network_optimizer: {
     title: 'Enable optimization actions',
-    description: 'Allows safe local optimization presets and recommendations. Every applied change should create a snapshot before execution.',
+    description: 'Allow safe local changes. Every real change creates a rollback snapshot before it runs.',
   },
   anomaly_detection: {
     title: 'Enable anomaly detection',
-    description: 'Runs the local anomaly model against session telemetry to highlight unusual patterns and possible driver or system issues.',
+    description: 'Use the local safety model to flag unusual session behavior on this device.',
   },
   auto_security_scan: {
     title: 'Enable automatic security scan',
-    description: 'Checks sessions locally for suspicious patterns. This remains read-only and does not inject code, hooks, or modify game memory.',
+    description: 'Run automatic local safety checks while you play. This stays read-only.',
   },
   cloud_features: {
     title: 'Enable cloud features',
-    description: 'Unlocks future outbound sync capabilities. Keep this disabled for strict local-only operation and privacy-by-default behavior.',
+    description: 'Allow future sync features. Leave this off if you want Aeterna to stay fully local.',
   },
   cloud_training: {
     title: 'Enable cloud training',
-    description: 'Allows future remote training workflows. Keep this disabled if you want all model work to stay on-device only.',
+    description: 'Allow future cloud training. Leave this off if you want all model work to stay on-device.',
   },
 }

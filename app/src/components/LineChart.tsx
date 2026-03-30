@@ -25,11 +25,18 @@ export function LineChart({ values }: LineChartProps) {
     <svg viewBox="0 0 100 100" className="h-32 w-full overflow-visible text-accent">
       {Array.from({ length: 4 }).map((_, index) => {
         const y = 20 + index * 20
-        return <line key={y} x1="0" x2="100" y1={y} y2={y} stroke="rgb(var(--color-border))" strokeDasharray="2 3" strokeWidth="0.6" />
+        return <line key={y} x1="0" x2="100" y1={y} y2={y} stroke="rgb(var(--color-border) / 0.7)" strokeDasharray="2 3" strokeWidth="0.6" />
       })}
-      <polygon fill="rgb(var(--color-accent-soft) / 0.65)" points={area} />
-      <polyline fill="none" points={points} stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <defs>
+        <linearGradient id="aeterna-chart-fill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="rgb(var(--color-accent) / 0.28)" />
+          <stop offset="100%" stopColor="rgb(var(--color-accent-soft) / 0.1)" />
+        </linearGradient>
+      </defs>
+      <polygon fill="url(#aeterna-chart-fill)" points={area} />
+      <polyline fill="none" points={points} stroke="currentColor" strokeWidth="2.4" vectorEffect="non-scaling-stroke" />
       <circle cx={lastPoint[0]} cy={lastPoint[1]} fill="currentColor" r="2.4" />
+      <circle cx={lastPoint[0]} cy={lastPoint[1]} fill="rgb(var(--color-surface))" r="1.05" />
     </svg>
   )
 }

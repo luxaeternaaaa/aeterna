@@ -7,8 +7,8 @@ interface ToggleRowProps {
 
 export function ToggleRow({ checked, description, label, onChange }: ToggleRowProps) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-      <div>
+    <div className="flex items-center justify-between gap-4 rounded-[1.5rem] bg-surface-muted/78 px-5 py-4">
+      <div className="min-w-0">
         <p className="text-sm font-medium text-text">{label}</p>
         <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
       </div>
@@ -17,9 +17,9 @@ export function ToggleRow({ checked, description, label, onChange }: ToggleRowPr
         role="switch"
         onClick={() => onChange(!checked)}
         type="button"
-        className={`relative h-8 w-14 rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 ${checked ? 'border-accent bg-accent/18' : 'border-border-strong bg-surface'}`}
+        className={`relative h-8 w-14 shrink-0 rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 ${checked ? 'bg-accent/20 ring-1 ring-inset ring-accent/35' : 'bg-surface ring-1 ring-inset ring-border-strong/90'}`}
       >
-        <span className={`absolute top-1 h-6 w-6 rounded-full shadow-panel transition ${checked ? 'left-7 bg-accent' : 'left-1 bg-surface-elevated'}`} />
+        <span className={`absolute top-1 h-6 w-6 rounded-full shadow-sm transition ${checked ? 'left-7 bg-accent' : 'left-1 bg-surface-elevated'}`} />
       </button>
     </div>
   )

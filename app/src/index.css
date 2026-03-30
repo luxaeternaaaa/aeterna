@@ -3,26 +3,26 @@
 @tailwind utilities;
 
 :root {
-  --color-canvas: 245 247 250;
+  --color-canvas: 243 245 248;
   --color-surface: 255 255 255;
-  --color-surface-elevated: 250 251 252;
-  --color-surface-muted: 243 245 248;
+  --color-surface-elevated: 249 250 252;
+  --color-surface-muted: 240 243 247;
   --color-text: 19 24 31;
-  --color-muted: 88 97 112;
-  --color-border: 194 202 214;
-  --color-border-strong: 106 118 137;
-  --color-hover: 229 235 244;
+  --color-muted: 95 104 120;
+  --color-border: 201 209 221;
+  --color-border-strong: 103 114 131;
+  --color-hover: 232 237 244;
   --color-active: 214 224 239;
-  --color-accent: 36 94 210;
-  --color-accent-soft: 221 233 255;
+  --color-accent: 31 90 214;
+  --color-accent-soft: 223 234 255;
   --color-success: 55 126 89;
   --color-success-soft: 230 244 236;
   --color-warning: 160 112 48;
   --color-warning-soft: 248 239 223;
   --color-danger: 170 71 71;
   --color-danger-soft: 250 234 234;
-  --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.78) inset, 0 18px 54px rgba(15, 23, 42, 0.07);
-  --float-shadow: 0 24px 80px rgba(15, 23, 42, 0.11);
+  --panel-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+  --float-shadow: 0 26px 72px rgba(15, 23, 42, 0.1);
   color-scheme: light;
   color: rgb(var(--color-text));
   background: rgb(var(--color-canvas));
@@ -34,26 +34,26 @@
 }
 
 :root[data-theme='dark'] {
-  --color-canvas: 10 12 16;
-  --color-surface: 18 22 28;
-  --color-surface-elevated: 22 27 34;
-  --color-surface-muted: 14 18 24;
+  --color-canvas: 17 20 26;
+  --color-surface: 27 31 38;
+  --color-surface-elevated: 33 38 46;
+  --color-surface-muted: 22 26 33;
   --color-text: 241 245 249;
-  --color-muted: 150 160 176;
-  --color-border: 40 47 58;
-  --color-border-strong: 63 72 86;
-  --color-hover: 28 34 42;
-  --color-active: 36 43 53;
-  --color-accent: 111 156 255;
-  --color-accent-soft: 28 42 74;
+  --color-muted: 157 166 181;
+  --color-border: 52 60 73;
+  --color-border-strong: 78 89 106;
+  --color-hover: 37 43 53;
+  --color-active: 43 50 61;
+  --color-accent: 114 158 255;
+  --color-accent-soft: 36 48 73;
   --color-success: 98 187 137;
   --color-success-soft: 27 49 38;
   --color-warning: 213 168 79;
   --color-warning-soft: 52 42 22;
   --color-danger: 220 116 116;
   --color-danger-soft: 59 28 28;
-  --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 22px 64px rgba(0, 0, 0, 0.34);
-  --float-shadow: 0 30px 90px rgba(0, 0, 0, 0.44);
+  --panel-shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
+  --float-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
   color-scheme: dark;
 }
 
@@ -75,8 +75,8 @@ body {
   min-height: 100vh;
   color: rgb(var(--color-text));
   background:
-    radial-gradient(circle at 10% 0%, rgba(202, 151, 65, 0.14), transparent 24rem),
-    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.05), transparent 20rem),
+    radial-gradient(circle at 10% 0%, rgba(202, 151, 65, 0.12), transparent 22rem),
+    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.04), transparent 18rem),
     linear-gradient(180deg, rgb(var(--color-surface-elevated)) 0%, rgb(var(--color-canvas)) 100%);
   transition:
     background-color 220ms ease,
@@ -85,8 +85,8 @@ body {
 
 :root[data-theme='dark'] body {
   background:
-    radial-gradient(circle at 12% 0%, rgba(213, 168, 79, 0.12), transparent 22rem),
-    radial-gradient(circle at 88% 2%, rgba(93, 135, 214, 0.08), transparent 18rem),
+    radial-gradient(circle at 12% 0%, rgba(213, 168, 79, 0.1), transparent 20rem),
+    radial-gradient(circle at 88% 2%, rgba(93, 135, 214, 0.08), transparent 16rem),
     linear-gradient(180deg, rgb(var(--color-surface-muted)) 0%, rgb(var(--color-canvas)) 100%);
 }
 
@@ -119,30 +119,42 @@ textarea:focus-visible {
 
 @layer components {
   .button-primary {
-    @apply inline-flex items-center justify-center rounded-full bg-accent px-5 py-3 text-sm font-medium text-white shadow-panel transition hover:brightness-105 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3.5 text-sm font-medium text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .button-secondary {
-    @apply inline-flex items-center justify-center rounded-full border border-border-strong bg-surface px-4 py-2.5 text-sm font-medium text-text transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-xl bg-surface px-4 py-2.5 text-sm font-medium text-text ring-1 ring-inset ring-border/80 transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .button-quiet {
-    @apply inline-flex items-center justify-center rounded-full border border-border bg-surface-muted px-4 py-2.5 text-sm font-medium text-text transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium text-muted transition hover:bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .button-link {
+    @apply inline-flex items-center justify-center text-sm text-muted underline decoration-border-strong/60 underline-offset-4 transition hover:text-text;
   }
 
   .status-chip {
-    @apply rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted;
+    @apply rounded-full bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted ring-1 ring-inset ring-border/70;
   }
 
   .surface-card {
-    @apply rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4;
+    @apply rounded-[1.5rem] bg-surface-muted/90 px-5 py-5;
   }
 
   .summary-card {
-    @apply rounded-[1.5rem] border border-border bg-surface px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)];
+    @apply rounded-[1.5rem] bg-surface px-5 py-5 shadow-sm ring-1 ring-inset ring-border/60;
   }
 
   .empty-state {
-    @apply rounded-[1.5rem] border border-dashed border-border-strong bg-surface-muted px-5 py-5;
+    @apply rounded-[1.75rem] bg-surface-muted/90 px-6 py-6 ring-1 ring-inset ring-border/75;
+  }
+
+  .action-stage {
+    @apply rounded-[1.75rem] bg-gradient-to-br from-accent-soft/80 to-surface px-6 py-6 shadow-sm ring-1 ring-inset ring-accent/15;
+  }
+
+  .input-shell {
+    @apply w-full rounded-xl bg-surface px-4 py-3 text-sm text-text outline-none ring-1 ring-inset ring-border-strong/85 transition focus:ring-accent/40;
   }
 }

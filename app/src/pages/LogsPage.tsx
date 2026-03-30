@@ -1,6 +1,7 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 
 import type { ActivityEntry, LogRecord } from '../types'
+import { DisclosurePanel } from '../components/DisclosurePanel'
 import { EmptyState } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
 import { stateCopy } from '../lib/stateCopy'
@@ -28,132 +29,101 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <Panel
-          title="Rollback timeline"
-          subtitle="This is where the product proves what changed and whether you can still walk it back."
-          variant="primary"
-        >
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
+      <Panel variant="primary">
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] xl:items-start">
+          <div className="action-stage">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">History</p>
+            <h3 className="mt-3 text-3xl font-semibold tracking-tight text-text md:text-[2.4rem]">
+              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'History is still empty'}
+            </h3>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
+              {lastAction
+                ? `Last recorded change: ${lastAction.action}. Open the timeline below to inspect it or walk it back.`
+                : stateCopy.noActivity}
+            </p>
+            {!lastAction ? (
+              <button className="button-primary mt-7" onClick={onOpenOptimization} type="button">
+                Start with a safe test
+              </button>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3">
+            <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Undo ready</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{undoReadyCount}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Actions that can still be reverted from the current local window.</p>
+              <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{undoReadyCount}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Every reversible change stays visible here until you end or restore it.</p>
             </div>
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Recorded activity</p>
-              <p className="mt-3 text-3xl font-semibold tracking-tight text-text">{filteredActivity.length}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Timeline entries written by session control, rollback, and restore events.</p>
-            </div>
-            <div className="rounded-[1.5rem] border border-border bg-surface-muted/70 px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Last change</p>
-              <p className="mt-3 text-lg font-semibold tracking-tight text-text">{lastAction ? lastAction.action : 'No local history yet'}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">{lastAction ? lastAction.detail : 'Attach a session or apply a safe tweak to start a traceable history.'}</p>
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Support logs</p>
+              <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{filteredLogs.length}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Troubleshooting output stays secondary to the undo timeline.</p>
             </div>
           </div>
-        </Panel>
+        </div>
+      </Panel>
 
-        <Panel
-          title="Support logs"
-          subtitle="Diagnostics stay available, but they never outrank the user-facing rollback story."
-          variant="utility"
-        >
-          <div className="space-y-3">
-            <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              Developer logs exist for troubleshooting, not as the main product narrative.
-            </div>
-            <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              Runtime rollback lives here. Settings and model snapshots stay in Settings so the product does not mix session undo with config history.
-            </div>
-          </div>
-        </Panel>
-      </section>
+      <Panel subtitle="Search the actions you care about, then inspect the timeline." title="Timeline" variant="secondary">
+        <input
+          className="input-shell"
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Filter by action, note, risk, or session"
+          value={query}
+        />
 
-      <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-        <Panel
-          title="Activity & Rollback"
-          subtitle="The timeline should answer what changed, why it happened, and whether it is still reversible."
-          variant="primary"
-        >
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter by action, note, risk, or session"
-            className="mb-4 w-full rounded-[1.5rem] border border-border-strong bg-surface-muted px-4 py-3 outline-none transition-colors focus:border-text/35"
-          />
-          <div className="space-y-3">
-            {filteredActivity.length === 0 ? (
-              <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="No reversible history yet" />
-            ) : null}
-            {filteredActivity.map((item) => (
-              <div key={item.id} className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+        <div className="mt-5 space-y-3">
+          {filteredActivity.length === 0 ? (
+            <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="Nothing to undo yet" />
+          ) : null}
+          {filteredActivity.map((item) => (
+            <div key={item.id} className="summary-card">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-semibold tracking-tight text-text">{item.action}</p>
-                    <p className="mt-1 text-sm leading-6 text-muted">{item.detail}</p>
+                    <span className="status-chip">{item.can_undo ? 'Undo ready' : 'Recorded'}</span>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{item.category}</span>
-                    <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{item.risk}</span>
-                    {item.blocked_by_policy ? (
-                      <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">Blocked by policy</span>
-                    ) : null}
-                    <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">
-                      {item.can_undo ? 'Undo ready' : 'Recorded'}
-                    </span>
-                  </div>
+                  <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
                 </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <div className="rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    Session {item.session_id ?? 'n/a'} | Action {item.action_id ?? 'n/a'}
-                  </div>
-                  <div className="rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    {formatTimestamp(item.timestamp)}
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="status-chip">{item.category}</span>
+                  <span className="status-chip">{item.risk}</span>
                 </div>
-                {item.snapshot_id ? (
-                  <div className="mt-3 rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    Snapshot {item.snapshot_id}
-                  </div>
-                ) : null}
-                {item.proof_link ? (
-                  <div className="mt-3 rounded-[1.25rem] border border-border bg-surface px-3 py-3 text-sm text-muted">
-                    Benchmark {item.proof_link}
-                  </div>
-                ) : null}
               </div>
-            ))}
-          </div>
-        </Panel>
+              <div className="mt-4 flex flex-wrap gap-4 text-sm text-muted">
+                <span>{formatTimestamp(item.timestamp)}</span>
+                <span>Session {item.session_id ?? 'n/a'}</span>
+                {item.proof_link ? <span>Proof {item.proof_link}</span> : null}
+                {item.snapshot_id ? <span>Snapshot {item.snapshot_id}</span> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
 
-        <Panel
-          title="Developer logs"
-          subtitle="Support output for troubleshooting, not a substitute for the product timeline."
-          variant="secondary"
-        >
-          <div className="space-y-3">
-            {filteredLogs.length === 0 ? (
-              <div className="rounded-[1.5rem] border border-dashed border-border bg-surface-muted/60 px-4 py-4 text-sm leading-6 text-muted">
-                {stateCopy.logsEmpty}
-              </div>
-            ) : null}
-            {filteredLogs.map((log) => (
-              <div key={log.id} className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold tracking-tight text-text">{log.message}</p>
-                    <p className="mt-1 text-sm text-muted">
-                      {log.category} | {log.source}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted">{log.severity}</span>
+      <DisclosurePanel summary="Only for troubleshooting. The undo timeline is the main story." title="Technical details">
+        <div className="space-y-3">
+          {filteredLogs.length === 0 ? (
+            <div className="surface-card">
+              <p className="text-sm leading-6 text-muted">{stateCopy.logsEmpty}</p>
+            </div>
+          ) : null}
+          {filteredLogs.map((log) => (
+            <div key={log.id} className="surface-card">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold tracking-tight text-text">{log.message}</p>
+                  <p className="mt-1 text-sm text-muted">
+                    {log.category} | {log.source}
+                  </p>
                 </div>
-                <p className="mt-3 text-sm text-muted">{formatTimestamp(log.timestamp)}</p>
+                <span className="status-chip">{log.severity}</span>
               </div>
-            ))}
-          </div>
-        </Panel>
-      </section>
+              <p className="mt-3 text-sm text-muted">{formatTimestamp(log.timestamp)}</p>
+            </div>
+          ))}
+        </div>
+      </DisclosurePanel>
     </div>
   )
 }

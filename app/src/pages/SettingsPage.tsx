@@ -1,4 +1,5 @@
 import type { BuildMetadata, FeatureFlags, SnapshotRecord, StartupDiagnostics, SystemSettings } from '../types'
+import { DisclosurePanel } from '../components/DisclosurePanel'
 import { Panel } from '../components/Panel'
 import { ToggleRow } from '../components/ToggleRow'
 import { stateCopy } from '../lib/stateCopy'
@@ -26,7 +27,7 @@ interface SettingsPageProps {
 
 function buildSummary(build: BuildMetadata) {
   if (!build.build_timestamp) return stateCopy.buildPending
-  return `Build v${build.version} | Runtime schema ${build.runtime_schema_version} | Sidecar protocol ${build.sidecar_protocol_version} | Built ${formatTimestamp(build.build_timestamp, 'Build time not recorded')} | Commit ${build.git_commit}`
+  return `v${build.version} | Runtime schema ${build.runtime_schema_version} | Sidecar ${build.sidecar_protocol_version} | Built ${formatTimestamp(build.build_timestamp, 'Build time not recorded')}`
 }
 
 export function SettingsPage(props: SettingsPageProps) {
@@ -50,119 +51,212 @@ export function SettingsPage(props: SettingsPageProps) {
     theme,
   } = props
 
+  const changesBlocked = !featureFlags.network_optimizer
+
   return (
     <div className="space-y-6">
-      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Panel title="Privacy defaults" subtitle="Decide what Aeterna may observe and retain before you ask it to help." variant="primary">
-          <div className="space-y-3">
-            <ToggleRow checked={featureFlags.telemetry_collect} label="Telemetry collection" description="Store local samples for dashboards and recommendations." onChange={(next) => onToggleFlag('telemetry_collect', next)} />
-            <ToggleRow checked={featureFlags.cloud_features} label="Cloud features" description="Keep outbound sync and shared analytics off until you explicitly allow them." onChange={(next) => onToggleFlag('cloud_features', next)} />
-            <ToggleRow checked={featureFlags.cloud_training} label="Cloud training" description="Keep model training on-device until you decide otherwise." onChange={(next) => onToggleFlag('cloud_training', next)} />
+      <Panel variant="primary">
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] xl:items-start">
+          <div className="action-stage">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Policy</p>
+            <h3 className="mt-3 text-3xl font-semibold tracking-tight text-text md:text-[2.5rem]">
+              {changesBlocked ? 'Changes are still locked' : 'Safe changes are allowed'}
+            </h3>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
+              {changesBlocked
+                ? 'Aeterna can inspect your session, but performance changes stay off until you allow them.'
+                : 'Aeterna may run only the safe actions you approve here. Everything stays reversible.'}
+            </p>
+            {changesBlocked ? (
+              <button className="button-primary mt-7" onClick={() => onToggleFlag('network_optimizer', true)} type="button">
+                Allow safe changes
+              </button>
+            ) : null}
           </div>
-          <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
-            Mode {settings.privacy_mode} | Telemetry {settings.telemetry_mode} | Retention {settings.telemetry_retention_days} days | Sampling every {settings.sampling_interval_seconds}s
-          </div>
-        </Panel>
-        <Panel title="Automation authority" subtitle="Keep automation narrow enough that every change stays explainable and reversible." variant="secondary">
-          <div className="space-y-3">
-            <ToggleRow checked={featureFlags.network_optimizer} label="Performance optimizer" description="Allow scheduler and power-plan suggestions to become real actions." onChange={(next) => onToggleFlag('network_optimizer', next)} />
-            <ToggleRow checked={settings.registry_presets_enabled} label="System presets" description="Allow rollback-safe, allowlisted presets from the trusted catalog only." onChange={onUpdateRegistryPresetsEnabled} />
-            <ToggleRow checked={settings.automation_allowlist.includes('process_priority')} label="Allow automated priority changes" description="Permit approved session automation to adjust process priority with rollback." onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)} />
-            <ToggleRow checked={settings.automation_allowlist.includes('cpu_affinity')} label="Allow automated CPU affinity" description="Permit the balanced affinity preset during an attached session." onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)} />
-            <ToggleRow checked={settings.automation_allowlist.includes('power_plan')} label="Allow automated power plan switching" description="Permit power plan changes only when the original one can be restored automatically." onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)} />
-          </div>
-          <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
-            Automation mode <span className="font-medium text-text">{settings.automation_mode.replace('_', ' ')}</span>. Policy-governed automation never bypasses rollback and only runs inside your approved allowlist.
-          </div>
-        </Panel>
-      </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Panel title="Session behavior" subtitle="These defaults shape how the app behaves when a real session is attached." variant="secondary">
+          <div className="grid gap-3">
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Telemetry</p>
+              <p className="mt-2 text-lg font-semibold tracking-tight text-text">{settings.telemetry_mode}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Retention {settings.telemetry_retention_days} days. Sampling every {settings.sampling_interval_seconds}s.</p>
+            </div>
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Automation mode</p>
+              <p className="mt-2 text-lg font-semibold tracking-tight text-text">{settings.automation_mode.replace('_', ' ')}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Automation never bypasses rollback or your approved allowlist.</p>
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel subtitle="These are the only permissions that unlock real changes." title="What Aeterna may change" variant="secondary">
+        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <div className="space-y-3">
+            <ToggleRow
+              checked={featureFlags.telemetry_collect}
+              description="Store local samples for dashboards and recommendations."
+              label="Telemetry collection"
+              onChange={(next) => onToggleFlag('telemetry_collect', next)}
+            />
+            <ToggleRow
+              checked={featureFlags.network_optimizer}
+              description="Allow safe, rollback-ready performance changes."
+              label="Safe changes"
+              onChange={(next) => onToggleFlag('network_optimizer', next)}
+            />
+            <ToggleRow
+              checked={settings.registry_presets_enabled}
+              description="Allow only approved presets that create a rollback snapshot first."
+              label="System presets"
+              onChange={onUpdateRegistryPresetsEnabled}
+            />
+          </div>
+
+          <div className="space-y-3">
+            <ToggleRow
+              checked={settings.automation_allowlist.includes('process_priority')}
+              description="Let approved automation raise process priority with rollback."
+              label="Priority changes"
+              onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)}
+            />
+            <ToggleRow
+              checked={settings.automation_allowlist.includes('cpu_affinity')}
+              description="Let approved automation use the balanced CPU affinity preset."
+              label="CPU affinity"
+              onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)}
+            />
+            <ToggleRow
+              checked={settings.automation_allowlist.includes('power_plan')}
+              description="Let approved automation switch power plans only when the original one can be restored."
+              label="Power plan changes"
+              onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)}
+            />
+          </div>
+        </div>
+      </Panel>
+
+      <DisclosurePanel summary="Profile, theme, telemetry mode, and expert-only options." title="Session defaults">
+        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4 text-sm text-muted">
+            <label className="surface-card text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Profile</span>
-              <select value={settings.active_profile} onChange={(event) => onUpdateProfile(event.target.value)} className="mt-3 w-full rounded-full border border-border-strong bg-surface px-4 py-2 text-text outline-none">
+              <select className="input-shell mt-3" onChange={(event) => onUpdateProfile(event.target.value)} value={settings.active_profile}>
                 <option value="balanced">Balanced</option>
                 <option value="competitive">Competitive</option>
                 <option value="quiet">Quiet</option>
               </select>
             </label>
-            <label className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4 text-sm text-muted">
+            <label className="surface-card text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Theme</span>
-              <select value={theme} onChange={(event) => onUpdateTheme(event.target.value as 'dark' | 'light')} className="mt-3 w-full rounded-full border border-border-strong bg-surface px-4 py-2 text-text outline-none">
+              <select className="input-shell mt-3" onChange={(event) => onUpdateTheme(event.target.value as 'dark' | 'light')} value={theme}>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
               </select>
             </label>
-            <label className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4 text-sm text-muted">
+            <label className="surface-card text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Telemetry mode</span>
-              <select value={settings.telemetry_mode} onChange={(event) => onUpdateTelemetryMode(event.target.value as SystemSettings['telemetry_mode'])} className="mt-3 w-full rounded-full border border-border-strong bg-surface px-4 py-2 text-text outline-none">
+              <select
+                className="input-shell mt-3"
+                onChange={(event) => onUpdateTelemetryMode(event.target.value as SystemSettings['telemetry_mode'])}
+                value={settings.telemetry_mode}
+              >
                 <option value="demo">Demo</option>
                 <option value="live">Live</option>
                 <option value="disabled">Disabled</option>
               </select>
             </label>
-            <label className="rounded-[1.5rem] border border-border bg-surface-muted/65 px-4 py-4 text-sm text-muted">
+            <label className="surface-card text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Automation mode</span>
-              <select value={settings.automation_mode} onChange={(event) => onUpdateAutomationMode(event.target.value as SystemSettings['automation_mode'])} className="mt-3 w-full rounded-full border border-border-strong bg-surface px-4 py-2 text-text outline-none">
+              <select
+                className="input-shell mt-3"
+                onChange={(event) => onUpdateAutomationMode(event.target.value as SystemSettings['automation_mode'])}
+                value={settings.automation_mode}
+              >
                 <option value="manual">Manual</option>
                 <option value="assisted">Assisted</option>
                 <option value="trusted_profiles">Trusted profiles</option>
               </select>
             </label>
           </div>
-          <div className="mt-5 space-y-3">
-            <ToggleRow checked={featureFlags.anomaly_detection} label="Anomaly detection" description="Run the anomaly model against local session telemetry." onChange={(next) => onToggleFlag('anomaly_detection', next)} />
-            <ToggleRow checked={featureFlags.auto_security_scan} label="Automatic safety review" description="Run local safety checks during active play." onChange={(next) => onToggleFlag('auto_security_scan', next)} />
-            <ToggleRow checked={settings.show_advanced_registry_details} label="Show advanced registry details" description="Expose exact registry paths and values in preset previews for expert review." onChange={onUpdateAdvancedRegistryDetails} />
-          </div>
-          <div className="mt-5 rounded-[1.5rem] border border-border bg-surface-muted px-4 py-4 text-sm leading-6 text-muted">
-            Compatibility mode keeps overlays, DLL injection, memory edits, and driver-level changes out of the current product path.
-          </div>
-        </Panel>
-        <Panel title="Diagnostics and build state" subtitle="Support-facing truth that helps debugging, not daily decision-making." variant="utility">
-          <div className="space-y-3">
-            <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-              {buildSummary(build)}
-            </div>
-            {startupDiagnostics ? (
-              <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-                Startup diagnostics: launch {formatTimestamp(startupDiagnostics.launch_started_at, 'not recorded')} | window {formatTimestamp(startupDiagnostics.window_visible_at, 'not recorded')} | sidecar {formatTimestamp(startupDiagnostics.sidecar_ready_at, 'not recorded')} | backend {formatTimestamp(startupDiagnostics.backend_ready_at, 'not recorded')} | bootstrap {formatTimestamp(startupDiagnostics.bootstrap_loaded_at, 'not recorded')}
-              </div>
-            ) : (
-              <div className="rounded-[1.5rem] border border-border bg-surface px-4 py-4 text-sm leading-6 text-muted">
-                Startup diagnostics are still loading.
-              </div>
-            )}
-          </div>
-        </Panel>
-      </section>
 
-      <Panel title="Config & model snapshots" subtitle="Snapshots created before settings and model changes. Session rollback stays in Activity." variant="secondary">
-        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-3">
-            {snapshots.length === 0 ? <p className="text-sm text-muted">{stateCopy.noConfigSnapshots}</p> : null}
-            {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="rounded-[1.5rem] border border-border bg-surface-muted/60 px-4 py-4">
-                <p className="text-sm font-medium">{snapshot.note}</p>
-                <p className="mt-1 text-sm text-muted">
-                  {snapshot.surface ?? 'config'} snapshot | {snapshot.kind} | {formatTimestamp(snapshot.created_at)}
-                </p>
-                <div className="mt-3 flex gap-3">
-                  <button onClick={() => onInspectSnapshot(snapshot.id)} className="rounded-full border border-border bg-surface px-4 py-2 text-sm hover:bg-hover" type="button">
-                    Inspect
-                  </button>
-                  <button onClick={() => onRestoreSnapshot(snapshot.id)} className="rounded-full border border-border bg-surface px-4 py-2 text-sm hover:bg-hover" type="button">
-                    Restore
-                  </button>
-                </div>
-              </div>
-            ))}
+            <ToggleRow
+              checked={featureFlags.cloud_features}
+              description="Keep outbound sync and shared analytics off until you explicitly allow them."
+              label="Cloud features"
+              onChange={(next) => onToggleFlag('cloud_features', next)}
+            />
+            <ToggleRow
+              checked={featureFlags.cloud_training}
+              description="Keep model training on-device until you decide otherwise."
+              label="Cloud training"
+              onChange={(next) => onToggleFlag('cloud_training', next)}
+            />
+            <ToggleRow
+              checked={featureFlags.anomaly_detection}
+              description="Run the anomaly model against local session telemetry."
+              label="Anomaly detection"
+              onChange={(next) => onToggleFlag('anomaly_detection', next)}
+            />
+            <ToggleRow
+              checked={featureFlags.auto_security_scan}
+              description="Run local safety checks during active play."
+              label="Automatic safety review"
+              onChange={(next) => onToggleFlag('auto_security_scan', next)}
+            />
+            <ToggleRow
+              checked={settings.show_advanced_registry_details}
+              description="Show exact registry details in preset previews for expert review."
+              label="Show advanced registry details"
+              onChange={onUpdateAdvancedRegistryDetails}
+            />
           </div>
-          <pre className="max-h-80 overflow-auto rounded-[1.5rem] border border-border bg-surface-muted p-4 text-xs leading-6 text-muted">{diffText || stateCopy.noSnapshot}</pre>
         </div>
-      </Panel>
+      </DisclosurePanel>
+
+      <DisclosurePanel summary="Build info, startup timings, and saved settings snapshots." title="Technical details">
+        <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+          <div className="space-y-3">
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Build</p>
+              <p className="mt-3 text-sm leading-6 text-muted">{buildSummary(build)}</p>
+            </div>
+
+            <div className="surface-card">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Startup diagnostics</p>
+              <p className="mt-3 text-sm leading-6 text-muted">
+                {startupDiagnostics
+                  ? `Launch ${formatTimestamp(startupDiagnostics.launch_started_at, 'not recorded')} | Window ${formatTimestamp(startupDiagnostics.window_visible_at, 'not recorded')} | Sidecar ${formatTimestamp(startupDiagnostics.sidecar_ready_at, 'not recorded')} | Backend ${formatTimestamp(startupDiagnostics.backend_ready_at, 'not recorded')}`
+                  : 'Startup diagnostics are still loading.'}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {snapshots.length === 0 ? <div className="surface-card text-sm text-muted">{stateCopy.noConfigSnapshots}</div> : null}
+              {snapshots.map((snapshot) => (
+                <div key={snapshot.id} className="summary-card">
+                  <p className="text-sm font-semibold tracking-tight text-text">{snapshot.note}</p>
+                  <p className="mt-1 text-sm text-muted">
+                    {snapshot.surface ?? 'config'} snapshot | {snapshot.kind} | {formatTimestamp(snapshot.created_at)}
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button className="button-secondary" onClick={() => onInspectSnapshot(snapshot.id)} type="button">
+                      Inspect
+                    </button>
+                    <button className="button-secondary" onClick={() => onRestoreSnapshot(snapshot.id)} type="button">
+                      Restore
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <pre className="max-h-[28rem] overflow-auto rounded-[1.75rem] bg-surface px-5 py-5 text-xs leading-6 text-muted ring-1 ring-inset ring-border/60">
+            {diffText || stateCopy.noSnapshot}
+          </pre>
+        </div>
+      </DisclosurePanel>
     </div>
   )
 }
