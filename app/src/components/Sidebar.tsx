@@ -5,10 +5,10 @@ import type { PageId } from '../types'
 import { ThemeToggle } from './ThemeToggle'
 
 const items = [
-  { id: 'home', label: 'Home', icon: Gauge },
+  { id: 'home', label: 'Dashboard', icon: Gauge },
   { id: 'optimize', label: 'Optimize', icon: Sparkles },
   { id: 'history', label: 'History', icon: History },
-  { id: 'safety', label: 'Safety', icon: Shield },
+  { id: 'safety', label: 'Security', icon: Shield },
   { id: 'settings', label: 'Settings', icon: SlidersHorizontal },
 ] as const
 

@@ -6,38 +6,38 @@ interface SecurityPageProps {
 }
 
 export function SecurityPage({ security }: SecurityPageProps) {
-  const postureLabel = security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern'
+  const postureLabel = security.status === 'high' ? 'Review before continuing' : security.status === 'medium' ? 'Proceed carefully' : 'Low risk'
   const reviewMode = security.auto_scan_enabled ? 'Automatic' : 'Manual'
 
   const trustRows = [
     {
-      title: 'What Aeterna can read',
-      value: 'Session telemetry, process state, proof signals',
-      detail: 'Read access is local-first and used to detect, measure, compare, and explain.',
+      title: 'Reads locally',
+      value: 'Session telemetry and process state',
+      detail: 'Aeterna reads local signals to detect, measure, compare, and explain changes.',
     },
     {
-      title: 'What Aeterna can change',
+      title: 'Changes safely',
       value: 'Only safe, reversible session actions',
       detail: 'Normal flow stays inside rollback-ready actions like priority, affinity, and approved presets.',
     },
     {
-      title: 'What stays blocked',
-      value: 'Risky or stealthy behavior',
-      detail: 'No anti-cheat bypassing, no game memory editing, no silent high-risk system changes.',
+      title: 'Keeps risky actions blocked',
+      value: 'No stealthy or high-risk behavior',
+      detail: 'No anti-cheat bypassing, no game memory editing, and no silent high-risk system changes.',
     },
     {
-      title: 'What may require approval',
-      value: 'Some system-scoped presets',
+      title: 'Requests approval when needed',
+      value: 'Some system-wide presets',
       detail: 'If an action needs extra trust, it should be explicit, narrow, and reversible.',
     },
     {
-      title: 'Rollback guarantee',
+      title: 'Creates rollback first',
       value: 'Snapshot before change',
       detail: 'Proof and rollback take priority over automation speed.',
     },
     {
-      title: 'Data path',
-      value: 'Local by default',
+      title: 'Keeps data local by default',
+      value: 'Local unless policy allows more',
       detail: 'Nothing leaves the machine unless policy allows it.',
     },
   ]
@@ -47,10 +47,10 @@ export function SecurityPage({ security }: SecurityPageProps) {
       <Panel variant="primary">
         <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="action-stage">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted">Safety posture</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Security posture</p>
             <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">{postureLabel}</h3>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">
-              Aeterna is built around measured changes, explicit boundaries, and rollback-first behavior.
+              Aeterna is designed around measured changes, clear limits, and rollback-first behavior.
             </p>
           </div>
 
@@ -58,7 +58,7 @@ export function SecurityPage({ security }: SecurityPageProps) {
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Confidence</p>
               <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{(security.confidence * 100).toFixed(0)}%</p>
-              <p className="mt-2 text-sm leading-6 text-muted">A read on how stable the current safety signal looks.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">How stable the current safety signal looks.</p>
             </div>
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Review mode</p>
@@ -69,7 +69,7 @@ export function SecurityPage({ security }: SecurityPageProps) {
         </div>
       </Panel>
 
-      <Panel subtitle="This is the trust contract the product should communicate clearly." title="Trust contract" variant="secondary">
+      <Panel subtitle="The key safety boundaries, without the lecture." title="Safety boundaries" variant="secondary">
         <div className="grid gap-3 md:grid-cols-2">
           {trustRows.map((item) => (
             <div key={item.title} className="summary-card">
@@ -81,13 +81,13 @@ export function SecurityPage({ security }: SecurityPageProps) {
         </div>
       </Panel>
 
-      <Panel subtitle="Hard rules, not soft promises." title="Non-negotiables" variant="secondary">
+      <Panel subtitle="Rules Aeterna should not cross." title="Hard boundaries" variant="secondary">
         <div className="grid gap-3 md:grid-cols-2">
           {[
             'No memory editing or stealthy behavior aimed at games.',
             'No silent outbound sync unless you explicitly allow it.',
             'No permanent system change is required during a live session.',
-            'If proof is weak, the product should slow down instead of acting smarter.',
+            'If proof is weak, Aeterna should slow down instead of acting smarter.',
           ].map((item) => (
             <div key={item} className="surface-card text-sm leading-6 text-muted">
               {item}

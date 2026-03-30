@@ -33,7 +33,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
           <div className="action-stage">
             <p className="text-xs uppercase tracking-[0.18em] text-muted">History</p>
             <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">
-              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'Nothing to undo yet'}
+              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'History is still empty'}
             </h3>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">
               {lastAction
@@ -54,15 +54,15 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
               <p className="mt-2 text-sm leading-6 text-muted">Reversible changes remain visible here until they are restored or closed.</p>
             </div>
             <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Support logs</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Technical logs</p>
               <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{filteredLogs.length}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Troubleshooting output stays secondary to the undo timeline.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Debugging output stays secondary to the undo timeline.</p>
             </div>
           </div>
         </div>
       </Panel>
 
-      <Panel subtitle="Search by action, session, proof, or risk." title="Timeline" variant="secondary">
+      <Panel subtitle="Search by action, session, result, or risk." title="Timeline" variant="secondary">
         <input
           className="input-shell"
           onChange={(event) => setQuery(event.target.value)}
@@ -101,7 +101,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
         </div>
       </Panel>
 
-      <Panel subtitle="Only for debugging and support." title="Technical logs" variant="secondary">
+      <Panel subtitle="Use this only for debugging and support." title="Technical logs" variant="secondary">
         <div className="space-y-3">
           {filteredLogs.length === 0 ? (
             <div className="surface-card">

@@ -27,7 +27,7 @@ function resolveProfile(profiles: GameProfile[], session: SessionState, currentS
 }
 
 function verdictLabel(report: BenchmarkReport | null) {
-  if (!report) return 'No proof yet'
+  if (!report) return 'No result yet'
   if (report.verdict === 'better') return 'Better'
   if (report.verdict === 'worse') return 'Worse'
   if (report.verdict === 'inconclusive') return 'Inconclusive'
@@ -72,7 +72,7 @@ export function DashboardPage({
     { label: 'Proof', value: proof.label, detail: proof.detail },
     { label: 'Evidence', value: evidence.label, detail: evidence.detail },
     {
-      label: 'Rollback',
+      label: 'Undo',
       value: session.active_snapshot_ids.length > 0 ? 'Ready' : 'Not needed',
       detail: session.active_snapshot_ids.length > 0 ? 'A reversible change is still active.' : 'No active rollback snapshot yet.',
     },
@@ -104,7 +104,7 @@ export function DashboardPage({
       </Panel>
 
       <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <Panel subtitle="Foreground process and pressure signals." title="Current session" variant="secondary">
+        <Panel subtitle="The live session at a glance." title="Current session" variant="secondary">
           <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="summary-card">
               <div className="flex items-center justify-between gap-3">
@@ -119,7 +119,7 @@ export function DashboardPage({
 
             <div className="grid gap-3">
               <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Foreground</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-muted">Game</p>
                 <p className="mt-2 text-base font-semibold text-text">{currentSample?.game_name ?? 'No attached session yet'}</p>
               </div>
               <div className="surface-card">
@@ -147,10 +147,10 @@ export function DashboardPage({
         </Panel>
 
         <div className="space-y-5">
-          <Panel subtitle="What the latest benchmark says right now." title="Latest result" variant="secondary">
+          <Panel subtitle="What the latest comparison says right now." title="Latest result" variant="secondary">
             <div className="summary-card">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold tracking-tight text-text">Benchmark status</p>
+                <p className="text-sm font-semibold tracking-tight text-text">Result</p>
                 <span className="status-chip">{verdictLabel(latestBenchmark)}</span>
               </div>
               <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark ? latestBenchmark.summary : stateCopy.noBenchmark}</p>
@@ -180,7 +180,7 @@ export function DashboardPage({
                   </div>
                 ))
               ) : (
-                <EmptyState actionLabel="Open Optimize" description="Recommendations will become more useful after a baseline and one measured test." onAction={onOpenOptimization} title="No recommendation yet" />
+                <EmptyState actionLabel="Open Optimize" description="Recommendations become useful after a baseline and one measured test." onAction={onOpenOptimization} title="No recommendation yet" />
               )}
             </div>
           </Panel>

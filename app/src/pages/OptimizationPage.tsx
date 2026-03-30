@@ -47,7 +47,7 @@ function resolveProfile(profiles: GameProfile[], runtimeState: OptimizationRunti
 }
 
 function benchmarkVerdict(report: BenchmarkReport | null) {
-  if (!report) return 'No proof yet'
+  if (!report) return 'No result yet'
   if (report.verdict === 'better') return 'Better'
   if (report.verdict === 'worse') return 'Worse'
   if (report.verdict === 'inconclusive') return 'Inconclusive'

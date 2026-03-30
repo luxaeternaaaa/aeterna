@@ -88,7 +88,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </div>
       </Panel>
 
-      <Panel subtitle="These are the permissions that unlock real changes." title="Permissions" variant="secondary">
+      <Panel subtitle="These permissions unlock real changes." title="Permissions" variant="secondary">
         <div className="grid gap-3 xl:grid-cols-2">
           <ToggleRow
             checked={featureFlags.telemetry_collect}
