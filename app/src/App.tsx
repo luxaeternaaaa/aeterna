@@ -21,7 +21,6 @@ import {
 import { getInitialState, getStartupState, toConnection } from './lib/startup'
 import { DashboardPage } from './pages/DashboardPage'
 import { LogsPage } from './pages/LogsPage'
-import { ModelsPage } from './pages/ModelsPage'
 import { OptimizationPage } from './pages/OptimizationPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -39,8 +38,6 @@ import type {
   GameProfile,
   LogRecord,
   MlInferencePayload,
-  MlRuntimeTruth,
-  ModelRecord,
   OptimizationSummary,
   OptimizationRuntimeState,
   PageId,
@@ -148,12 +145,11 @@ export default function App() {
   const bootstrapRef = useRef<BootstrapPayload | null>(cache?.bootstrap ?? null)
   const dashboardRef = useRef<DashboardPayload | null>(cache?.dashboard ?? null)
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme)
-  const [activePage, setActivePage] = useState<PageId>('dashboard')
+  const [activePage, setActivePage] = useState<PageId>('home')
   const [connection, setConnection] = useState<ConnectionState>(initialConnection(cache?.bootstrap ?? null))
   const [dashboard, setDashboard] = useState(cache?.dashboard ?? initialDashboard)
   const [featureFlags, setFeatureFlags] = useState({ ...initialFlags, ...(cache?.bootstrap?.settings.feature_flags ?? {}) })
   const [settings, setSettings] = useState({ ...initialSystem, ...(cache?.bootstrap?.settings.system ?? {}) })
-  const [models, setModels] = useState<ModelRecord[]>(cache?.bootstrap?.models ?? [])
   const [profiles, setProfiles] = useState<GameProfile[]>(cache?.bootstrap?.profiles ?? [])
   const [build, setBuild] = useState<BuildMetadata>(cache?.bootstrap?.build ?? initialBuild)
   const [benchmarkBaseline, setBenchmarkBaseline] = useState<BenchmarkWindow | null>(cache?.bootstrap?.benchmark_baseline ?? null)
@@ -165,7 +161,6 @@ export default function App() {
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
   const [session, setSession] = useState(cache?.bootstrap?.session ?? initialOptimizationRuntime.session)
   const [inference, setInference] = useState<MlInferencePayload | null>(null)
-  const [mlRuntimeTruth, setMlRuntimeTruth] = useState<MlRuntimeTruth | null>(null)
   const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null)
   const [realtime, setRealtime] = useState<TelemetryPoint | null>(cache?.dashboard?.history.at(-1) ?? null)
   const [diffText, setDiffText] = useState('')
@@ -190,8 +185,6 @@ export default function App() {
     featureFlags,
     latestBenchmark,
     logs,
-    mlRuntimeTruth,
-    models,
     optimization,
     optimizationRuntime,
     security,
@@ -208,7 +201,6 @@ export default function App() {
     bootstrapRef.current = nextBootstrap
     setFeatureFlags({ ...initialFlags, ...nextBootstrap.settings.feature_flags })
     setSettings({ ...initialSystem, ...nextBootstrap.settings.system })
-    setModels(nextBootstrap.models)
     setProfiles(nextBootstrap.profiles)
     setBuild(nextBootstrap.build)
     setBenchmarkBaseline(nextBootstrap.benchmark_baseline)
@@ -260,7 +252,7 @@ export default function App() {
   const loadOptimizationRuntime = useEffectEvent(async (processId?: number) => {
     const nextState = await inspectOptimization(processId)
     const sample = realtime ?? dashboardRef.current?.history.at(-1) ?? dashboard.history.at(-1) ?? null
-    const [nextInference, nextRuntimeTruth] = await Promise.all([
+    const [nextInference] = await Promise.all([
       sample ? runOptimizationInference(sample) : Promise.resolve(null),
       getMlRuntimeTruth(),
     ])
@@ -268,7 +260,6 @@ export default function App() {
       setOptimizationRuntime(nextState)
       setSession(nextState.session)
       setInference(nextInference)
-      setMlRuntimeTruth(nextRuntimeTruth)
       setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     })
   })
@@ -296,16 +287,6 @@ export default function App() {
       setSnapshots(nextSnapshots)
       setLoaded((current) => ({ ...current, snapshots: true }))
     })
-    if (nextBootstrap) {
-      bootstrapRef.current = nextBootstrap
-      writeStartupCache(nextBootstrap, dashboardRef.current)
-    }
-  })
-
-  const loadModels = useEffectEvent(async () => {
-    const nextModels = await api.models()
-    const nextBootstrap = bootstrapRef.current ? { ...bootstrapRef.current, models: nextModels } : null
-    setModels(nextModels)
     if (nextBootstrap) {
       bootstrapRef.current = nextBootstrap
       writeStartupCache(nextBootstrap, dashboardRef.current)
@@ -384,15 +365,14 @@ export default function App() {
   }, [featureFlags.telemetry_collect, settings.telemetry_mode])
 
   useEffect(() => {
-    if (activePage === 'dashboard' && !loaded.dashboard) void loadDashboard()
-    if ((activePage === 'dashboard' || activePage === 'optimization') && !loaded.optimization) void loadOptimization()
-    if ((activePage === 'optimization' || activePage === 'models') && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
-    if ((activePage === 'dashboard' || activePage === 'optimization') && !benchmarkBaseline && !latestBenchmark) void loadBenchmarkState()
-    if (activePage === 'security' && !loaded.security) void loadSecurity()
-    if (activePage === 'logs' && !loaded.logs) void loadLogs()
+    if (activePage === 'home' && !loaded.dashboard) void loadDashboard()
+    if ((activePage === 'home' || activePage === 'optimize') && !loaded.optimization) void loadOptimization()
+    if (activePage === 'optimize' && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
+    if ((activePage === 'home' || activePage === 'optimize') && !benchmarkBaseline && !latestBenchmark) void loadBenchmarkState()
+    if (activePage === 'safety' && !loaded.security) void loadSecurity()
+    if (activePage === 'history' && !loaded.logs) void loadLogs()
     if (activePage === 'settings' && !loaded.snapshots) void loadSettingsData()
-    if (activePage === 'models' && models.length === 0) void loadModels()
-  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadModels, loadOptimization, loadOptimizationRuntime, loadSecurity, loadSettingsData, models.length, selectedProcessId])
+  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadOptimization, loadOptimizationRuntime, loadSecurity, loadSettingsData, selectedProcessId])
 
   const toggleFlag = async (key: keyof FeatureFlags, value: boolean) => {
     await api.updateFeatureFlags({ ...featureFlags, [key]: value })
@@ -626,8 +606,8 @@ export default function App() {
   }
 
   const renderPage = () => {
-    if (activePage === 'dashboard' && !loaded.dashboard && dashboard.stats.length === 0) return <StartupSkeleton />
-    if (activePage === 'optimization') {
+    if (activePage === 'home' && !loaded.dashboard && dashboard.stats.length === 0) return <StartupSkeleton />
+    if (activePage === 'optimize') {
       return (
         <OptimizationPage
           benchmarkBaseline={benchmarkBaseline}
@@ -666,19 +646,8 @@ export default function App() {
         />
       )
     }
-    if (activePage === 'security') return <SecurityPage security={security} />
-    if (activePage === 'models') {
-      return (
-        <ModelsPage
-          inference={inference}
-          models={models}
-          onActivate={(id) => void api.activateModel(id).then(loadModels)}
-          onRollback={(id) => void api.rollbackModel(id).then(loadModels)}
-          runtimeTruth={mlRuntimeTruth}
-        />
-      )
-    }
-    if (activePage === 'logs') return <LogsPage activity={optimizationRuntime.activity} logs={logs} onOpenOptimization={() => setActivePage('optimization')} />
+    if (activePage === 'safety') return <SecurityPage security={security} />
+    if (activePage === 'history') return <LogsPage activity={optimizationRuntime.activity} logs={logs} onOpenOptimization={() => setActivePage('optimize')} />
     if (activePage === 'settings') {
       return (
         <SettingsPage
@@ -707,7 +676,7 @@ export default function App() {
         benchmarkBaseline={benchmarkBaseline}
         dashboard={dashboard}
         latestBenchmark={latestBenchmark}
-        onOpenOptimization={() => setActivePage('optimization')}
+        onOpenOptimization={() => setActivePage('optimize')}
         optimization={optimization}
         profiles={profiles}
         realtime={realtime}
@@ -718,32 +687,34 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-canvas p-4 md:p-6">
-      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1600px] gap-4 rounded-[2.5rem] bg-surface-elevated/70 p-4 shadow-float md:grid-cols-[300px_1fr] md:p-5">
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1540px] gap-4 rounded-[2rem] bg-surface-elevated/70 p-4 shadow-float md:grid-cols-[248px_1fr] md:p-4">
         <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))} theme={theme} />
-        <section className="rounded-[2rem] bg-surface p-6 shadow-panel ring-1 ring-inset ring-border/60 md:p-8">
-          <header className="mb-10">
-            <p className="text-xs uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p>
-            <div className="mt-4 flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-              <div className="max-w-[62rem]">
-                <h2 className={`font-semibold tracking-tight text-text ${activePage === 'dashboard' ? 'text-[2.6rem] leading-[0.98] md:text-[3.1rem]' : 'text-[2rem] leading-[1.02] md:text-[2.45rem]'}`}>
+        <section className="rounded-[1.75rem] bg-surface p-5 shadow-panel ring-1 ring-inset ring-border/60 md:p-6">
+          <header className="mb-8">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-muted">{pageChrome.eyebrow}</p>
+            <div className="mt-3 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-[56rem]">
+                <h2 className={`font-semibold tracking-tight text-text ${activePage === 'home' ? 'text-[2.2rem] leading-[0.98] md:text-[2.6rem]' : 'text-[1.85rem] leading-[1.02] md:text-[2.15rem]'}`}>
                   {pageChrome.title}
                 </h2>
-                <p className="mt-3 max-w-4xl text-base leading-7 text-muted">{pageChrome.subtitle}</p>
-                <div className="mt-6 rounded-[1.5rem] bg-surface-muted/82 px-5 py-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted">{pageChrome.primaryAction.label}</p>
-                  <p className="mt-2 text-lg font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
-                  <p className="mt-2 text-sm leading-6 text-muted">{pageChrome.primaryAction.detail}</p>
-                </div>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted md:text-[15px]">{pageChrome.subtitle}</p>
               </div>
 
-              <div className="rounded-[1.75rem] bg-surface-muted/82 px-5 py-5 xl:w-[22rem]">
-                {chromeStatuses.map((item, index) => (
-                  <div key={`${item.label}-${item.value}`} className={index === 0 ? '' : 'mt-4 border-t border-border/65 pt-4'}>
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted">{item.label}</p>
-                    <p className="mt-2 text-lg font-semibold tracking-tight text-text">{item.value}</p>
-                    <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
-                  </div>
-                ))}
+              <div className="grid gap-3 xl:w-[24rem]">
+                <div className="rounded-[1.25rem] bg-surface-muted/82 px-4 py-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted">{pageChrome.primaryAction.label}</p>
+                  <p className="mt-2 text-base font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
+                  <p className="mt-1.5 text-sm leading-6 text-muted">{pageChrome.primaryAction.detail}</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                  {chromeStatuses.map((item) => (
+                    <div key={`${item.label}-${item.value}`} className="rounded-[1.25rem] bg-surface-muted/82 px-4 py-4">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-muted">{item.label}</p>
+                      <p className="mt-2 text-sm font-semibold tracking-tight text-text">{item.value}</p>
+                      <p className="mt-1.5 text-sm leading-6 text-muted">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </header>

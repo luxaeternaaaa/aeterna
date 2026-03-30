@@ -11,7 +11,7 @@ interface PanelProps extends PropsWithChildren {
 
 const panelVariants = {
   primary: 'bg-surface shadow-panel ring-1 ring-inset ring-border/70',
-  secondary: 'bg-surface-muted/72 shadow-none',
+  secondary: 'bg-surface-muted/72 shadow-none ring-1 ring-inset ring-border/45',
   utility: 'bg-surface/72 shadow-none ring-1 ring-inset ring-border/50',
 } as const
 
@@ -19,7 +19,7 @@ export function Panel({ action, children, className, title, subtitle, variant = 
   return (
     <section
       className={clsx(
-        'relative overflow-hidden rounded-[2rem] p-6 md:p-8',
+        'relative overflow-hidden rounded-[1.5rem] p-5 md:p-6',
         panelVariants[variant],
         className,
       )}

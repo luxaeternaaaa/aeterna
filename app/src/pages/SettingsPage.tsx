@@ -1,5 +1,4 @@
 import type { BuildMetadata, FeatureFlags, SnapshotRecord, StartupDiagnostics, SystemSettings } from '../types'
-import { DisclosurePanel } from '../components/DisclosurePanel'
 import { Panel } from '../components/Panel'
 import { ToggleRow } from '../components/ToggleRow'
 import { stateCopy } from '../lib/stateCopy'
@@ -54,89 +53,89 @@ export function SettingsPage(props: SettingsPageProps) {
   const changesBlocked = !featureFlags.network_optimizer
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <Panel variant="primary">
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] xl:items-start">
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="action-stage">
             <p className="text-xs uppercase tracking-[0.18em] text-muted">Policy</p>
-            <h3 className="mt-3 text-3xl font-semibold tracking-tight text-text md:text-[2.5rem]">
-              {changesBlocked ? 'Changes are still locked' : 'Safe changes are allowed'}
+            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">
+              {changesBlocked ? 'Changes blocked by policy' : 'Safe changes allowed'}
             </h3>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">
               {changesBlocked
-                ? 'Aeterna can inspect your session, but performance changes stay off until you allow them.'
-                : 'Aeterna may run only the safe actions you approve here. Everything stays reversible.'}
+                ? 'Aeterna can inspect the session, but performance changes stay off until you allow them.'
+                : 'Only the approved, rollback-ready actions below may run.'}
             </p>
             {changesBlocked ? (
-              <button className="button-primary mt-7" onClick={() => onToggleFlag('network_optimizer', true)} type="button">
+              <button className="button-primary mt-6" onClick={() => onToggleFlag('network_optimizer', true)} type="button">
                 Allow safe changes
               </button>
             ) : null}
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Telemetry</p>
               <p className="mt-2 text-lg font-semibold tracking-tight text-text">{settings.telemetry_mode}</p>
               <p className="mt-2 text-sm leading-6 text-muted">Retention {settings.telemetry_retention_days} days. Sampling every {settings.sampling_interval_seconds}s.</p>
             </div>
             <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Automation mode</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">Automation</p>
               <p className="mt-2 text-lg font-semibold tracking-tight text-text">{settings.automation_mode.replace('_', ' ')}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Automation never bypasses rollback or your approved allowlist.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Automation never outranks rollback or approved scope.</p>
             </div>
           </div>
         </div>
       </Panel>
 
-      <Panel subtitle="These are the only permissions that unlock real changes." title="What Aeterna may change" variant="secondary">
-        <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-          <div className="space-y-3">
-            <ToggleRow
-              checked={featureFlags.telemetry_collect}
-              description="Store local samples for dashboards and recommendations."
-              label="Telemetry collection"
-              onChange={(next) => onToggleFlag('telemetry_collect', next)}
-            />
-            <ToggleRow
-              checked={featureFlags.network_optimizer}
-              description="Allow safe, rollback-ready performance changes."
-              label="Safe changes"
-              onChange={(next) => onToggleFlag('network_optimizer', next)}
-            />
-            <ToggleRow
-              checked={settings.registry_presets_enabled}
-              description="Allow only approved presets that create a rollback snapshot first."
-              label="System presets"
-              onChange={onUpdateRegistryPresetsEnabled}
-            />
-          </div>
-
-          <div className="space-y-3">
-            <ToggleRow
-              checked={settings.automation_allowlist.includes('process_priority')}
-              description="Let approved automation raise process priority with rollback."
-              label="Priority changes"
-              onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)}
-            />
-            <ToggleRow
-              checked={settings.automation_allowlist.includes('cpu_affinity')}
-              description="Let approved automation use the balanced CPU affinity preset."
-              label="CPU affinity"
-              onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)}
-            />
-            <ToggleRow
-              checked={settings.automation_allowlist.includes('power_plan')}
-              description="Let approved automation switch power plans only when the original one can be restored."
-              label="Power plan changes"
-              onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)}
-            />
-          </div>
+      <Panel subtitle="These are the permissions that unlock real changes." title="Permissions" variant="secondary">
+        <div className="grid gap-3 xl:grid-cols-2">
+          <ToggleRow
+            checked={featureFlags.telemetry_collect}
+            description="Store local samples for dashboards and recommendations."
+            label="Telemetry collection"
+            onChange={(next) => onToggleFlag('telemetry_collect', next)}
+          />
+          <ToggleRow
+            checked={featureFlags.network_optimizer}
+            description="Allow safe, rollback-ready performance changes."
+            label="Safe changes"
+            onChange={(next) => onToggleFlag('network_optimizer', next)}
+          />
+          <ToggleRow
+            checked={settings.registry_presets_enabled}
+            description="Allow only approved presets that create a rollback snapshot first."
+            label="System presets"
+            onChange={onUpdateRegistryPresetsEnabled}
+          />
         </div>
       </Panel>
 
-      <DisclosurePanel summary="Profile, theme, telemetry mode, and expert-only options." title="Session defaults">
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      <Panel subtitle="Keep automation narrow and explicit." title="Approved automations" variant="secondary">
+        <div className="grid gap-3 xl:grid-cols-2">
+          <ToggleRow
+            checked={settings.automation_allowlist.includes('process_priority')}
+            description="Let approved automation raise process priority with rollback."
+            label="Priority changes"
+            onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)}
+          />
+          <ToggleRow
+            checked={settings.automation_allowlist.includes('cpu_affinity')}
+            description="Let approved automation use the balanced CPU affinity preset."
+            label="CPU affinity"
+            onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)}
+          />
+          <ToggleRow
+            checked={settings.automation_allowlist.includes('power_plan')}
+            description="Let approved automation switch power plans only when the original one can be restored."
+            label="Power plan changes"
+            onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)}
+          />
+        </div>
+      </Panel>
+
+      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+        <Panel subtitle="Defaults for session behavior and display." title="Session defaults" variant="secondary">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="surface-card text-sm text-muted">
               <span className="block text-xs uppercase tracking-[0.18em] text-muted">Profile</span>
@@ -178,7 +177,9 @@ export function SettingsPage(props: SettingsPageProps) {
               </select>
             </label>
           </div>
+        </Panel>
 
+        <Panel subtitle="Restricted or advanced capabilities." title="Advanced and external" variant="secondary">
           <div className="space-y-3">
             <ToggleRow
               checked={featureFlags.cloud_features}
@@ -211,11 +212,11 @@ export function SettingsPage(props: SettingsPageProps) {
               onChange={onUpdateAdvancedRegistryDetails}
             />
           </div>
-        </div>
-      </DisclosurePanel>
+        </Panel>
+      </div>
 
-      <DisclosurePanel summary="Build info, startup timings, and saved settings snapshots." title="Technical details">
-        <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+      <div className="grid gap-5 xl:grid-cols-[0.92fr_1.08fr]">
+        <Panel subtitle="Build info, startup timings, and saved snapshots." title="Diagnostics" variant="secondary">
           <div className="space-y-3">
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Build</p>
@@ -251,12 +252,14 @@ export function SettingsPage(props: SettingsPageProps) {
               ))}
             </div>
           </div>
+        </Panel>
 
-          <pre className="max-h-[28rem] overflow-auto rounded-[1.75rem] bg-surface px-5 py-5 text-xs leading-6 text-muted ring-1 ring-inset ring-border/60">
+        <Panel subtitle="Selected snapshot diff or current placeholder." title="Snapshot details" variant="secondary">
+          <pre className="max-h-[30rem] overflow-auto rounded-[1.35rem] bg-surface px-4 py-4 text-xs leading-6 text-muted ring-1 ring-inset ring-border/60">
             {diffText || stateCopy.noSnapshot}
           </pre>
-        </div>
-      </DisclosurePanel>
+        </Panel>
+      </div>
     </div>
   )
 }

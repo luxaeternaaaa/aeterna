@@ -138,13 +138,13 @@ export function getSurfaceState(input: {
 }): SurfaceState {
   const { activePage, authority, evidence, proof, sessionStage } = input
 
-  if (activePage === 'dashboard') {
+  if (activePage === 'home') {
     return { primaryStatus: sessionStage, proofState: proof, optionalSecondaryStatus: evidence }
   }
-  if (activePage === 'optimization') {
+  if (activePage === 'optimize') {
     return { primaryStatus: sessionStage, proofState: proof, optionalSecondaryStatus: authority }
   }
-  if (activePage === 'logs') {
+  if (activePage === 'history') {
     return { primaryStatus: proof, proofState: sessionStage, optionalSecondaryStatus: authority }
   }
 

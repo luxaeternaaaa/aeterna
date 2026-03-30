@@ -4,8 +4,6 @@ import type {
   DashboardPayload,
   FeatureFlags,
   LogRecord,
-  MlRuntimeTruth,
-  ModelRecord,
   OptimizationRuntimeState,
   OptimizationSummary,
   PageId,
@@ -13,7 +11,7 @@ import type {
   SessionState,
   SystemSettings,
 } from '../types'
-import { getAuthorityStage, getEvidenceStage, getModelPosture, getProofStage, getSessionStage, getSurfaceState, getWorkflowStep } from './productState'
+import { getAuthorityStage, getEvidenceStage, getProofStage, getSessionStage, getSurfaceState, getWorkflowStep } from './productState'
 
 export type ThemeMode = 'dark' | 'light'
 
@@ -41,8 +39,6 @@ type PageChromeInput = {
   featureFlags: FeatureFlags
   latestBenchmark: BenchmarkReport | null
   logs: LogRecord[]
-  mlRuntimeTruth: MlRuntimeTruth | null
-  models: ModelRecord[]
   optimization: OptimizationSummary
   optimizationRuntime: OptimizationRuntimeState
   security: SecuritySummary
@@ -71,8 +67,6 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
     featureFlags,
     latestBenchmark,
     logs,
-    mlRuntimeTruth,
-    models,
     optimization,
     optimizationRuntime,
     security,
@@ -96,67 +90,55 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
   })
 
   switch (activePage) {
-    case 'dashboard':
+    case 'home':
       return {
-        eyebrow: 'Dashboard',
+        eyebrow: 'Home',
         title: 'Current session',
-        subtitle: 'See what is happening and take one safe next step.',
+        subtitle: 'See the state, the next move, and the latest proof at a glance.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
         optionalSecondaryStatus: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
       }
-    case 'optimization':
+    case 'optimize':
       return {
-        eyebrow: 'Optimization',
-        title: 'Run one safe test',
-        subtitle: 'Attach a game, capture proof, then change one thing at a time.',
+        eyebrow: 'Optimize',
+        title: 'Run one measured test',
+        subtitle: 'Attach a game, capture a baseline, then change one thing at a time.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
-        optionalSecondaryStatus: { label: 'Authority', value: authority.label, detail: authority.detail },
+        optionalSecondaryStatus: { label: 'Policy', value: authority.label, detail: authority.detail },
       }
-    case 'security':
+    case 'safety':
       return {
         eyebrow: 'Safety',
         title: 'Trust and boundaries',
-        subtitle: 'Keep every session reversible, local, and safe for games.',
+        subtitle: 'See what Aeterna may read, change, block, and roll back.',
         primaryStatus: {
           label: 'Safety status',
           value: security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern',
           detail: 'Local safety signals tell you when to slow down.',
         },
         primaryAction: {
-          label: 'Best next step',
-          value: authority.label === 'Blocked' ? 'Review Settings' : 'Stay in manual control',
-          detail: authority.label === 'Blocked' ? authority.detail : 'Use proof and undo before you trust automation.',
+          label: 'Next step',
+          value: authority.label === 'Blocked' ? 'Review Settings' : 'Keep control manual',
+          detail: authority.label === 'Blocked' ? authority.detail : 'Use proof and rollback before you trust automation.',
         },
         proofState: { label: 'Data path', value: 'Local only', detail: 'Logs, scanning, and rollback stay on-device unless you change policy.' },
         optionalSecondaryStatus: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: security.auto_scan_enabled ? 'Automatic safety review is on.' : 'Safety review stays manual by default.' },
       }
-    case 'models': {
-      const posture = getModelPosture(mlRuntimeTruth, models.length)
+    case 'history':
       return {
-        eyebrow: 'Models',
-        title: 'Recommendations',
-        subtitle: 'Treat model advice as guidance until proof says otherwise.',
-        primaryStatus: { label: 'Model status', value: posture.label, detail: posture.detail },
-        primaryAction: { label: 'Best next step', value: 'Trust proof first', detail: 'Benchmark proof outranks confidence scores or catalog hints.' },
-        proofState: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
-        optionalSecondaryStatus: { label: 'Catalog', value: `${models.length} artifact${models.length === 1 ? '' : 's'}`, detail: mlRuntimeTruth?.runtime_mode === 'onnx' ? 'A runtime-backed path is available.' : 'Recommendations are still advisory.' },
-      }
-    }
-    case 'logs':
-      return {
-        eyebrow: 'Activity',
-        title: 'History and undo',
-        subtitle: 'See what changed and walk it back when needed.',
+        eyebrow: 'History',
+        title: 'Timeline and undo',
+        subtitle: 'See what changed, what was measured, and what can still be reverted.',
         primaryStatus: {
           label: 'Undo status',
           value: undoReadyCount > 0 ? 'Undo ready' : 'History empty',
           detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} can still be undone.` : 'Run one safe test and undo will appear here.',
         },
-        primaryAction: { label: 'Best next step', value: workflow.label, detail: workflow.detail },
+        primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
         proofState: { label: 'Recorded', value: `${optimizationRuntime.activity.length} event${optimizationRuntime.activity.length === 1 ? '' : 's'}`, detail: `${logs.length} support log${logs.length === 1 ? '' : 's'} stay secondary to the undo trail.` },
         optionalSecondaryStatus: { label: 'Proof', value: proof.label, detail: proof.detail },
       }

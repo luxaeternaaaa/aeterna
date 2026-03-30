@@ -1,4 +1,4 @@
-export type PageId = 'dashboard' | 'optimization' | 'security' | 'models' | 'logs' | 'settings'
+export type PageId = 'home' | 'optimize' | 'safety' | 'history' | 'settings'
 export type EvidenceStage = 'Live' | 'Degraded' | 'Demo' | 'Unavailable'
 export type SessionStageLabel = 'No session' | 'Attached' | 'Testing' | 'Restored' | 'Blocked'
 export type ProofStageLabel = 'No baseline' | 'Ready to test' | 'Comparison ready' | 'Inconclusive'

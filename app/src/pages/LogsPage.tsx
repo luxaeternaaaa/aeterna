@@ -1,7 +1,6 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 
 import type { ActivityEntry, LogRecord } from '../types'
-import { DisclosurePanel } from '../components/DisclosurePanel'
 import { EmptyState } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
 import { stateCopy } from '../lib/stateCopy'
@@ -28,31 +27,31 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
   const lastAction = filteredActivity[0] ?? null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <Panel variant="primary">
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] xl:items-start">
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="action-stage">
             <p className="text-xs uppercase tracking-[0.18em] text-muted">History</p>
-            <h3 className="mt-3 text-3xl font-semibold tracking-tight text-text md:text-[2.4rem]">
-              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'History is still empty'}
+            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">
+              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'Nothing to undo yet'}
             </h3>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">
               {lastAction
-                ? `Last recorded change: ${lastAction.action}. Open the timeline below to inspect it or walk it back.`
+                ? `Last recorded change: ${lastAction.action}. Review it below and decide whether to keep it or roll it back.`
                 : stateCopy.noActivity}
             </p>
             {!lastAction ? (
-              <button className="button-primary mt-7" onClick={onOpenOptimization} type="button">
-                Start with a safe test
+              <button className="button-primary mt-6" onClick={onOpenOptimization} type="button">
+                Start a measured test
               </button>
             ) : null}
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Undo ready</p>
               <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{undoReadyCount}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Every reversible change stays visible here until you end or restore it.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Reversible changes remain visible here until they are restored or closed.</p>
             </div>
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Support logs</p>
@@ -63,17 +62,17 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
         </div>
       </Panel>
 
-      <Panel subtitle="Search the actions you care about, then inspect the timeline." title="Timeline" variant="secondary">
+      <Panel subtitle="Search by action, session, proof, or risk." title="Timeline" variant="secondary">
         <input
           className="input-shell"
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter by action, note, risk, or session"
+          placeholder="Filter timeline"
           value={query}
         />
 
         <div className="mt-5 space-y-3">
           {filteredActivity.length === 0 ? (
-            <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="Nothing to undo yet" />
+            <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="No timeline yet" />
           ) : null}
           {filteredActivity.map((item) => (
             <div key={item.id} className="summary-card">
@@ -82,6 +81,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-semibold tracking-tight text-text">{item.action}</p>
                     <span className="status-chip">{item.can_undo ? 'Undo ready' : 'Recorded'}</span>
+                    {item.blocked_by_policy ? <span className="status-chip">Blocked</span> : null}
                   </div>
                   <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
                 </div>
@@ -101,7 +101,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
         </div>
       </Panel>
 
-      <DisclosurePanel summary="Only for troubleshooting. The undo timeline is the main story." title="Technical details">
+      <Panel subtitle="Only for debugging and support." title="Technical logs" variant="secondary">
         <div className="space-y-3">
           {filteredLogs.length === 0 ? (
             <div className="surface-card">
@@ -123,7 +123,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
             </div>
           ))}
         </div>
-      </DisclosurePanel>
+      </Panel>
     </div>
   )
 }

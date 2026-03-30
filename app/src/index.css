@@ -3,26 +3,26 @@
 @tailwind utilities;
 
 :root {
-  --color-canvas: 243 245 248;
+  --color-canvas: 238 241 246;
   --color-surface: 255 255 255;
-  --color-surface-elevated: 249 250 252;
-  --color-surface-muted: 240 243 247;
-  --color-text: 19 24 31;
-  --color-muted: 95 104 120;
-  --color-border: 201 209 221;
-  --color-border-strong: 103 114 131;
-  --color-hover: 232 237 244;
-  --color-active: 214 224 239;
-  --color-accent: 31 90 214;
-  --color-accent-soft: 223 234 255;
-  --color-success: 55 126 89;
-  --color-success-soft: 230 244 236;
-  --color-warning: 160 112 48;
-  --color-warning-soft: 248 239 223;
-  --color-danger: 170 71 71;
-  --color-danger-soft: 250 234 234;
-  --panel-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
-  --float-shadow: 0 26px 72px rgba(15, 23, 42, 0.1);
+  --color-surface-elevated: 246 248 252;
+  --color-surface-muted: 232 237 244;
+  --color-text: 18 24 34;
+  --color-muted: 88 99 117;
+  --color-border: 192 201 214;
+  --color-border-strong: 92 105 126;
+  --color-hover: 223 230 239;
+  --color-active: 207 217 231;
+  --color-accent: 29 86 210;
+  --color-accent-soft: 216 228 255;
+  --color-success: 47 132 87;
+  --color-success-soft: 224 242 232;
+  --color-warning: 173 122 44;
+  --color-warning-soft: 248 238 218;
+  --color-danger: 176 73 73;
+  --color-danger-soft: 250 232 232;
+  --panel-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  --float-shadow: 0 20px 54px rgba(15, 23, 42, 0.11);
   color-scheme: light;
   color: rgb(var(--color-text));
   background: rgb(var(--color-canvas));
@@ -34,26 +34,26 @@
 }
 
 :root[data-theme='dark'] {
-  --color-canvas: 17 20 26;
-  --color-surface: 27 31 38;
-  --color-surface-elevated: 33 38 46;
-  --color-surface-muted: 22 26 33;
+  --color-canvas: 15 18 24;
+  --color-surface: 24 28 35;
+  --color-surface-elevated: 30 35 43;
+  --color-surface-muted: 19 23 29;
   --color-text: 241 245 249;
-  --color-muted: 157 166 181;
-  --color-border: 52 60 73;
-  --color-border-strong: 78 89 106;
-  --color-hover: 37 43 53;
-  --color-active: 43 50 61;
-  --color-accent: 114 158 255;
-  --color-accent-soft: 36 48 73;
-  --color-success: 98 187 137;
-  --color-success-soft: 27 49 38;
-  --color-warning: 213 168 79;
-  --color-warning-soft: 52 42 22;
-  --color-danger: 220 116 116;
-  --color-danger-soft: 59 28 28;
-  --panel-shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
-  --float-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+  --color-muted: 151 161 177;
+  --color-border: 49 57 69;
+  --color-border-strong: 76 88 105;
+  --color-hover: 34 40 49;
+  --color-active: 41 48 58;
+  --color-accent: 111 156 255;
+  --color-accent-soft: 32 44 68;
+  --color-success: 99 190 140;
+  --color-success-soft: 24 48 37;
+  --color-warning: 216 170 81;
+  --color-warning-soft: 53 42 20;
+  --color-danger: 221 118 118;
+  --color-danger-soft: 58 29 29;
+  --panel-shadow: 0 14px 32px rgba(0, 0, 0, 0.26);
+  --float-shadow: 0 24px 68px rgba(0, 0, 0, 0.36);
   color-scheme: dark;
 }
 
@@ -75,8 +75,8 @@ body {
   min-height: 100vh;
   color: rgb(var(--color-text));
   background:
-    radial-gradient(circle at 10% 0%, rgba(202, 151, 65, 0.12), transparent 22rem),
-    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.04), transparent 18rem),
+    radial-gradient(circle at 10% 0%, rgba(202, 151, 65, 0.1), transparent 20rem),
+    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.05), transparent 16rem),
     linear-gradient(180deg, rgb(var(--color-surface-elevated)) 0%, rgb(var(--color-canvas)) 100%);
   transition:
     background-color 220ms ease,
@@ -85,8 +85,8 @@ body {
 
 :root[data-theme='dark'] body {
   background:
-    radial-gradient(circle at 12% 0%, rgba(213, 168, 79, 0.1), transparent 20rem),
-    radial-gradient(circle at 88% 2%, rgba(93, 135, 214, 0.08), transparent 16rem),
+    radial-gradient(circle at 12% 0%, rgba(213, 168, 79, 0.08), transparent 18rem),
+    radial-gradient(circle at 88% 2%, rgba(93, 135, 214, 0.07), transparent 14rem),
     linear-gradient(180deg, rgb(var(--color-surface-muted)) 0%, rgb(var(--color-canvas)) 100%);
 }
 
@@ -119,7 +119,7 @@ textarea:focus-visible {
 
 @layer components {
   .button-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3.5 text-sm font-medium text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-medium text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .button-secondary {
@@ -135,23 +135,23 @@ textarea:focus-visible {
   }
 
   .status-chip {
-    @apply rounded-full bg-surface px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted ring-1 ring-inset ring-border/70;
+    @apply rounded-full bg-surface px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-muted ring-1 ring-inset ring-border/70;
   }
 
   .surface-card {
-    @apply rounded-[1.5rem] bg-surface-muted/90 px-5 py-5;
+    @apply rounded-[1.25rem] bg-surface-muted/90 px-4 py-4 ring-1 ring-inset ring-border/40;
   }
 
   .summary-card {
-    @apply rounded-[1.5rem] bg-surface px-5 py-5 shadow-sm ring-1 ring-inset ring-border/60;
+    @apply rounded-[1.25rem] bg-surface px-4 py-4 shadow-sm ring-1 ring-inset ring-border/65;
   }
 
   .empty-state {
-    @apply rounded-[1.75rem] bg-surface-muted/90 px-6 py-6 ring-1 ring-inset ring-border/75;
+    @apply rounded-[1.5rem] bg-surface-muted/90 px-5 py-5 ring-1 ring-inset ring-border/75;
   }
 
   .action-stage {
-    @apply rounded-[1.75rem] bg-gradient-to-br from-accent-soft/80 to-surface px-6 py-6 shadow-sm ring-1 ring-inset ring-accent/15;
+    @apply rounded-[1.5rem] bg-accent-soft px-5 py-5 shadow-sm ring-1 ring-inset ring-border/60;
   }
 
   .input-shell {
