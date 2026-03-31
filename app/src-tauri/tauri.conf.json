@@ -13,9 +13,13 @@
       {
         "label": "main",
         "title": "Aeterna",
-        "width": 1440,
-        "height": 960,
-        "resizable": true
+        "width": 1240,
+        "height": 820,
+        "minWidth": 1080,
+        "minHeight": 700,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false
       }
     ],
     "security": {

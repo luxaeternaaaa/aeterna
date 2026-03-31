@@ -1,4 +1,6 @@
 import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { Minus, MoonStar, SunMedium, X } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 
 import { ConsentModal } from './components/ConsentModal'
 import { Sidebar } from './components/Sidebar'
@@ -138,6 +140,10 @@ function initialConnection(cache: BootstrapPayload | null): ConnectionState {
   return toConnection({ state: 'starting', ready: false, launched_by_app: false }, cache.demo_mode)
 }
 
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
 export default function App() {
   const cache = useRef(readStartupCache()).current
   const retryTimer = useRef<number | null>(null)
@@ -196,6 +202,18 @@ export default function App() {
   const chromeStatuses = [pageChrome.primaryStatus, pageChrome.proofState, pageChrome.optionalSecondaryStatus].filter(
     (item): item is NonNullable<typeof item> => Boolean(item),
   )
+  const compactStatuses = chromeStatuses.slice(0, 2)
+  const showPageMeta = activePage !== 'home'
+
+  const minimizeWindow = () => {
+    if (!isTauriRuntime()) return
+    void invoke('minimize_main_window')
+  }
+
+  const closeWindow = () => {
+    if (!isTauriRuntime()) return
+    void invoke('close_main_window')
+  }
 
   const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
@@ -686,40 +704,83 @@ export default function App() {
   }
 
   return (
-    <main className="min-h-screen bg-canvas p-4 md:p-6">
-      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1540px] gap-4 rounded-[2rem] bg-surface-elevated/70 p-4 shadow-float md:grid-cols-[248px_1fr] md:p-4">
-        <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))} theme={theme} />
-        <section className="rounded-[1.75rem] bg-surface p-5 shadow-panel ring-1 ring-inset ring-border/60 md:p-6">
-          <header className="mb-8">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-muted">{pageChrome.eyebrow}</p>
-            <div className="mt-3 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div className="max-w-[56rem]">
-                <h2 className={`font-semibold tracking-tight text-text ${activePage === 'home' ? 'text-[2.2rem] leading-[0.98] md:text-[2.6rem]' : 'text-[1.85rem] leading-[1.02] md:text-[2.15rem]'}`}>
-                  {pageChrome.title}
-                </h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted md:text-[15px]">{pageChrome.subtitle}</p>
-              </div>
-
-              <div className="grid gap-3 xl:w-[24rem]">
-                <div className="rounded-[1.25rem] bg-surface-muted/82 px-4 py-4">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted">{pageChrome.primaryAction.label}</p>
-                  <p className="mt-2 text-base font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
-                  <p className="mt-1.5 text-sm leading-6 text-muted">{pageChrome.primaryAction.detail}</p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                  {chromeStatuses.map((item) => (
-                    <div key={`${item.label}-${item.value}`} className="rounded-[1.25rem] bg-surface-muted/82 px-4 py-4">
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-muted">{item.label}</p>
-                      <p className="mt-2 text-sm font-semibold tracking-tight text-text">{item.value}</p>
-                      <p className="mt-1.5 text-sm leading-6 text-muted">{item.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+    <main className="h-screen bg-transparent">
+      <div className="mx-auto flex h-full max-w-[1280px] flex-col overflow-hidden rounded-[1.7rem] bg-canvas">
+        <header className="grid h-[62px] grid-cols-[auto_1fr_auto] items-center border-b border-border/70 bg-surface-elevated/95 px-3">
+          <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
+            <div className="grid h-9 w-9 place-items-center rounded-lg border border-border/70 bg-surface">
+              <span className="text-sm font-semibold tracking-tight text-text">A</span>
             </div>
-          </header>
-          {renderPage()}
-        </section>
+            <div className="rounded-lg border border-border/70 bg-surface px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-muted">Session</p>
+              <p className="text-sm font-semibold text-text">{connection.title}</p>
+            </div>
+          </div>
+
+          <div data-tauri-drag-region className="h-10" />
+
+          <div className="window-no-drag flex items-center gap-1">
+            <button
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              className="window-control inline-flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-surface px-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted transition hover:bg-hover hover:text-text"
+              onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+              type="button"
+            >
+              {theme === 'dark' ? <SunMedium size={14} /> : <MoonStar size={14} />}
+              <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+            </button>
+            <button
+              aria-label="Minimize"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-hover hover:text-text"
+              onClick={minimizeWindow}
+              type="button"
+            >
+              <Minus size={18} />
+            </button>
+            <button
+              aria-label="Close"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-danger/25 hover:text-text"
+              onClick={closeWindow}
+              type="button"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </header>
+
+        <div className="grid min-h-0 flex-1 grid-cols-[78px_1fr] gap-3 p-2.5">
+          <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} />
+          <section className="min-h-0 overflow-auto rounded-[1.5rem] border border-border/80 bg-surface/95 p-4 md:p-5">
+            <header className="mb-5">
+              {showPageMeta ? <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p> : null}
+              <div className="mt-2 grid gap-3 xl:grid-cols-[1fr_auto] xl:items-start">
+                <div className="max-w-[56rem]">
+                  <h2 className={`font-semibold tracking-tight text-text ${activePage === 'home' ? 'text-[2rem] leading-[0.98] md:text-[2.35rem]' : 'text-[1.7rem] leading-[1.02] md:text-[1.95rem]'}`}>
+                    {pageChrome.title}
+                  </h2>
+                  {showPageMeta ? <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted">{pageChrome.subtitle}</p> : null}
+                </div>
+                <div className="grid gap-2 xl:w-[21rem]">
+                  <div className="rounded-xl border border-border/70 bg-surface-muted/80 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted">{pageChrome.primaryAction.label}</p>
+                    <p className="mt-1.5 text-sm font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
+                    <p className="mt-1 text-sm leading-5 text-muted">{pageChrome.primaryAction.detail}</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                    {compactStatuses.map((item) => (
+                      <div key={`${item.label}-${item.value}`} className="rounded-xl border border-border/70 bg-surface-muted/80 px-4 py-3">
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-muted">{item.label}</p>
+                        <p className="mt-1.5 text-sm font-semibold tracking-tight text-text">{item.value}</p>
+                        <p className="mt-1 text-sm leading-5 text-muted">{item.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </header>
+            {renderPage()}
+          </section>
+        </div>
       </div>
       {pendingConsent ? (
         <ConsentModal

@@ -2,7 +2,6 @@ import { Gauge, History, Shield, SlidersHorizontal, Sparkles } from 'lucide-reac
 import clsx from 'clsx'
 
 import type { PageId } from '../types'
-import { ThemeToggle } from './ThemeToggle'
 
 const items = [
   { id: 'home', label: 'Dashboard', icon: Gauge },
@@ -21,26 +20,15 @@ interface SidebarProps {
   activePage: PageId
   connection: ConnectionState
   onSelect: (page: PageId) => void
-  onToggleTheme: () => void
-  theme: 'dark' | 'light'
 }
 
-export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme }: SidebarProps) {
+export function Sidebar({ activePage, connection, onSelect }: SidebarProps) {
   return (
-    <aside className="flex h-full flex-col rounded-[1.75rem] bg-surface/92 p-4 shadow-panel ring-1 ring-inset ring-border/65">
-      <div className="mb-6 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent-soft ring-1 ring-inset ring-accent/15">
-              <span className="text-base font-semibold tracking-tight text-text">A</span>
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold tracking-tight text-text">Aeterna</h1>
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Measured control</p>
-            </div>
-          </div>
+    <aside className="flex h-full w-[78px] flex-col rounded-[1.4rem] border border-border/80 bg-surface/95 px-2 py-3 shadow-panel">
+      <div className="mb-3 flex items-center justify-center">
+        <div className="grid h-11 w-11 place-items-center rounded-xl border border-border/80 bg-accent/15">
+          <span className="text-lg font-bold tracking-tight text-text">A</span>
         </div>
-        <ThemeToggle onToggle={onToggleTheme} theme={theme} />
       </div>
 
       <nav className="space-y-1.5">
@@ -48,29 +36,29 @@ export function Sidebar({ activePage, connection, onSelect, onToggleTheme, theme
           <button
             key={id}
             onClick={() => onSelect(id)}
+            title={label}
             className={clsx(
-              'flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition',
+              'relative flex h-11 w-full items-center justify-center rounded-xl text-sm transition',
               activePage === id
-                ? 'bg-accent-soft/70 text-text ring-1 ring-inset ring-accent/20'
+                ? 'bg-accent/20 text-text ring-1 ring-inset ring-accent/45'
                 : 'text-muted hover:bg-hover hover:text-text',
             )}
             type="button"
           >
-            <span className={clsx('grid h-7 w-7 place-items-center rounded-lg', activePage === id ? 'bg-surface text-text' : 'bg-transparent')}>
-              <Icon size={16} />
-            </span>
-            <span className="font-medium">{label}</span>
+            {activePage === id ? <span className="absolute -left-2 h-7 w-1 rounded-r-full bg-accent" /> : null}
+            <Icon size={17} />
           </button>
         ))}
       </nav>
 
-      <div className="mt-auto rounded-[1.25rem] bg-surface-muted/90 p-4 ring-1 ring-inset ring-border/65">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted">
+      <div className="mt-auto rounded-xl border border-border/75 bg-surface-muted/75 p-2">
+        <div className="flex items-center justify-center gap-1">
           <span className="h-2 w-2 rounded-full bg-accent" />
-          Runtime
+          <span className="text-[9px] uppercase tracking-[0.12em] text-muted">Live</span>
         </div>
-        <p className="mt-2 text-sm font-medium text-text">{connection.title}</p>
-        <p className="mt-1 text-sm leading-6 text-muted">{connection.detail}</p>
+        <p className="mt-1 text-center text-[10px] leading-4 text-muted" title={`${connection.title} — ${connection.detail}`}>
+          {connection.title}
+        </p>
       </div>
     </aside>
   )

@@ -3,30 +3,30 @@
 @tailwind utilities;
 
 :root {
-  --color-canvas: 238 241 246;
-  --color-surface: 255 255 255;
-  --color-surface-elevated: 246 248 252;
-  --color-surface-muted: 232 237 244;
-  --color-text: 18 24 34;
-  --color-muted: 88 99 117;
-  --color-border: 192 201 214;
-  --color-border-strong: 92 105 126;
-  --color-hover: 223 230 239;
-  --color-active: 207 217 231;
-  --color-accent: 29 86 210;
-  --color-accent-soft: 216 228 255;
-  --color-success: 47 132 87;
-  --color-success-soft: 224 242 232;
-  --color-warning: 173 122 44;
-  --color-warning-soft: 248 238 218;
-  --color-danger: 176 73 73;
-  --color-danger-soft: 250 232 232;
-  --panel-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-  --float-shadow: 0 20px 54px rgba(15, 23, 42, 0.11);
-  color-scheme: light;
+  --color-canvas: 6 9 14;
+  --color-surface: 10 14 20;
+  --color-surface-elevated: 14 18 26;
+  --color-surface-muted: 16 20 29;
+  --color-text: 241 245 252;
+  --color-muted: 152 164 184;
+  --color-border: 36 44 59;
+  --color-border-strong: 72 84 106;
+  --color-hover: 20 26 38;
+  --color-active: 24 32 48;
+  --color-accent: 66 133 244;
+  --color-accent-soft: 15 33 64;
+  --color-success: 88 163 115;
+  --color-success-soft: 17 39 29;
+  --color-warning: 216 170 81;
+  --color-warning-soft: 53 42 20;
+  --color-danger: 221 118 118;
+  --color-danger-soft: 58 29 29;
+  --panel-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  --float-shadow: 0 24px 64px rgba(0, 0, 0, 0.48);
+  color-scheme: dark;
   color: rgb(var(--color-text));
-  background: rgb(var(--color-canvas));
-  font-family: Inter, 'SF Pro Display', Geist, system-ui, sans-serif;
+  background: transparent;
+  font-family: 'Segoe UI Variable Text', 'Manrope', 'SF Pro Display', 'Segoe UI', sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -34,27 +34,31 @@
 }
 
 :root[data-theme='dark'] {
-  --color-canvas: 15 18 24;
-  --color-surface: 24 28 35;
-  --color-surface-elevated: 30 35 43;
-  --color-surface-muted: 19 23 29;
-  --color-text: 241 245 249;
-  --color-muted: 151 161 177;
-  --color-border: 49 57 69;
-  --color-border-strong: 76 88 105;
-  --color-hover: 34 40 49;
-  --color-active: 41 48 58;
-  --color-accent: 111 156 255;
-  --color-accent-soft: 32 44 68;
-  --color-success: 99 190 140;
-  --color-success-soft: 24 48 37;
-  --color-warning: 216 170 81;
-  --color-warning-soft: 53 42 20;
-  --color-danger: 221 118 118;
-  --color-danger-soft: 58 29 29;
-  --panel-shadow: 0 14px 32px rgba(0, 0, 0, 0.26);
-  --float-shadow: 0 24px 68px rgba(0, 0, 0, 0.36);
   color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --color-canvas: 240 244 250;
+  --color-surface: 255 255 255;
+  --color-surface-elevated: 247 250 255;
+  --color-surface-muted: 237 242 250;
+  --color-text: 18 24 35;
+  --color-muted: 94 107 128;
+  --color-border: 195 206 223;
+  --color-border-strong: 112 128 152;
+  --color-hover: 228 236 247;
+  --color-active: 215 228 245;
+  --color-accent: 41 103 216;
+  --color-accent-soft: 214 229 255;
+  --color-success: 62 145 95;
+  --color-success-soft: 224 243 232;
+  --color-warning: 170 124 58;
+  --color-warning-soft: 246 239 223;
+  --color-danger: 182 86 86;
+  --color-danger-soft: 249 231 231;
+  --panel-shadow: 0 8px 22px rgba(22, 32, 48, 0.12);
+  --float-shadow: 0 18px 40px rgba(22, 32, 48, 0.14);
+  color-scheme: light;
 }
 
 * {
@@ -66,6 +70,7 @@
 html,
 body,
 #root {
+  height: 100%;
   min-height: 100%;
 }
 
@@ -73,21 +78,27 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
   color: rgb(var(--color-text));
-  background:
-    radial-gradient(circle at 10% 0%, rgba(202, 151, 65, 0.1), transparent 20rem),
-    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.05), transparent 16rem),
-    linear-gradient(180deg, rgb(var(--color-surface-elevated)) 0%, rgb(var(--color-canvas)) 100%);
-  transition:
-    background-color 220ms ease,
-    color 220ms ease;
+  background: rgb(var(--color-canvas));
 }
 
-:root[data-theme='dark'] body {
-  background:
-    radial-gradient(circle at 12% 0%, rgba(213, 168, 79, 0.08), transparent 18rem),
-    radial-gradient(circle at 88% 2%, rgba(93, 135, 214, 0.07), transparent 14rem),
-    linear-gradient(180deg, rgb(var(--color-surface-muted)) 0%, rgb(var(--color-canvas)) 100%);
+#root {
+  background: rgb(var(--color-canvas));
+}
+
+*[data-tauri-drag-region] {
+  app-region: drag;
+  user-select: none;
+}
+
+.window-no-drag,
+.window-no-drag * {
+  app-region: no-drag;
+}
+
+.window-control {
+  app-region: no-drag;
 }
 
 button,
@@ -96,12 +107,12 @@ select,
 textarea {
   font: inherit;
   transition:
-    background-color 180ms ease,
-    border-color 180ms ease,
-    color 180ms ease,
-    box-shadow 180ms ease,
-    opacity 180ms ease,
-    transform 180ms ease;
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease;
 }
 
 button:focus-visible,
@@ -109,7 +120,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.16);
+  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.25);
 }
 
 ::selection {
@@ -119,11 +130,11 @@ textarea:focus-visible {
 
 @layer components {
   .button-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-medium text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .button-secondary {
-    @apply inline-flex items-center justify-center rounded-xl bg-surface px-4 py-2.5 text-sm font-medium text-text ring-1 ring-inset ring-border/80 transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-xl border border-border/85 bg-surface px-4 py-2.5 text-sm font-medium text-text ring-1 ring-inset ring-border/55 transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .button-quiet {
@@ -135,26 +146,26 @@ textarea:focus-visible {
   }
 
   .status-chip {
-    @apply rounded-full bg-surface px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-muted ring-1 ring-inset ring-border/70;
+    @apply rounded-full border border-border/75 bg-surface px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-muted ring-1 ring-inset ring-border/65;
   }
 
   .surface-card {
-    @apply rounded-[1.25rem] bg-surface-muted/90 px-4 py-4 ring-1 ring-inset ring-border/40;
+    @apply rounded-[1.2rem] border border-border/70 bg-surface-muted/90 px-4 py-4 ring-1 ring-inset ring-border/35;
   }
 
   .summary-card {
-    @apply rounded-[1.25rem] bg-surface px-4 py-4 shadow-sm ring-1 ring-inset ring-border/65;
+    @apply rounded-[1.2rem] border border-border/70 bg-surface px-4 py-4 shadow-sm ring-1 ring-inset ring-border/50;
   }
 
   .empty-state {
-    @apply rounded-[1.5rem] bg-surface-muted/90 px-5 py-5 ring-1 ring-inset ring-border/75;
+    @apply rounded-[1.35rem] border border-border/70 bg-surface-muted/90 px-5 py-5 ring-1 ring-inset ring-border/60;
   }
 
   .action-stage {
-    @apply rounded-[1.5rem] bg-accent-soft px-5 py-5 shadow-sm ring-1 ring-inset ring-border/60;
+    @apply rounded-[1.35rem] border border-border/65 bg-surface-muted/75 px-5 py-5 ring-1 ring-inset ring-border/55;
   }
 
   .input-shell {
-    @apply w-full rounded-xl bg-surface px-4 py-3 text-sm text-text outline-none ring-1 ring-inset ring-border-strong/85 transition focus:ring-accent/40;
+    @apply w-full rounded-xl border border-border/85 bg-surface px-4 py-3 text-sm text-text outline-none ring-1 ring-inset ring-border-strong/45 transition focus:ring-accent/50;
   }
 }

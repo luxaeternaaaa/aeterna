@@ -93,8 +93,8 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
     case 'home':
       return {
         eyebrow: 'Home',
-        title: 'Current session',
-        subtitle: 'See the state, the next move, and the latest proof at a glance.',
+        title: 'Session',
+        subtitle: 'State, next step, proof.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
@@ -103,8 +103,8 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
     case 'optimize':
       return {
         eyebrow: 'Optimize',
-        title: 'Run one measured test',
-        subtitle: 'Attach a game, capture a baseline, then change one thing at a time.',
+        title: 'Optimize',
+        subtitle: 'Attach, baseline, one safe test.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
@@ -113,48 +113,48 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
     case 'safety':
       return {
         eyebrow: 'Safety',
-        title: 'Trust and boundaries',
-        subtitle: 'See what Aeterna may read, change, block, and roll back.',
+        title: 'Safety',
+        subtitle: 'Permissions, scope, rollback.',
         primaryStatus: {
-          label: 'Safety status',
+          label: 'Status',
           value: security.status === 'high' ? 'Stop and inspect' : security.status === 'medium' ? 'Proceed carefully' : 'Low concern',
-          detail: 'Local safety signals tell you when to slow down.',
+          detail: 'Local safety signals.',
         },
         primaryAction: {
           label: 'Next step',
           value: authority.label === 'Blocked' ? 'Review Settings' : 'Keep control manual',
-          detail: authority.label === 'Blocked' ? authority.detail : 'Use proof and rollback before you trust automation.',
+          detail: authority.label === 'Blocked' ? authority.detail : 'Use proof before automation.',
         },
-        proofState: { label: 'Data path', value: 'Local only', detail: 'Logs, scanning, and rollback stay on-device unless you change policy.' },
-        optionalSecondaryStatus: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: security.auto_scan_enabled ? 'Automatic safety review is on.' : 'Safety review stays manual by default.' },
+        proofState: { label: 'Data path', value: 'Local only', detail: 'On-device until policy changes.' },
+        optionalSecondaryStatus: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: security.auto_scan_enabled ? 'Auto review: on' : 'Auto review: off' },
       }
     case 'history':
       return {
         eyebrow: 'History',
-        title: 'Timeline and undo',
-        subtitle: 'See what changed, what was measured, and what can still be reverted.',
+        title: 'History',
+        subtitle: 'Changes, proof, undo.',
         primaryStatus: {
-          label: 'Undo status',
+          label: 'Undo',
           value: undoReadyCount > 0 ? 'Undo ready' : 'History empty',
-          detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} can still be undone.` : 'Run one safe test and undo will appear here.',
+          detail: undoReadyCount > 0 ? `${undoReadyCount} reversible change${undoReadyCount === 1 ? '' : 's'} ready.` : 'Run one safe test.',
         },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
-        proofState: { label: 'Recorded', value: `${optimizationRuntime.activity.length} event${optimizationRuntime.activity.length === 1 ? '' : 's'}`, detail: `${logs.length} support log${logs.length === 1 ? '' : 's'} stay secondary to the undo trail.` },
+        proofState: { label: 'Recorded', value: `${optimizationRuntime.activity.length} event${optimizationRuntime.activity.length === 1 ? '' : 's'}`, detail: `${logs.length} log${logs.length === 1 ? '' : 's'} stored.` },
         optionalSecondaryStatus: { label: 'Proof', value: proof.label, detail: proof.detail },
       }
     case 'settings':
       return {
         eyebrow: 'Settings',
-        title: 'Safe changes',
-        subtitle: 'Choose what Aeterna may change before automation begins.',
-        primaryStatus: { label: 'Change policy', value: authority.label, detail: authority.detail },
+        title: 'Settings',
+        subtitle: 'Policy before automation.',
+        primaryStatus: { label: 'Policy', value: authority.label, detail: authority.detail },
         primaryAction: {
-          label: 'Best next step',
+          label: 'Next step',
           value: featureFlags.network_optimizer ? 'Review allowed actions' : 'Allow safe changes',
-          detail: featureFlags.network_optimizer ? 'Keep automation narrow and rollback-first.' : 'Performance changes stay blocked until you allow them here.',
+          detail: featureFlags.network_optimizer ? 'Keep scope narrow and reversible.' : 'Performance changes are blocked.',
         },
-        proofState: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: `Theme ${theme === 'dark' ? 'Dark' : 'Light'} | ${settings.telemetry_retention_days} day retention.` },
-        optionalSecondaryStatus: { label: 'Session mode', value: formatAutomationMode(settings.automation_mode), detail: `${settings.active_profile} profile | ${connectionTitle}` },
+        proofState: { label: 'Telemetry', value: formatTelemetryMode(settings.telemetry_mode), detail: `${settings.telemetry_retention_days} day retention | ${theme}.` },
+        optionalSecondaryStatus: { label: 'Mode', value: formatAutomationMode(settings.automation_mode), detail: `${settings.active_profile} | ${connectionTitle}` },
       }
   }
 }

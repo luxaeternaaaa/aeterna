@@ -3,7 +3,7 @@ mod sidecar;
 mod sidecar_models;
 mod startup;
 
-use tauri::RunEvent;
+use tauri::{Manager, RunEvent};
 
 use backend::{backend_status, shutdown_backend, start_backend, stop_backend, BackendState};
 use sidecar::{
@@ -14,6 +14,22 @@ use sidecar::{
 use startup::{
     initialize_startup, mark_bootstrap_loaded, mark_window_visible, startup_diagnostics, StartupState,
 };
+
+#[tauri::command]
+fn minimize_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.minimize().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn close_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.close().map_err(|error| error.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -38,7 +54,9 @@ pub fn run() {
             run_ml_inference,
             ml_runtime_truth,
             startup_diagnostics,
-            mark_bootstrap_loaded
+            mark_bootstrap_loaded,
+            minimize_main_window,
+            close_main_window
         ])
         .setup(|app| {
             let handle = app.handle().clone();

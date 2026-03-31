@@ -1,5 +1,3 @@
-import { useDeferredValue, useMemo, useState } from 'react'
-
 import type { ActivityEntry, LogRecord } from '../types'
 import { EmptyState } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
@@ -13,16 +11,8 @@ interface LogsPageProps {
 }
 
 export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) {
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
-  const filteredActivity = useMemo(
-    () => activity.filter((item) => `${item.action} ${item.detail}`.toLowerCase().includes(deferredQuery.toLowerCase())),
-    [activity, deferredQuery],
-  )
-  const filteredLogs = useMemo(
-    () => logs.filter((item) => `${item.category} ${item.message} ${item.source}`.toLowerCase().includes(deferredQuery.toLowerCase())),
-    [deferredQuery, logs],
-  )
+  const filteredActivity = activity
+  const filteredLogs = logs
   const undoReadyCount = filteredActivity.filter((item) => item.can_undo).length
   const lastAction = filteredActivity[0] ?? null
 
@@ -62,14 +52,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
         </div>
       </Panel>
 
-      <Panel subtitle="Search by action, session, result, or risk." title="Timeline" variant="secondary">
-        <input
-          className="input-shell"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter timeline"
-          value={query}
-        />
-
+      <Panel subtitle="Actions and rollback trail." title="Timeline" variant="secondary">
         <div className="mt-5 space-y-3">
           {filteredActivity.length === 0 ? (
             <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="No timeline yet" />
