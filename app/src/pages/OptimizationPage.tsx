@@ -1,4 +1,30 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Activity,
+  Bot,
+  ChevronDown,
+  CircleHelp,
+  Cpu,
+  Crosshair,
+  Gauge,
+  Gamepad2,
+  Keyboard,
+  Logs,
+  Power,
+  RefreshCw,
+  RotateCcw,
+  Settings2,
+  ShieldAlert,
+  SlidersHorizontal,
+  Square,
+  X,
+  Zap,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+
+import { Panel } from '../components/Panel'
 import type {
+  ActivityEntry,
   ApplyRegistryPresetRequest,
   ApplyTweakRequest,
   AttachSessionRequest,
@@ -12,10 +38,9 @@ import type {
   OptimizationSummary,
   SystemSettings,
 } from '../types'
-import { EmptyState } from '../components/EmptyState'
-import { Panel } from '../components/Panel'
-import { getAuthorityStage, getEvidenceStage, getProofStage, getSessionStage, getWorkflowStep, type WorkflowAction } from '../lib/productState'
-import { stateCopy } from '../lib/stateCopy'
+
+type ToolTab = 'system' | 'ram'
+type PresetMode = 'default' | 'high-performance' | 'custom'
 
 interface OptimizationPageProps {
   benchmarkBaseline: BenchmarkWindow | null
@@ -23,10 +48,12 @@ interface OptimizationPageProps {
   dashboard: DashboardPayload
   featureFlags: FeatureFlags
   inference: MlInferencePayload | null
+  lastTweakAtMs: number | null
   latestBenchmark: BenchmarkReport | null
   onAttachSession: (request: AttachSessionRequest) => void
   onCaptureBaseline: () => void
   onEndSession: () => void
+  onOpenLogs: () => void
   onOpenSettings: () => void
   onPreviewRegistryPreset: (request: ApplyRegistryPresetRequest) => void
   onPreviewTweak: (request: ApplyTweakRequest) => void
@@ -34,533 +61,694 @@ interface OptimizationPageProps {
   onRollback: (snapshotId: string) => void
   onRunBenchmark: (profileId?: string) => void
   onSelectProcess: (processId: number) => void
+  onStopSession: () => void
   optimization: OptimizationSummary
   profiles: GameProfile[]
   runtimeState: OptimizationRuntimeState
   selectedProcessId: number | null
   settings: SystemSettings
+  stopBusy: boolean
 }
 
-function resolveProfile(profiles: GameProfile[], runtimeState: OptimizationRuntimeState) {
-  const profileId = runtimeState.session.recommended_profile_id ?? runtimeState.detected_game?.recommended_profile_id
-  return profiles.find((profile) => profile.id === profileId) ?? null
+interface ToggleCard {
+  id: string
+  title: string
+  description: string
+  caution: string
+  icon: LucideIcon
+  active: boolean
+  blockedReason?: string
+  hardDisabled?: boolean
+  onToggle: (next: boolean) => boolean
 }
 
-function benchmarkVerdict(report: BenchmarkReport | null) {
-  if (!report) return 'No result yet'
-  if (report.verdict === 'better') return 'Better'
-  if (report.verdict === 'worse') return 'Worse'
-  if (report.verdict === 'inconclusive') return 'Inconclusive'
-  return 'Mixed'
+const BENCHMARK_SECONDS = 60
+const COMPARE_COOLDOWN_SECONDS = 5
+
+function uniqueProcesses(runtimeState: OptimizationRuntimeState) {
+  const seen = new Set<number>()
+  return [runtimeState.selected_process, ...runtimeState.processes, ...runtimeState.advanced_processes].filter(
+    (item): item is OptimizationRuntimeState['processes'][number] => {
+      if (!item || seen.has(item.pid)) return false
+      seen.add(item.pid)
+      return true
+    },
+  )
 }
 
-function buildPrimaryAction(props: {
-  benchmarkBaseline: BenchmarkWindow | null
-  benchmarkBusy: boolean
-  featureFlags: FeatureFlags
-  latestBenchmark: BenchmarkReport | null
-  onAttachSession: (request: AttachSessionRequest) => void
-  onCaptureBaseline: () => void
-  onOpenSettings: () => void
-  onPreviewTweak: (request: ApplyTweakRequest) => void
-  onRefresh: (processId?: number) => void
-  onRollback: (snapshotId: string) => void
-  onRunBenchmark: (profileId?: string) => void
-  optimization: OptimizationSummary
-  profileId?: string
+function resolveProfile(profiles: GameProfile[], runtimeState: OptimizationRuntimeState, dashboard: DashboardPayload) {
+  const recommendedId = runtimeState.session.recommended_profile_id ?? runtimeState.detected_game?.recommended_profile_id
+  if (recommendedId) {
+    const byId = profiles.find((profile) => profile.id === recommendedId)
+    if (byId) return byId
+  }
+  const sampleName = (dashboard.history.at(-1)?.game_name ?? runtimeState.session.process_name ?? '').toLowerCase()
+  return profiles.find((profile) => profile.detection_keywords.some((keyword) => sampleName.includes(keyword)))
+}
+
+function chooseOneClickRequest(input: {
+  attachedProcessId: number | null
+  inference: MlInferencePayload | null
   runtimeState: OptimizationRuntimeState
-  selectedProcessId: number | null
-}): { action: WorkflowAction; disabled: boolean; label: string; onClick: () => void } {
-  const {
-    benchmarkBaseline,
-    benchmarkBusy,
-    featureFlags,
-    latestBenchmark,
-    onAttachSession,
-    onCaptureBaseline,
-    onOpenSettings,
-    onPreviewTweak,
-    onRefresh,
-    onRollback,
-    onRunBenchmark,
-    optimization,
-    profileId,
-    runtimeState,
-    selectedProcessId,
-  } = props
-  const trackedProcessId = runtimeState.session.process_id ?? selectedProcessId
-  const nextStep = getWorkflowStep({
-    benchmarkBaseline,
-    detectedGame: runtimeState.detected_game,
-    featureFlags,
-    latestBenchmark,
-    optimization,
-    session: runtimeState.session,
-  })
-
-  if (nextStep.action === 'attach-session' && runtimeState.detected_game) {
-    return {
-      action: nextStep.action,
-      label: 'Attach game',
-      disabled: false,
-      onClick: () => onAttachSession({ process_id: runtimeState.detected_game!.pid, process_name: runtimeState.detected_game!.exe_name }),
-    }
+}): ApplyTweakRequest | null {
+  const { attachedProcessId, inference, runtimeState } = input
+  if (!attachedProcessId) return null
+  const hints = (inference?.recommended_tweaks ?? []).map((item) => item.toLowerCase())
+  if (hints.some((hint) => hint.includes('power') || hint.includes('plan'))) {
+    const preferredPlan = runtimeState.power_plans.find(
+      (plan) => !plan.active && /ultimate|high performance/i.test(plan.name),
+    )
+    if (preferredPlan) return { kind: 'power_plan', process_id: attachedProcessId, power_plan_guid: preferredPlan.guid }
   }
-  if (nextStep.action === 'capture-baseline') {
-    return { action: nextStep.action, label: benchmarkBusy ? 'Capturing…' : 'Capture baseline', disabled: benchmarkBusy, onClick: onCaptureBaseline }
+  if (hints.some((hint) => hint.includes('affinity') || hint.includes('core'))) {
+    return { kind: 'cpu_affinity', process_id: attachedProcessId, affinity_preset: 'all_threads' }
   }
-  if (nextStep.action === 'open-settings') {
-    return { action: nextStep.action, label: 'Open Settings', disabled: false, onClick: onOpenSettings }
-  }
-  if (nextStep.action === 'apply-safe-test') {
-    return {
-      action: nextStep.action,
-      label: 'Try safe priority test',
-      disabled: !trackedProcessId || runtimeState.session.state === 'idle' || runtimeState.session.state === 'ended',
-      onClick: () => onPreviewTweak({ kind: 'process_priority', process_id: trackedProcessId ?? undefined, priority: 'above_normal' }),
-    }
-  }
-  if (nextStep.action === 'review-proof') {
-    if (runtimeState.session.pending_registry_snapshot_id) {
-      return {
-        action: nextStep.action,
-        label: 'Restore previous preset',
-        disabled: false,
-        onClick: () => onRollback(runtimeState.session.pending_registry_snapshot_id!),
-      }
-    }
-    return {
-      action: nextStep.action,
-      label: benchmarkBusy ? 'Comparing…' : 'Compare result',
-      disabled: benchmarkBusy || !benchmarkBaseline,
-      onClick: () => onRunBenchmark(profileId),
-    }
-  }
-  return { action: nextStep.action, label: 'Refresh detection', disabled: false, onClick: () => onRefresh(trackedProcessId ?? undefined) }
+  return { kind: 'process_priority', process_id: attachedProcessId, priority: 'high' }
 }
 
-function getActionBrief(action: WorkflowAction, processName: string, proofLabel: string) {
-  switch (action) {
-    case 'refresh-detection':
-      return {
-        whatChanges: 'Nothing changes on your system yet.',
-        why: 'A real session must be visible before Aeterna can prove anything.',
-        safety: 'Read-only. Detection does not touch the game or Windows settings.',
-        undo: 'No undo needed yet.',
-      }
-    case 'attach-session':
-      return {
-        whatChanges: `Aeterna starts tracking ${processName} as the active session.`,
-        why: 'That opens live proof, rollback scope, and safer recommendations.',
-        safety: 'Still read-only. No system tweak runs just because you attach.',
-        undo: 'You can end the session at any time.',
-      }
-    case 'capture-baseline':
-      return {
-        whatChanges: 'Aeterna records the clean before-state for this session.',
-        why: 'That gives every later tweak a fair comparison point.',
-        safety: 'Benchmark capture reads the session. It does not change Windows settings.',
-        undo: 'You can recapture the baseline whenever you need a cleaner starting point.',
-      }
-    case 'open-settings':
-      return {
-        whatChanges: 'You unlock safe, rollback-ready changes in Settings.',
-        why: 'Aeterna keeps changes blocked until you allow them on purpose.',
-        safety: 'Nothing is applied just by opening or changing policy.',
-        undo: 'Switch the permission back off whenever you want.',
-      }
-    case 'apply-safe-test':
-      return {
-        whatChanges: `Aeterna raises ${processName} to Above normal priority for this session.`,
-        why: 'It is the quickest reversible test when background contention is the likely pressure point.',
-        safety: 'Session-scoped only. No game memory edits, no anti-cheat-hostile behavior.',
-        undo: 'A rollback snapshot is created before the change and can be restored later.',
-      }
-    case 'review-proof':
-      return {
-        whatChanges: 'Aeterna compares the latest run against your saved baseline.',
-        why: `This turns the current guess into a result you can keep or undo. ${proofLabel === 'Comparison ready' ? 'A result is already waiting.' : ''}`.trim(),
-        safety: 'Comparison reads evidence. It does not stack another tweak.',
-        undo: 'If the result is not worth keeping, undo the last change.',
-      }
-  }
+function findLatestUndoEntry(activity: ActivityEntry[], predicate: (entry: ActivityEntry) => boolean) {
+  return [...activity]
+    .reverse()
+    .find((entry) => entry.can_undo && entry.snapshot_id && predicate(entry))
 }
 
-function stepState(index: number, action: WorkflowAction) {
-  const order: WorkflowAction[] = ['refresh-detection', 'attach-session', 'capture-baseline', 'apply-safe-test', 'review-proof']
-  const current = order.indexOf(action)
-  if (index < current) return 'done'
-  if (index === current) return 'active'
-  return 'pending'
+function toGb(mb: number | null | undefined) {
+  if (!mb || Number.isNaN(mb)) return 'n/a'
+  return `${(mb / 1024).toFixed(1)} GB`
 }
 
-export function OptimizationPage(props: OptimizationPageProps) {
-  const {
-    benchmarkBaseline,
-    benchmarkBusy,
-    dashboard,
-    featureFlags,
-    inference,
-    latestBenchmark,
-    onAttachSession,
-    onCaptureBaseline,
-    onEndSession,
-    onOpenSettings,
-    onPreviewRegistryPreset,
-    onPreviewTweak,
-    onRefresh,
-    onRollback,
-    onRunBenchmark,
-    onSelectProcess,
-    optimization,
-    profiles,
-    runtimeState,
-    selectedProcessId,
-    settings,
-  } = props
+function ToggleSwitch({
+  active,
+  pending,
+  hardDisabled,
+  onToggle,
+}: {
+  active: boolean
+  pending?: boolean
+  hardDisabled?: boolean
+  onToggle: (next: boolean) => void
+}) {
+  return (
+    <button
+      aria-checked={active}
+      aria-label={active ? 'Disable tweak' : 'Enable tweak'}
+      className={`relative h-8 w-14 shrink-0 rounded-full transition ${
+        active ? 'bg-accent' : 'bg-surface-muted ring-1 ring-inset ring-border-strong/85'
+      } ${pending ? 'ring-2 ring-accent/45' : ''} ${hardDisabled ? 'cursor-not-allowed opacity-45' : 'hover:opacity-90'}`}
+      disabled={hardDisabled}
+      onClick={() => onToggle(!active)}
+      role="switch"
+      type="button"
+    >
+      <span
+        className={`absolute top-1 h-6 w-6 rounded-full border border-border/60 bg-white transition-[left] ${
+          active ? 'left-[calc(100%-1.75rem)]' : 'left-1'
+        }`}
+      />
+    </button>
+  )
+}
+
+function TweakCard({
+  card,
+  pending,
+  onOpenInfo,
+  onOpenRisk,
+}: {
+  card: ToggleCard
+  pending: boolean
+  onOpenInfo: (id: string) => void
+  onOpenRisk: (id: string) => void
+}) {
+  const Icon = card.icon
+  return (
+    <article className="rounded-[1.2rem] border border-border/65 bg-surface px-5 py-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid h-11 w-11 place-items-center rounded-lg bg-surface-muted/80 ring-1 ring-inset ring-border/45">
+          <Icon className="text-muted" size={24} />
+        </div>
+        <ToggleSwitch active={card.active || pending} hardDisabled={card.hardDisabled} onToggle={card.onToggle} pending={pending} />
+      </div>
+
+      <h3 className="mt-5 text-[1.05rem] font-semibold tracking-tight text-text">{card.title}</h3>
+
+      {card.blockedReason ? <p className="mt-3 text-sm text-warning">{card.blockedReason}</p> : null}
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <button
+          className="text-[13px] font-medium text-muted underline decoration-border-strong/60 underline-offset-4 hover:text-text"
+          onClick={() => onOpenRisk(card.id)}
+          type="button"
+        >
+          Not recommended if...
+        </button>
+        <button
+          aria-label={`Open info for ${card.title}`}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-surface-muted text-muted hover:text-text"
+          onClick={() => onOpenInfo(card.id)}
+          type="button"
+        >
+          <CircleHelp size={14} />
+        </button>
+      </div>
+    </article>
+  )
+}
+
+export function OptimizationPage({
+  benchmarkBaseline,
+  benchmarkBusy,
+  dashboard,
+  featureFlags,
+  inference,
+  lastTweakAtMs,
+  latestBenchmark,
+  onAttachSession,
+  onCaptureBaseline,
+  onEndSession,
+  onOpenLogs,
+  onOpenSettings,
+  onPreviewRegistryPreset,
+  onPreviewTweak,
+  onRefresh,
+  onRollback,
+  onRunBenchmark,
+  onSelectProcess,
+  onStopSession,
+  optimization,
+  profiles,
+  runtimeState,
+  selectedProcessId,
+  settings,
+  stopBusy,
+}: OptimizationPageProps) {
+  const [toolTab, setToolTab] = useState<ToolTab>('system')
+  const [mode, setMode] = useState<PresetMode>('default')
+  const [clockTick, setClockTick] = useState(0)
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
+  const [uiHint, setUiHint] = useState<string | null>(null)
+  const [pendingToggleId, setPendingToggleId] = useState<string | null>(null)
+  const [detailModal, setDetailModal] = useState<{ cardId: string; kind: 'risk' | 'info' } | null>(null)
+
+  useEffect(() => {
+    if (!lastTweakAtMs) return
+    const timer = window.setInterval(() => setClockTick((tick) => tick + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [lastTweakAtMs])
+
+  useEffect(() => {
+    if (!pendingToggleId) return
+    const timer = window.setTimeout(() => setPendingToggleId((current) => (current === pendingToggleId ? null : current)), 1800)
+    return () => window.clearTimeout(timer)
+  }, [pendingToggleId])
 
   const sessionAttached = runtimeState.session.state === 'attached' || runtimeState.session.state === 'active'
-  const trackedProcessId = runtimeState.session.process_id ?? selectedProcessId
-  const trackedProcessName = runtimeState.session.process_name ?? runtimeState.selected_process?.name ?? 'this session'
-  const activePlan = runtimeState.power_plans.find((plan) => plan.active)
-  const profile = resolveProfile(profiles, runtimeState)
-  const evidence = getEvidenceStage(dashboard.mode, runtimeState.capture_status)
-  const proof = getProofStage(optimization, benchmarkBaseline, latestBenchmark)
-  const authority = getAuthorityStage(featureFlags, settings)
-  const sessionStage = getSessionStage(runtimeState.session, runtimeState)
-  const nextStep = getWorkflowStep({
-    benchmarkBaseline,
-    detectedGame: runtimeState.detected_game,
-    featureFlags,
-    latestBenchmark,
-    optimization,
-    session: runtimeState.session,
-  })
-  const primaryAction = buildPrimaryAction({
-    benchmarkBaseline,
-    benchmarkBusy,
-    featureFlags,
-    latestBenchmark,
-    onAttachSession,
-    onCaptureBaseline,
-    onOpenSettings,
-    onPreviewTweak,
-    onRefresh,
-    onRollback,
-    onRunBenchmark,
-    optimization,
-    profileId: profile?.id,
-    runtimeState,
-    selectedProcessId,
-  })
-  const actionBrief = getActionBrief(primaryAction.action, trackedProcessName, proof.label)
+  const attachedProcessId = runtimeState.session.process_id ?? runtimeState.selected_process?.pid ?? selectedProcessId ?? null
+  const processList = uniqueProcesses(runtimeState)
+  const hasBaseline = Boolean(benchmarkBaseline)
+  const hasActiveTweaks = runtimeState.session.active_tweaks.length > 0 || runtimeState.session.active_snapshot_ids.length > 0
+  const canApply = sessionAttached && hasBaseline && featureFlags.network_optimizer
+  const canCaptureBaseline = sessionAttached && !benchmarkBusy
+  const elapsedSeconds = lastTweakAtMs ? Math.floor((Date.now() + clockTick * 0 - lastTweakAtMs) / 1000) : COMPARE_COOLDOWN_SECONDS
+  const cooldownRemaining = Math.max(0, COMPARE_COOLDOWN_SECONDS - elapsedSeconds)
+  const canCompare = hasBaseline && hasActiveTweaks && cooldownRemaining === 0 && !benchmarkBusy
+  const matchedProfile = resolveProfile(profiles, runtimeState, dashboard)
+  const latestSample = dashboard.history.at(-1) ?? null
 
-  const workflow = [
-    { label: 'Detect', detail: 'Find a valid game session.' },
-    { label: 'Attach', detail: 'Track one session.' },
-    { label: 'Baseline', detail: 'Capture a clean before-state.' },
-    { label: 'Apply', detail: 'Run one safe change.' },
-    { label: 'Compare', detail: 'Measure the result.' },
+  const registryById = useMemo(() => new Map(runtimeState.registry_presets.map((preset) => [preset.id, preset])), [runtimeState.registry_presets])
+  const activeTweakSet = useMemo(() => new Set(runtimeState.session.active_tweaks), [runtimeState.session.active_tweaks])
+
+  const oneClickRequest = chooseOneClickRequest({ attachedProcessId, inference, runtimeState })
+  const oneClickHint = inference?.factors?.slice(0, 2).join(' | ') ?? optimization.next_action ?? 'Safe local heuristic path.'
+
+  const selectedPowerPlan = useMemo(() => {
+    const available = runtimeState.power_plans.filter((plan) => !plan.active)
+    if (!available.length) return null
+    if (mode === 'high-performance') {
+      return available.find((plan) => /ultimate|high performance/i.test(plan.name)) ?? available[0]
+    }
+    return available[0]
+  }, [mode, runtimeState.power_plans])
+
+  const selectedProcessLabel = runtimeState.selected_process
+    ? `${runtimeState.selected_process.name} (${runtimeState.selected_process.pid})`
+    : selectedProcessId
+      ? `PID ${selectedProcessId}`
+      : 'None'
+
+  const rollbackBy = (predicate: (entry: ActivityEntry) => boolean) => {
+    const row = findLatestUndoEntry(runtimeState.activity, predicate)
+    if (row?.snapshot_id) onRollback(row.snapshot_id)
+  }
+
+  const applyBlocker = !sessionAttached
+    ? 'Session is not attached. Select and attach a process first.'
+    : !hasBaseline
+      ? `Baseline missing. Capture ${BENCHMARK_SECONDS}s before enabling tweaks.`
+      : !featureFlags.network_optimizer
+        ? 'Optimizer is disabled in Settings.'
+        : null
+
+  const startPending = (id: string) => setPendingToggleId(id)
+
+  const processPriorityCard: ToggleCard = {
+    id: 'max-games',
+    title: 'Maximum performance for games',
+    description: 'Raise game process priority.',
+    caution: 'Not recommended if CPU load is unstable.',
+    icon: Gamepad2,
+    active: activeTweakSet.has('process_priority'),
+    blockedReason: activeTweakSet.has('process_priority') ? undefined : applyBlocker ?? undefined,
+    onToggle: (next) => {
+      if (!next) {
+        rollbackBy((entry) => entry.action === 'Priority applied')
+        return true
+      }
+      startPending('max-games')
+      if (applyBlocker || !attachedProcessId) {
+        setUiHint(applyBlocker ?? 'No process selected.')
+        return false
+      }
+      onPreviewTweak({
+        kind: 'process_priority',
+        process_id: attachedProcessId,
+        priority: mode === 'high-performance' ? 'high' : 'above_normal',
+      })
+      return true
+    },
+  }
+
+  const affinityCard: ToggleCard = {
+    id: 'keep-cores',
+    title: 'Keep all cores active',
+    description: 'Apply CPU affinity preset.',
+    caution: 'Not recommended if a game needs default scheduler behavior.',
+    icon: Cpu,
+    active: activeTweakSet.has('cpu_affinity'),
+    blockedReason: activeTweakSet.has('cpu_affinity') ? undefined : applyBlocker ?? undefined,
+    onToggle: (next) => {
+      if (!next) {
+        rollbackBy((entry) => entry.action === 'Affinity applied')
+        return true
+      }
+      startPending('keep-cores')
+      if (applyBlocker || !attachedProcessId) {
+        setUiHint(applyBlocker ?? 'No process selected.')
+        return false
+      }
+      onPreviewTweak({
+        kind: 'cpu_affinity',
+        process_id: attachedProcessId,
+        affinity_preset: mode === 'high-performance' ? 'all_threads' : 'balanced_threads',
+      })
+      return true
+    },
+  }
+
+  const powerCard: ToggleCard = {
+    id: 'ultimate-power',
+    title: 'Ultimate performance mode',
+    description: selectedPowerPlan ? `Switch power plan to ${selectedPowerPlan.name}.` : 'Switch to a higher power plan.',
+    caution: 'Not recommended on thermally constrained laptops.',
+    icon: Zap,
+    active: activeTweakSet.has('power_plan'),
+    blockedReason: activeTweakSet.has('power_plan')
+      ? undefined
+      : applyBlocker ?? (!selectedPowerPlan ? 'No alternate power plan found.' : undefined),
+    hardDisabled: !selectedPowerPlan,
+    onToggle: (next) => {
+      if (!next) {
+        rollbackBy((entry) => entry.action === 'Power plan applied')
+        return true
+      }
+      startPending('ultimate-power')
+      if (applyBlocker || !selectedPowerPlan) {
+        setUiHint(applyBlocker ?? 'No alternate power plan found.')
+        return false
+      }
+      onPreviewTweak({
+        kind: 'power_plan',
+        process_id: attachedProcessId ?? undefined,
+        power_plan_guid: selectedPowerPlan.guid,
+      })
+      return true
+    },
+  }
+
+  const registryCard = (
+    presetId: string,
+    id: string,
+    title: string,
+    description: string,
+    caution: string,
+    icon: ToggleCard['icon'],
+  ): ToggleCard => {
+    const preset = registryById.get(presetId)
+    const active = activeTweakSet.has(`registry:${presetId}`)
+    return {
+      id,
+      title,
+      description,
+      caution,
+      icon,
+      active,
+      hardDisabled: !preset,
+      blockedReason: active ? undefined : preset?.blocking_reason ?? applyBlocker ?? (!preset ? 'Unavailable in this build.' : undefined),
+      onToggle: (next) => {
+        if (!next) {
+          rollbackBy(
+            (entry) =>
+              entry.category === 'registry' &&
+              (entry.detail.toLowerCase().includes((preset?.title ?? '').toLowerCase()) ||
+                entry.detail.toLowerCase().includes(title.toLowerCase())),
+          )
+          return true
+        }
+        startPending(id)
+        if (!preset) {
+          setUiHint('Preset unavailable in this build.')
+          return false
+        }
+        if (applyBlocker || preset.blocking_reason) {
+          setUiHint(applyBlocker ?? preset.blocking_reason ?? 'Preset blocked.')
+          return false
+        }
+        onPreviewRegistryPreset({ preset_id: preset.id, process_id: attachedProcessId ?? undefined })
+        return true
+      },
+    }
+  }
+
+  const cards: ToggleCard[] = [
+    registryCard(
+      'mouse_precision_off',
+      'reduce-input-lag',
+      'Reduce input lag',
+      'Disable mouse acceleration.',
+      'Not recommended if you rely on mouse acceleration.',
+      Crosshair,
+    ),
+    affinityCard,
+    processPriorityCard,
+    powerCard,
+    registryCard(
+      'game_capture_overhead_off',
+      'turn-off-recordings',
+      'Turn off Game Bar recordings',
+      'Disable background capture overhead.',
+      'Not recommended if you constantly record clips.',
+      Keyboard,
+    ),
+    registryCard(
+      'game_mode_on',
+      'game-mode-on',
+      'Force Game Mode on',
+      'Enable Game Mode for the current user.',
+      'Not recommended if you multitask heavily while gaming.',
+      SlidersHorizontal,
+    ),
+    registryCard(
+      'power_throttling_off',
+      'power-throttling-off',
+      'Turn off power throttling',
+      'Disable Windows power throttling policy.',
+      'Not recommended without admin rights and rollback plan.',
+      ShieldAlert,
+    ),
   ]
 
+  const detailCard = detailModal ? cards.find((card) => card.id === detailModal.cardId) ?? null : null
+
+  const handleCardToggle = (card: ToggleCard, next: boolean) => {
+    const accepted = card.onToggle(next)
+    if (!accepted) {
+      window.setTimeout(() => setPendingToggleId((current) => (current === card.id ? null : current)), 1000)
+    }
+  }
+
   return (
-    <div className="space-y-5">
-      <Panel variant="primary">
-        <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-          <div className="space-y-4">
-            <div className="action-stage">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Current step</p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">{nextStep.label}</h3>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">{nextStep.detail}</p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <span className="status-chip">{sessionStage.label}</span>
-                <span className="status-chip">{proof.label}</span>
-                <span className="status-chip">{authority.label}</span>
-              </div>
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <button className="button-primary" disabled={primaryAction.disabled} onClick={primaryAction.onClick} type="button">
-                  {primaryAction.label}
-                </button>
-                <button className="button-secondary" onClick={() => onRefresh(trackedProcessId ?? undefined)} type="button">
-                  Refresh
-                </button>
-                {sessionAttached ? (
-                  <button className="button-quiet" onClick={onEndSession} type="button">
-                    End session
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="summary-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">What changes</p>
-                <p className="mt-3 text-sm leading-6 text-muted">{actionBrief.whatChanges}</p>
-              </div>
-              <div className="summary-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Why this helps</p>
-                <p className="mt-3 text-sm leading-6 text-muted">{actionBrief.why}</p>
-              </div>
-              <div className="summary-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Safety boundary</p>
-                <p className="mt-3 text-sm leading-6 text-muted">{actionBrief.safety}</p>
-              </div>
-              <div className="summary-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Undo path</p>
-                <p className="mt-3 text-sm leading-6 text-muted">{actionBrief.undo}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="summary-card">
-              <p className="text-sm font-semibold tracking-tight text-text">Workflow</p>
-              <div className="mt-4 grid gap-3 md:grid-cols-5 xl:grid-cols-1">
-                {workflow.map((item, index) => {
-                  const state = stepState(index, primaryAction.action)
-                  return (
-                    <div key={item.label} className="surface-card">
-                      <div className="flex items-center gap-3">
-                        <span className={`grid h-8 w-8 place-items-center rounded-full text-xs font-semibold ${state === 'active' ? 'bg-accent text-white' : state === 'done' ? 'bg-success text-white' : 'bg-surface text-muted ring-1 ring-inset ring-border/70'}`}>
-                          {index + 1}
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold tracking-tight text-text">{item.label}</p>
-                          <p className="text-sm leading-6 text-muted">{item.detail}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Current session</p>
-                <p className="mt-2 text-base font-semibold tracking-tight text-text">{trackedProcessName}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{sessionStage.detail}</p>
-              </div>
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Evidence</p>
-                <p className="mt-2 text-base font-semibold tracking-tight text-text">{evidence.label}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{evidence.detail}</p>
-              </div>
-            </div>
+    <div className="space-y-4">
+      <Panel className="overflow-hidden p-0" variant="secondary">
+        <div className="border-b border-border/70 bg-surface-elevated/90 px-4 py-3">
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'system', label: 'System Tweaks' },
+              { id: 'ram', label: 'RAM Cleaner' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                className={`rounded-lg px-3 py-2 text-base font-semibold transition ${
+                  toolTab === item.id ? 'bg-surface text-text' : 'text-muted hover:bg-hover hover:text-text'
+                }`}
+                onClick={() => setToolTab(item.id as ToolTab)}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
         </div>
+
+        {toolTab === 'system' ? (
+          <div className="space-y-4 px-4 py-4">
+            <div className="rounded-[1.1rem] border border-border/60 bg-surface px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-[2rem] font-semibold tracking-tight text-text">System performance enhancements</h2>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'default', label: 'Default' },
+                    { id: 'high-performance', label: 'High performance' },
+                    { id: 'custom', label: 'Custom' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                        mode === item.id
+                          ? 'bg-surface-muted text-text ring-1 ring-inset ring-[#24d7a5]/70'
+                          : 'bg-surface-muted/60 text-muted hover:text-text'
+                      }`}
+                      onClick={() => setMode(item.id as PresetMode)}
+                      type="button"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="button-secondary"
+                  onClick={() => {
+                    setSessionPickerOpen((open) => !open)
+                    setUiHint(null)
+                  }}
+                  type="button"
+                >
+                  <Activity size={15} />
+                  <span className="ml-2">Session: {selectedProcessLabel}</span>
+                  <ChevronDown className={`ml-2 transition ${sessionPickerOpen ? 'rotate-180' : ''}`} size={15} />
+                </button>
+
+                <button className="button-secondary" onClick={() => onRefresh(attachedProcessId ?? undefined)} type="button">
+                  <RefreshCw size={15} />
+                  <span className="ml-2">Refresh</span>
+                </button>
+
+                <button className="button-secondary" disabled={!canCaptureBaseline} onClick={onCaptureBaseline} type="button">
+                  <Gauge size={15} />
+                  <span className="ml-2">{benchmarkBusy ? 'Capturing...' : `Baseline ${BENCHMARK_SECONDS}s`}</span>
+                </button>
+
+                <button className="button-secondary" disabled={!canCompare} onClick={() => onRunBenchmark(matchedProfile?.id)} type="button">
+                  <Activity size={15} />
+                  <span className="ml-2">{benchmarkBusy ? 'Running...' : `Compare ${BENCHMARK_SECONDS}s`}</span>
+                </button>
+
+                <button className="button-secondary" onClick={onOpenLogs} type="button">
+                  <Logs size={15} />
+                  <span className="ml-2">Logs</span>
+                </button>
+
+                <button className="button-secondary" onClick={onOpenSettings} type="button">
+                  <Settings2 size={15} />
+                  <span className="ml-2">Settings</span>
+                </button>
+
+                <button className="button-secondary" disabled={stopBusy || !hasActiveTweaks} onClick={onStopSession} type="button">
+                  <Square size={15} />
+                  <span className="ml-2">{stopBusy ? 'Stopping...' : 'Stop + rollback all'}</span>
+                </button>
+
+                <button className="button-secondary" disabled={!sessionAttached} onClick={onEndSession} type="button">
+                  <Power size={15} />
+                  <span className="ml-2">End session</span>
+                </button>
+              </div>
+
+              {sessionPickerOpen ? (
+                <div className="mt-3 rounded-xl border border-border/60 bg-surface-muted/65 p-3">
+                  {runtimeState.detected_game ? (
+                    <button
+                      className="mb-2 rounded-lg border border-border/70 bg-surface px-3 py-2 text-sm text-text"
+                      onClick={() => {
+                        onAttachSession({
+                          process_id: runtimeState.detected_game!.pid,
+                          process_name: runtimeState.detected_game!.exe_name,
+                        })
+                        setSessionPickerOpen(false)
+                      }}
+                      type="button"
+                    >
+                      Attach detected: {runtimeState.detected_game.exe_name} ({runtimeState.detected_game.pid})
+                    </button>
+                  ) : null}
+
+                  <div className="grid max-h-48 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
+                    {processList.length ? (
+                      processList.map((process) => {
+                        const selected = selectedProcessId === process.pid || runtimeState.selected_process?.pid === process.pid
+                        return (
+                          <button
+                            key={process.pid}
+                            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                              selected
+                                ? 'border-border-strong/70 bg-surface text-text'
+                                : 'border-border/70 bg-surface-muted text-muted hover:text-text'
+                            }`}
+                            onClick={() => {
+                              onSelectProcess(process.pid)
+                              setSessionPickerOpen(false)
+                            }}
+                            type="button"
+                          >
+                            {process.name} ({process.pid})
+                          </button>
+                        )
+                      })
+                    ) : (
+                      <p className="text-sm text-muted">No processes found.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
+                <span>Session: {sessionAttached ? 'Attached' : 'Not attached'}</span>
+                <span>Baseline: {hasBaseline ? 'Ready' : 'Missing'}</span>
+                <span>Compare: {canCompare ? 'Ready' : cooldownRemaining > 0 ? `Cooldown ${cooldownRemaining}s` : 'Blocked'}</span>
+                <span>Tweaks: {runtimeState.session.active_tweaks.length}</span>
+                <span>Mode: {settings.automation_mode}</span>
+                <span>Verdict: {latestBenchmark?.verdict ?? 'none'}</span>
+              </div>
+
+              {uiHint ? <p className="mt-3 text-sm text-warning">{uiHint}</p> : null}
+
+              {mode === 'high-performance' ? (
+                <div className="mt-4 rounded-lg border border-border/60 bg-surface-muted/70 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="inline-flex items-center gap-2 text-sm text-text">
+                      <Bot size={16} />
+                      {oneClickHint}
+                    </p>
+                    <button
+                      className="button-primary"
+                      disabled={!canApply || !oneClickRequest}
+                      onClick={() => {
+                        if (!oneClickRequest) return
+                        startPending('one-click')
+                        onPreviewTweak(oneClickRequest)
+                      }}
+                      type="button"
+                    >
+                      <Zap size={16} />
+                      <span className="ml-2">Start optimization</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              {cards.map((card) => {
+                const shownCard = {
+                  ...card,
+                  onToggle: (next: boolean) => {
+                    handleCardToggle(card, next)
+                    return true
+                  },
+                }
+                return (
+                  <TweakCard
+                    key={card.id}
+                    card={shownCard}
+                    onOpenInfo={(cardId) => setDetailModal({ cardId, kind: 'info' })}
+                    onOpenRisk={(cardId) => setDetailModal({ cardId, kind: 'risk' })}
+                    pending={pendingToggleId === card.id}
+                  />
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {toolTab === 'ram' ? (
+          <div className="space-y-4 px-4 py-4">
+            <div className="rounded-[1.1rem] border border-border/60 bg-surface px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-[1.9rem] font-semibold tracking-tight text-text">RAM cleaner</h2>
+                  <p className="text-sm text-muted">Telemetry view only in this build.</p>
+                </div>
+                <button className="inline-flex items-center rounded-xl bg-danger px-5 py-2 text-base font-semibold text-white opacity-60" disabled type="button">
+                  <RotateCcw size={18} />
+                  <span className="ml-2">Clean</span>
+                </button>
+              </div>
+              <div className="mt-4 h-6 overflow-hidden rounded-lg bg-surface-muted">
+                <div
+                  className="h-full rounded-lg bg-accent-soft"
+                  style={{ width: `${Math.min(100, Math.max(0, latestSample?.memory_pressure_pct ?? 0))}%` }}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-base text-muted">
+                <span className="inline-flex items-center gap-2">
+                  <Cpu size={16} />
+                  Used: {toGb(latestSample?.ram_working_set_mb)}
+                </span>
+                <span>Memory pressure: {(latestSample?.memory_pressure_pct ?? 0).toFixed(0)}%</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </Panel>
 
-      <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
-        <Panel subtitle="Baseline, latest result, and the current guidance." title="Proof and guidance" variant="secondary">
-          <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
-            <div className="summary-card">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold tracking-tight text-text">Current proof</p>
-                <span className="status-chip">{benchmarkVerdict(latestBenchmark)}</span>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                {latestBenchmark
-                  ? latestBenchmark.summary
-                  : benchmarkBaseline
-                    ? `Baseline captured for ${benchmarkBaseline.game_name}. Run one safe change, then compare it.`
-                    : stateCopy.noBenchmark}
-              </p>
-              {latestBenchmark ? <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark.recommended_next_step}</p> : null}
-              {latestBenchmark ? (
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  <div className="surface-card">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted">FPS delta</p>
-                    <p className="mt-2 text-base font-semibold text-text">
-                      {latestBenchmark.delta.fps_avg > 0 ? '+' : ''}
-                      {latestBenchmark.delta.fps_avg.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="surface-card">
-                    <p className="text-xs uppercase tracking-[0.18em] text-muted">p95 delta</p>
-                    <p className="mt-2 text-base font-semibold text-text">
-                      {latestBenchmark.delta.frametime_p95_ms > 0 ? '+' : ''}
-                      {latestBenchmark.delta.frametime_p95_ms.toFixed(2)} ms
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button className="button-secondary" disabled={benchmarkBusy} onClick={onCaptureBaseline} type="button">
-                  {benchmarkBusy ? 'Working…' : benchmarkBaseline ? 'Recapture baseline' : 'Capture baseline'}
-                </button>
-                <button className="button-secondary" disabled={benchmarkBusy || !benchmarkBaseline} onClick={() => onRunBenchmark(profile?.id)} type="button">
-                  Compare result
-                </button>
-              </div>
+      {detailCard && detailModal ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-float">
+            <div className="flex items-center justify-between border-b border-border/70 px-6 py-5">
+              <h3 className="text-lg font-semibold tracking-tight text-muted">
+                {detailModal.kind === 'risk' ? 'Not recommended if...' : 'What this tweak does'}
+              </h3>
+              <button
+                aria-label="Close details modal"
+                className="text-muted hover:text-text"
+                onClick={() => setDetailModal(null)}
+                type="button"
+              >
+                <X size={24} />
+              </button>
             </div>
-
-            <div className="space-y-3">
-              <div className="summary-card">
-                <p className="text-sm font-semibold tracking-tight text-text">Current guidance</p>
-                <p className="mt-3 text-sm leading-6 text-muted">
-                  {inference?.summary ?? optimization.next_action ?? 'Attach a game or process to start the safe-test loop.'}
-                </p>
-              </div>
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Matched profile</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{profile ? profile.description : stateCopy.noProfile}</p>
-              </div>
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Policy</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{authority.detail}</p>
-              </div>
-              {activePlan ? (
-                <div className="surface-card">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted">Active power plan</p>
-                  <p className="mt-2 text-sm font-semibold text-text">{activePlan.name}</p>
-                </div>
-              ) : null}
+            <div className="space-y-4 px-6 py-6">
+              {detailModal.kind === 'risk' ? (
+                <p className="text-sm leading-7 text-muted">{detailCard.caution}</p>
+              ) : (
+                <p className="text-sm leading-7 text-muted">{detailCard.description}</p>
+              )}
             </div>
           </div>
-        </Panel>
-
-        <div className="space-y-5">
-          <Panel subtitle="Safe alternatives and policy-approved presets." title="Safe actions" variant="secondary">
-            <div className="space-y-3">
-              {runtimeState.detected_game ? (
-                <div className="summary-card">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold tracking-tight text-text">{runtimeState.detected_game.exe_name} is ready</p>
-                      <p className="mt-2 text-sm leading-6 text-muted">{runtimeState.detected_game.reason}</p>
-                    </div>
-                    <button
-                      className="button-secondary"
-                      onClick={() => onAttachSession({ process_id: runtimeState.detected_game!.pid, process_name: runtimeState.detected_game!.exe_name })}
-                      type="button"
-                    >
-                      Attach
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <EmptyState actionLabel="Refresh detection" actionVariant="secondary" description={stateCopy.noDetectedGame} onAction={() => onRefresh()} title="No game ready yet" />
-              )}
-
-              <div className="surface-card">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold tracking-tight text-text">Priority boost</p>
-                    <p className="mt-2 text-sm leading-6 text-muted">Raise Windows scheduler priority for the attached session only.</p>
-                  </div>
-                  <button
-                    className="button-secondary"
-                    disabled={!featureFlags.network_optimizer || !trackedProcessId || !sessionAttached}
-                    onClick={() => onPreviewTweak({ kind: 'process_priority', process_id: trackedProcessId ?? undefined, priority: 'above_normal' })}
-                    type="button"
-                  >
-                    Preview
-                  </button>
-                </div>
-              </div>
-
-              <div className="surface-card">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold tracking-tight text-text">Balanced CPU affinity</p>
-                    <p className="mt-2 text-sm leading-6 text-muted">Apply a reversible balanced thread layout for this session.</p>
-                  </div>
-                  <button
-                    className="button-secondary"
-                    disabled={!featureFlags.network_optimizer || !trackedProcessId || !sessionAttached}
-                    onClick={() => onPreviewTweak({ kind: 'cpu_affinity', process_id: trackedProcessId ?? undefined, affinity_preset: 'balanced_threads' })}
-                    type="button"
-                  >
-                    Preview
-                  </button>
-                </div>
-              </div>
-
-              {runtimeState.power_plans.slice(0, 2).map((plan) => (
-                <div key={plan.guid} className="surface-card">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold tracking-tight text-text">Switch to {plan.name}</p>
-                      <p className="mt-2 text-sm leading-6 text-muted">Use an existing Windows power plan for this session, then restore the original one.</p>
-                    </div>
-                    <button
-                      className="button-secondary"
-                      disabled={!featureFlags.network_optimizer || plan.active || !sessionAttached}
-                      onClick={() => onPreviewTweak({ kind: 'power_plan', power_plan_guid: plan.guid })}
-                      type="button"
-                    >
-                      {plan.active ? 'Active' : 'Preview'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {runtimeState.registry_presets.map((preset) => (
-                <div key={preset.id} className="surface-card">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold tracking-tight text-text">{preset.title}</p>
-                        <span className="status-chip">{preset.allowed_now ? 'Ready' : 'Blocked'}</span>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-muted">{preset.expected_benefit}</p>
-                      {!preset.allowed_now && preset.next_action ? <p className="mt-2 text-sm leading-6 text-muted">{preset.next_action}</p> : null}
-                    </div>
-                    <button
-                      className="button-secondary"
-                      disabled={!preset.allowed_now}
-                      onClick={() => onPreviewRegistryPreset({ preset_id: preset.id, process_id: trackedProcessId ?? undefined })}
-                      type="button"
-                    >
-                      Preview
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel subtitle="Use this only if detection missed the game." title="Manual fallback" variant="secondary">
-            <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-              <label className="surface-card text-sm text-muted">
-                <span className="block text-xs uppercase tracking-[0.18em] text-muted">Running process</span>
-                <select className="input-shell mt-3" onChange={(event) => onSelectProcess(Number(event.target.value))} value={selectedProcessId ?? ''}>
-                  <option value="" disabled>
-                    Select a running process
-                  </option>
-                  {runtimeState.advanced_processes.map((item) => (
-                    <option key={item.pid} value={item.pid}>
-                      {item.name} ({item.pid})
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-3 text-sm leading-6 text-muted">{stateCopy.selectedProcessPending}</p>
-              </label>
-
-              <div className="space-y-3">
-                {runtimeState.activity.length === 0 ? (
-                  <EmptyState actionLabel="Refresh state" actionVariant="secondary" description={stateCopy.noActivity} onAction={() => onRefresh(trackedProcessId ?? undefined)} title="History is still empty" />
-                ) : null}
-                {runtimeState.activity.slice(0, 3).map((item) => (
-                  <div key={item.id} className="summary-card">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-sm font-semibold tracking-tight text-text">{item.action}</p>
-                      <span className="status-chip">{item.can_undo ? 'Undo ready' : 'Recorded'}</span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
-                    {item.can_undo && item.snapshot_id ? (
-                      <button className="button-secondary mt-4" onClick={() => onRollback(item.snapshot_id!)} type="button">
-                        Undo this change
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Panel>
         </div>
-      </div>
+      ) : null}
     </div>
   )
 }
