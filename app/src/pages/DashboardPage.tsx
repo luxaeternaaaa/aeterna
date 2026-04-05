@@ -1,20 +1,44 @@
-import type { BenchmarkReport, BenchmarkWindow, DashboardPayload, GameProfile, OptimizationSummary, SessionState, TelemetryPoint } from '../types'
+import type {
+  ActivityEntry,
+  AttachSessionRequest,
+  BenchmarkReport,
+  BenchmarkWindow,
+  DashboardPayload,
+  GameProfile,
+  OptimizationRuntimeState,
+  SessionState,
+  TelemetryPoint,
+} from '../types'
 import { EmptyState } from '../components/EmptyState'
 import { LineChart } from '../components/LineChart'
 import { MetricCard } from '../components/MetricCard'
 import { Panel } from '../components/Panel'
-import { getEvidenceStage, getProofStage, getSessionStage, getWorkflowStep } from '../lib/productState'
+import { SessionControlBar } from '../components/SessionControlBar'
 import { stateCopy } from '../lib/stateCopy'
+import { formatTimestamp } from '../lib/time'
 
 interface DashboardPageProps {
   benchmarkBaseline: BenchmarkWindow | null
+  benchmarkBusy: boolean
   dashboard: DashboardPayload
+  lastTweakAtMs: number | null
   latestBenchmark: BenchmarkReport | null
+  onAttachSession: (request: AttachSessionRequest) => void
+  onCaptureBaseline: () => void
+  onClearSessionSelection: () => void
+  onEndSession: () => void
+  onOpenLogs: () => void
   onOpenOptimization: () => void
-  optimization: OptimizationSummary
+  onOpenSettings: () => void
+  onRefresh: (processId?: number) => void
+  onRunBenchmark: (profileId?: string) => void
+  onSelectProcess: (processId: number) => void
+  onStopSession: () => void
   profiles: GameProfile[]
   realtime?: TelemetryPoint | null
+  runtimeState: OptimizationRuntimeState
   session: SessionState
+  stopBusy: boolean
 }
 
 function resolveProfile(profiles: GameProfile[], session: SessionState, currentSample: TelemetryPoint | null) {
@@ -36,75 +60,57 @@ function verdictLabel(report: BenchmarkReport | null) {
 
 export function DashboardPage({
   benchmarkBaseline,
+  benchmarkBusy,
   dashboard,
+  lastTweakAtMs,
   latestBenchmark,
+  onAttachSession,
+  onCaptureBaseline,
+  onClearSessionSelection,
+  onEndSession,
+  onOpenLogs,
   onOpenOptimization,
-  optimization,
+  onOpenSettings,
+  onRefresh,
+  onRunBenchmark,
+  onSelectProcess,
+  onStopSession,
   profiles,
   realtime,
+  runtimeState,
   session,
+  stopBusy,
 }: DashboardPageProps) {
   const values = dashboard.history.map((point) => point.frametime_p95_ms || point.frametime_avg_ms || point.ping)
   const currentSample = realtime ?? dashboard.history.at(-1) ?? null
   const stats = dashboard.stats.slice(0, 4)
   const profile = resolveProfile(profiles, session, currentSample)
-  const sessionStage = getSessionStage(session)
-  const evidence = getEvidenceStage(dashboard.mode, session)
-  const proof = getProofStage(optimization, benchmarkBaseline, latestBenchmark)
-  const nextStep = getWorkflowStep({
-    benchmarkBaseline,
-    detectedGame: null,
-    featureFlags: {
-      anomaly_detection: false,
-      auto_security_scan: false,
-      cloud_features: false,
-      cloud_training: false,
-      network_optimizer: optimization.optimizer_enabled,
-      telemetry_collect: dashboard.mode !== 'disabled',
-    },
-    latestBenchmark,
-    optimization,
-    session,
-  })
-
-  const stateItems = [
-    { label: 'Session', value: sessionStage.label, detail: sessionStage.detail },
-    { label: 'Proof', value: proof.label, detail: proof.detail },
-    { label: 'Evidence', value: evidence.label, detail: evidence.detail },
-    {
-      label: 'Undo',
-      value: session.active_snapshot_ids.length > 0 ? 'Ready' : 'Not needed',
-      detail: session.active_snapshot_ids.length > 0 ? 'A reversible change is still active.' : 'No active rollback snapshot yet.',
-    },
-  ]
 
   return (
     <div className="space-y-5">
-      <Panel variant="primary">
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="action-stage">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted">Next step</p>
-            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">{nextStep.label}</h3>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">{nextStep.detail}</p>
-            <button className="button-primary mt-6" onClick={onOpenOptimization} type="button">
-              Open Optimize
-            </button>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
-            {stateItems.map((item) => (
-              <div key={item.label} className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">{item.label}</p>
-                <p className="mt-2 text-base font-semibold tracking-tight text-text">{item.value}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
+      <Panel title="Optimization" variant="secondary">
+        <SessionControlBar
+          benchmarkBaseline={benchmarkBaseline}
+          benchmarkBusy={benchmarkBusy}
+          lastTweakAtMs={lastTweakAtMs}
+          onAttachSession={onAttachSession}
+          onCaptureBaseline={onCaptureBaseline}
+          onClearSessionSelection={onClearSessionSelection}
+          onEndSession={onEndSession}
+          onOpenLogs={onOpenLogs}
+          onOpenSettings={onOpenSettings}
+          onRefresh={onRefresh}
+          onRunBenchmark={onRunBenchmark}
+          onSelectProcess={onSelectProcess}
+          onStopSession={onStopSession}
+          profiles={profiles}
+          runtimeState={runtimeState}
+          stopBusy={stopBusy}
+        />
       </Panel>
 
       <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <Panel subtitle="The live session at a glance." title="Current session" variant="secondary">
+        <Panel title="Session" variant="secondary">
           <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="summary-card">
               <div className="flex items-center justify-between gap-3">
@@ -147,26 +153,24 @@ export function DashboardPage({
         </Panel>
 
         <div className="space-y-5">
-          <Panel subtitle="What the latest comparison says right now." title="Latest result" variant="secondary">
+          <Panel title="Latest result" variant="secondary">
             <div className="summary-card">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold tracking-tight text-text">Result</p>
                 <span className="status-chip">{verdictLabel(latestBenchmark)}</span>
               </div>
               <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark ? latestBenchmark.summary : stateCopy.noBenchmark}</p>
-              {latestBenchmark ? <p className="mt-3 text-sm leading-6 text-muted">{latestBenchmark.recommended_next_step}</p> : null}
               {!latestBenchmark && benchmarkBaseline ? (
-                <p className="mt-3 text-sm leading-6 text-muted">Baseline captured for {benchmarkBaseline.game_name}. Run one safe change, then compare it.</p>
+                <p className="mt-3 text-sm leading-6 text-muted">Baseline ready for {benchmarkBaseline.game_name}.</p>
               ) : null}
             </div>
           </Panel>
 
-          <Panel subtitle="Profile fit and current recommendations." title="Guidance" variant="secondary">
+          <Panel title="Recommendations" variant="secondary">
             <div className="space-y-3">
               <div className="summary-card">
                 <p className="text-sm font-semibold tracking-tight text-text">Matched profile</p>
                 <p className="mt-3 text-sm leading-6 text-muted">{profile ? profile.description : stateCopy.noProfile}</p>
-                {profile ? <p className="mt-3 text-sm leading-6 text-muted">{profile.benchmark_expectation}</p> : null}
               </div>
 
               {dashboard.recommendations.length ? (
@@ -186,6 +190,30 @@ export function DashboardPage({
           </Panel>
         </div>
       </div>
+
+      <Panel title="Logs" variant="secondary">
+        <div className="space-y-3">
+          {runtimeState.activity.length === 0 ? (
+            <div className="surface-card text-sm text-muted">No logs yet.</div>
+          ) : (
+            runtimeState.activity.slice(0, 4).map((item: ActivityEntry) => (
+              <div key={item.id} className="surface-card">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-text">{item.action}</p>
+                  <span className="status-chip">{item.risk}</span>
+                </div>
+                <p className="mt-2 text-sm text-muted">{item.detail}</p>
+                <p className="mt-2 text-xs text-muted">{formatTimestamp(item.timestamp)}</p>
+              </div>
+            ))
+          )}
+          <div>
+            <button className="button-secondary" onClick={onOpenLogs} type="button">
+              Open all logs
+            </button>
+          </div>
+        </div>
+      </Panel>
     </div>
   )
 }

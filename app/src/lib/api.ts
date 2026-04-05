@@ -31,11 +31,14 @@ export const api = {
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
   benchmarkBaseline: () => request<BenchmarkWindow | null>('/api/benchmark/baseline'),
   benchmarkLatest: () => request<BenchmarkReport | null>('/api/benchmark/latest'),
-  captureBenchmarkBaseline: () => request<BenchmarkWindow>('/api/benchmark/capture-baseline', { method: 'POST' }),
-  runBenchmark: (profileId?: string) =>
-    request<BenchmarkReport>(profileId ? `/api/benchmark/run?profile_id=${encodeURIComponent(profileId)}` : '/api/benchmark/run', {
-      method: 'POST',
-    }),
+  captureBenchmarkBaseline: (sampleLimit = 60) =>
+    request<BenchmarkWindow>(`/api/benchmark/capture-baseline?sample_limit=${sampleLimit}`, { method: 'POST' }),
+  runBenchmark: (profileId?: string, sampleLimit = 60) => {
+    const query = new URLSearchParams()
+    query.set('sample_limit', String(sampleLimit))
+    if (profileId) query.set('profile_id', profileId)
+    return request<BenchmarkReport>(`/api/benchmark/run?${query.toString()}`, { method: 'POST' })
+  },
   dashboard: () => request<DashboardPayload>('/api/dashboard'),
   featureFlags: () => request<FeatureFlags>('/api/settings/feature-flags'),
   updateFeatureFlags: (payload: FeatureFlags) =>

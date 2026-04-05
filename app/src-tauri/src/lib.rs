@@ -24,11 +24,34 @@ fn minimize_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn toggle_maximize_main_window(app: tauri::AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    let is_maximized = window.is_maximized().map_err(|error| error.to_string())?;
+    if is_maximized {
+        window.unmaximize().map_err(|error| error.to_string())?;
+        Ok(false)
+    } else {
+        window.maximize().map_err(|error| error.to_string())?;
+        Ok(true)
+    }
+}
+
+#[tauri::command]
 fn close_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
     window.close().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn is_main_window_maximized(app: tauri::AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.is_maximized().map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -56,7 +79,9 @@ pub fn run() {
             startup_diagnostics,
             mark_bootstrap_loaded,
             minimize_main_window,
-            close_main_window
+            toggle_maximize_main_window,
+            close_main_window,
+            is_main_window_maximized
         ])
         .setup(|app| {
             let handle = app.handle().clone();

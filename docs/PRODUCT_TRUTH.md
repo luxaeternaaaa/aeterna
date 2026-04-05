@@ -1,54 +1,60 @@
 # Product Truth
 
-This document keeps Aeterna honest. Every major feature must fit into one of these buckets before it is mentioned in README, demos, or presentations.
+This document keeps Aeterna honest. Every statement in UI, demo, and presentation must map to one of the sections below.
 
 ## Real
 
-- Windows desktop delivery through Tauri with installer, Desktop shortcut, Start Menu entry, and local-first runtime.
-- Rust sidecar as the startup-critical runtime for session tracking, tweak apply, rollback, and lightweight local inference.
-- Session-scoped safe tweaks:
-  - process priority
-  - CPU affinity
-  - power plan switching
-- Rollback snapshots are created before every tweak and can be restored locally.
-- Live session detection exists and can attach to a detected foreground game candidate.
-- Activity history records session, tweak, and restore events.
-- Automation is policy-governed:
-  - `Manual`
-  - `Assisted`
-  - `Trusted profiles`
-- Automation remains bounded by an allowlist and rollback-safe session scope.
+- Windows desktop app (`Tauri + Rust sidecar + local backend`).
+- Local-first runtime with bounded session-scoped tweaks.
+- Safe tweak types in runtime:
+  - process priority,
+  - CPU affinity,
+  - power plan switching,
+  - allowlisted registry presets.
+- Snapshot-before-change and rollback path exist.
+- Session detection and attach flow exist.
+- Benchmark baseline/compare flow exists.
+- Activity trail exists for session/tweak/restore/proof events.
+- ML advisory contract exists with fallback behavior when model path fails.
 
 ## Partial
 
-- PresentMon-assisted capture path exists in the sidecar, but the helper is not yet bundled in this repository. The app falls back honestly to counters when PresentMon is unavailable.
-- Live telemetry is useful and local, but it is still conservative:
-  - no true in-game overlay capture
-  - GPU metrics remain best-effort / optional
-  - thermal telemetry is not product-grade yet
-- ML has a real training/export path and a stable inference contract, but ONNX runtime execution in the shipped app is still incomplete. The current shipped baseline is metadata fallback unless ONNX is explicitly available.
-- Game recommendations exist through detected profile IDs, but per-game profile behavior is still early.
+- PresentMon-assisted capture path exists but may be unavailable in some environments.
+- Live telemetry quality can degrade to fallback counters.
+- ONNX runtime path is not yet guaranteed in all packaged runs.
+- One-click ML orchestration for mass-market users is not yet fully hardened.
+- Explainability is present in parts of the stack, but not yet uniform across all actions.
 
-## Future
+## Target (current direction)
 
-- Bundled PresentMon helper with license notice and hidden runtime packaging.
-- True ONNX runtime inference in the sidecar with latency SLO under 100 ms.
-- Benchmark / proof mode with before-and-after comparison.
-- Strong per-game profiles for:
-  - CS2
-  - Valorant
-  - Fortnite
-  - Apex
-  - Warzone
-- NVIDIA-style compact telemetry HUD / overlay, only after the core product is stable and anti-cheat-safe.
+- Mass-market UX: "few clicks -> measurable result".
+- Three user paths:
+  - `Normal`,
+  - `Max performance`,
+  - `Custom`.
+- One-click ML path that:
+  - analyzes local system state,
+  - applies only safe bounded actions,
+  - exposes clear "what changed / why / confidence / risk".
+- Explicit `Stop` action that performs rollback-all.
+- Optional auto-resume session after restart (configurable).
+- Optional monitoring-only mode with user-configurable overlay metrics.
+
+## Future (post pre-defense)
+
+- Replace backend-sidecar runtime file synchronization with direct channels/events.
+- Stronger model lifecycle with stable runtime model switching.
+- Expanded game profile coverage.
+- Better capture fidelity and packaging maturity for helper tooling.
 
 ## Things Aeterna does not claim
 
-- It does not route network traffic like ExitLag.
-- It does not inject DLLs, hook game memory, or edit game code.
-- It does not promise guaranteed FPS gains on every system.
-- It does not allow ML to make unrestricted system changes.
+- It does not route game traffic like network route optimizers.
+- It does not inject DLLs, edit game memory, or perform stealth anti-cheat bypass behavior.
+- It does not guarantee FPS uplift on every hardware/system combination.
+- It does not allow unrestricted ML-driven system mutation.
 
 ## Product framing
 
-Aeterna is a **performance and session optimizer for online games**, not a network route optimizer and not a generic “Windows tweak pack”.
+Aeterna is a Windows game-session performance optimizer with rollback-first safety.
+It is not a network optimizer and not an unsafe tweak pack.

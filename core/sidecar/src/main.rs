@@ -179,6 +179,33 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             ))?;
             Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
         }
+        "process_qos" => {
+            let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
+            let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
+            let restore = processes::capture_restore_state(pid, &current.name)?;
+            let mut draft = snapshots::next_snapshot(
+                "process-qos",
+                format!("Before setting QoS for {}", current.name),
+                Some(restore),
+                None,
+                None,
+            );
+            draft.session_id = session_id.clone();
+            let snapshot = snapshots::create_snapshot(draft)?;
+            processes::apply_process_qos(pid, "high")?;
+            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+            telemetry::track_tweak(&snapshot.id, "process_qos");
+            let entry = activity::append(snapshots::activity(
+                "tweak",
+                "Per-process QoS applied",
+                format!("Enabled high QoS policy for {}.", current.name),
+                "medium",
+                Some(snapshot.id.clone()),
+                session_id,
+                true,
+            ))?;
+            Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
+        }
         "cpu_affinity" => {
             let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
             let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
@@ -239,6 +266,40 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
 fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyRegistryPresetResponse, String> {
     let session = telemetry::read_session_state();
     let session_id = session.session_id.clone();
+    if request.preset_id == "gpu_preference_high" {
+        policy::require_registry_preset_allowed(&session, false)?;
+        let pid = request.process_id.or(session.process_id).ok_or("Process id is required for per-app GPU preference.")?;
+        let process_path = processes::process_image_path(pid).ok_or("Unable to resolve executable path for selected process.")?;
+        let draft = registry::build_gpu_preference_snapshot(&process_path, session_id.clone())?;
+        let snapshot = snapshots::create_snapshot(draft)?;
+        let stored = snapshots::load_snapshot(&snapshot.id)?;
+        registry::apply_snapshot(&stored)?;
+        let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+        telemetry::track_tweak(&snapshot.id, "registry:gpu_preference_high");
+        telemetry::sync_pending_restore_state();
+        let entry = activity::append(models::ActivityEntry {
+            id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+            timestamp: now(),
+            category: "registry".into(),
+            action: "System preset applied".into(),
+            detail: "Applied per-app GPU preference (High performance).".into(),
+            risk: "low".into(),
+            snapshot_id: Some(snapshot.id.clone()),
+            session_id,
+            action_id: Some(snapshot.id.clone()),
+            can_undo: true,
+            proof_link: None,
+            blocked_by_policy: false,
+        })?;
+        return Ok(ApplyRegistryPresetResponse {
+            status: "applied".into(),
+            state: inspect(request.process_id.or(session.process_id))?,
+            snapshot: Some(snapshot),
+            activity: entry,
+            blocking_reason: None,
+            next_action: None,
+        });
+    }
     let summaries = registry::preset_summaries(&session, true);
     let summary = summaries
         .into_iter()
@@ -269,7 +330,11 @@ fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyReg
         });
     }
     policy::require_registry_preset_allowed(&session, summary.requires_admin)?;
-    let draft = registry::build_snapshot(&request.preset_id, session_id.clone())?;
+    let draft = if request.preset_id == "windowed_optimizations_on" {
+        registry::build_windowed_optimizations_snapshot(session_id.clone())?
+    } else {
+        registry::build_snapshot(&request.preset_id, session_id.clone())?
+    };
     let snapshot = snapshots::create_snapshot(draft)?;
     let stored = snapshots::load_snapshot(&snapshot.id)?;
     registry::apply_snapshot(&stored)?;

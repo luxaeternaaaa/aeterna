@@ -18,16 +18,16 @@ def baseline() -> BenchmarkWindow | None:
 
 
 @router.post("/capture-baseline", response_model=BenchmarkWindow)
-def capture() -> BenchmarkWindow:
+def capture(sample_limit: int = 60) -> BenchmarkWindow:
     try:
-        return capture_baseline()
+        return capture_baseline(sample_limit=sample_limit)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post("/run", response_model=BenchmarkReport)
-def run(profile_id: str | None = None) -> BenchmarkReport:
+def run(profile_id: str | None = None, sample_limit: int = 60) -> BenchmarkReport:
     try:
-        return run_benchmark(profile_id=profile_id)
+        return run_benchmark(profile_id=profile_id, sample_limit=sample_limit)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

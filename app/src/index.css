@@ -2,6 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'Geist';
+  src: url('../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../node_modules/geist/dist/fonts/geist-sans/Geist-Italic[wght].woff2') format('woff2');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
   --color-canvas: 6 9 14;
   --color-surface: 10 14 20;
@@ -26,7 +42,7 @@
   color-scheme: dark;
   color: rgb(var(--color-text));
   background: transparent;
-  font-family: 'Segoe UI Variable Text', 'Manrope', 'SF Pro Display', 'Segoe UI', sans-serif;
+  font-family: 'Geist', 'Segoe UI Variable Text', 'SF Pro Display', 'Segoe UI', sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -128,6 +144,11 @@ textarea:focus-visible {
   color: rgb(var(--color-text));
 }
 
+/* Prevent stretched UI labels with spaced letters (e.g. S t a r t u p). */
+[class*='tracking-['] {
+  letter-spacing: normal !important;
+}
+
 @layer components {
   .button-primary {
     @apply inline-flex items-center justify-center rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-panel transition hover:bg-accent/90 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-45;
@@ -146,26 +167,46 @@ textarea:focus-visible {
   }
 
   .status-chip {
-    @apply rounded-full border border-border/75 bg-surface px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-muted ring-1 ring-inset ring-border/65;
+    @apply rounded-full bg-surface-muted/75 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-muted;
   }
 
   .surface-card {
-    @apply rounded-[1.2rem] border border-border/70 bg-surface-muted/90 px-4 py-4 ring-1 ring-inset ring-border/35;
+    @apply rounded-[1.2rem] bg-surface-muted/80 px-4 py-4;
   }
 
   .summary-card {
-    @apply rounded-[1.2rem] border border-border/70 bg-surface px-4 py-4 shadow-sm ring-1 ring-inset ring-border/50;
+    @apply rounded-[1.2rem] bg-surface px-4 py-4 shadow-sm;
   }
 
   .empty-state {
-    @apply rounded-[1.35rem] border border-border/70 bg-surface-muted/90 px-5 py-5 ring-1 ring-inset ring-border/60;
+    @apply rounded-[1.35rem] bg-surface-muted/90 px-5 py-5;
   }
 
   .action-stage {
-    @apply rounded-[1.35rem] border border-border/65 bg-surface-muted/75 px-5 py-5 ring-1 ring-inset ring-border/55;
+    @apply rounded-[1.35rem] bg-surface-muted/75 px-5 py-5;
   }
 
   .input-shell {
-    @apply w-full rounded-xl border border-border/85 bg-surface px-4 py-3 text-sm text-text outline-none ring-1 ring-inset ring-border-strong/45 transition focus:ring-accent/50;
+    @apply w-full rounded-xl border border-border/45 bg-surface px-4 py-3 text-sm text-text outline-none transition focus:ring-accent/50;
+  }
+
+  .session-picker-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: rgb(var(--color-border-strong)) rgb(var(--color-surface-muted));
+  }
+
+  .session-picker-scroll::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  .session-picker-scroll::-webkit-scrollbar-track {
+    background: rgb(var(--color-surface-muted));
+    border-radius: 999px;
+  }
+
+  .session-picker-scroll::-webkit-scrollbar-thumb {
+    background: rgb(var(--color-border-strong));
+    border-radius: 999px;
+    border: 2px solid rgb(var(--color-surface-muted));
   }
 }

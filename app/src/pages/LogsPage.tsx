@@ -13,46 +13,10 @@ interface LogsPageProps {
 export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) {
   const filteredActivity = activity
   const filteredLogs = logs
-  const undoReadyCount = filteredActivity.filter((item) => item.can_undo).length
-  const lastAction = filteredActivity[0] ?? null
 
   return (
     <div className="space-y-5">
-      <Panel variant="primary">
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="action-stage">
-            <p className="text-xs uppercase tracking-[0.18em] text-muted">History</p>
-            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-text md:text-[2.35rem]">
-              {undoReadyCount > 0 ? `${undoReadyCount} change${undoReadyCount === 1 ? '' : 's'} ready to undo` : 'History is still empty'}
-            </h3>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted md:text-base md:leading-7">
-              {lastAction
-                ? `Last recorded change: ${lastAction.action}. Review it below and decide whether to keep it or roll it back.`
-                : stateCopy.noActivity}
-            </p>
-            {!lastAction ? (
-              <button className="button-primary mt-6" onClick={onOpenOptimization} type="button">
-                Start a measured test
-              </button>
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Undo ready</p>
-              <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{undoReadyCount}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Reversible changes remain visible here until they are restored or closed.</p>
-            </div>
-            <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Technical logs</p>
-              <p className="mt-2 text-2xl font-semibold tracking-tight text-text">{filteredLogs.length}</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Debugging output stays secondary to the undo timeline.</p>
-            </div>
-          </div>
-        </div>
-      </Panel>
-
-      <Panel subtitle="Actions and rollback trail." title="Timeline" variant="secondary">
+      <Panel title="Timeline" variant="secondary">
         <div className="mt-5 space-y-3">
           {filteredActivity.length === 0 ? (
             <EmptyState actionLabel="Run a safe test" description={stateCopy.noActivity} onAction={onOpenOptimization} title="No timeline yet" />
@@ -68,14 +32,10 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
                   </div>
                   <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className="status-chip">{item.category}</span>
-                  <span className="status-chip">{item.risk}</span>
-                </div>
+                <span className="status-chip">{item.risk}</span>
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-sm text-muted">
                 <span>{formatTimestamp(item.timestamp)}</span>
-                <span>Session {item.session_id ?? 'n/a'}</span>
                 {item.proof_link ? <span>Proof {item.proof_link}</span> : null}
                 {item.snapshot_id ? <span>Snapshot {item.snapshot_id}</span> : null}
               </div>
@@ -84,7 +44,7 @@ export function LogsPage({ activity, logs, onOpenOptimization }: LogsPageProps) 
         </div>
       </Panel>
 
-      <Panel subtitle="Use this only for debugging and support." title="Technical logs" variant="secondary">
+      <Panel title="Logs" variant="secondary">
         <div className="space-y-3">
           {filteredLogs.length === 0 ? (
             <div className="surface-card">

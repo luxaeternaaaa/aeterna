@@ -1,24 +1,20 @@
 import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
-import { Minus, MoonStar, SunMedium, X } from 'lucide-react'
+import { Minus, MoonStar, Square, SunMedium, X } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 
 import { ConsentModal } from './components/ConsentModal'
 import { Sidebar } from './components/Sidebar'
 import { StartupSkeleton } from './components/StartupSkeleton'
-import { TweakPreviewModal } from './components/TweakPreviewModal'
 import { api } from './lib/api'
 import { readStartupCache, writeStartupCache } from './lib/cache'
 import { featureConsent } from './lib/consent'
-import { getPageChrome, type ThemeMode } from './lib/pageChrome'
 import {
-  applyRegistryPreset,
   applyOptimizationTweak,
+  applyRegistryPreset,
   attachOptimizationSession,
   endOptimizationSession,
-  getMlRuntimeTruth,
   inspectOptimization,
   rollbackOptimizationTweak,
-  runOptimizationInference,
 } from './lib/sidecar'
 import { getInitialState, getStartupState, toConnection } from './lib/startup'
 import { DashboardPage } from './pages/DashboardPage'
@@ -26,11 +22,8 @@ import { LogsPage } from './pages/LogsPage'
 import { OptimizationPage } from './pages/OptimizationPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { TestsPage } from './pages/TestsPage'
 import type {
-  ApplyRegistryPresetRequest,
-  ApplyRegistryPresetResponse,
-  ApplyTweakRequest,
-  ApplyTweakResponse,
   BenchmarkReport,
   BenchmarkWindow,
   BootstrapPayload,
@@ -39,8 +32,6 @@ import type {
   FeatureFlags,
   GameProfile,
   LogRecord,
-  MlInferencePayload,
-  OptimizationSummary,
   OptimizationRuntimeState,
   PageId,
   SecuritySummary,
@@ -48,15 +39,12 @@ import type {
   StartupDiagnostics,
   SystemSettings,
   TelemetryPoint,
-  TrustStatusPresentation,
 } from './types'
 
 type ConnectionState = { title: string; detail: string }
+type ThemeMode = 'dark' | 'light'
 type PendingConsent = { description: string; key: keyof FeatureFlags; title: string }
-type LoadedState = { dashboard: boolean; logs: boolean; optimization: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
-type PendingAction =
-  | { changes: string[]; description: string; request: ApplyTweakRequest; risk: string; title: string; trust: TrustStatusPresentation; kind: 'tweak' }
-  | { changes: string[]; description: string; request: ApplyRegistryPresetRequest; risk: string; title: string; trust: TrustStatusPresentation; kind: 'registry' }
+type LoadedState = { dashboard: boolean; logs: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
 
 const THEME_STORAGE_KEY = 'aeterna-theme'
 
@@ -83,22 +71,12 @@ const initialSystem: SystemSettings = {
   allow_outbound_sync: false,
   telemetry_mode: 'demo',
   automation_mode: 'manual',
-  automation_allowlist: [],
+  automation_allowlist: ['process_priority', 'cpu_affinity', 'power_plan'],
   registry_presets_enabled: false,
   show_advanced_registry_details: false,
 }
 const initialDashboard: DashboardPayload = { stats: [], history: [], recommendations: [], session_health: 'Loading', mode: 'demo', badge: 'Loading' }
 const initialSecurity: SecuritySummary = { status: 'low', label: 'normal-session', confidence: 0.89, auto_scan_enabled: false }
-const initialOptimization: OptimizationSummary = {
-  optimizer_enabled: false,
-  risk_label: 'low',
-  spike_probability: 0.18,
-  confidence: 0.62,
-  model_source: 'local-summary',
-  next_action: 'Attach a game session and capture a baseline before testing a safe preset.',
-  primary_blocker: 'Performance optimizer is disabled in Settings.',
-  proof_state: 'blocked',
-}
 const initialOptimizationRuntime: OptimizationRuntimeState = {
   processes: [],
   advanced_processes: [],
@@ -163,57 +141,48 @@ export default function App() {
   const [logs, setLogs] = useState<LogRecord[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>(cache?.bootstrap?.last_snapshot_meta ? [cache.bootstrap.last_snapshot_meta] : [])
   const [security, setSecurity] = useState<SecuritySummary>(initialSecurity)
-  const [optimization, setOptimization] = useState<OptimizationSummary>(initialOptimization)
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
   const [session, setSession] = useState(cache?.bootstrap?.session ?? initialOptimizationRuntime.session)
-  const [inference, setInference] = useState<MlInferencePayload | null>(null)
   const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null)
   const [realtime, setRealtime] = useState<TelemetryPoint | null>(cache?.dashboard?.history.at(-1) ?? null)
   const [diffText, setDiffText] = useState('')
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
+  const [lastTweakAtMs, setLastTweakAtMs] = useState<number | null>(null)
+  const [stopBusy, setStopBusy] = useState(false)
+  const [isMaximized, setIsMaximized] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
     logs: false,
-    optimization: false,
     optimizationRuntime: false,
     security: false,
     snapshots: Boolean(cache?.bootstrap?.last_snapshot_meta),
   })
-  const undoReadyCount = optimizationRuntime.activity.filter((entry) => entry.can_undo).length
-  const pageChrome = getPageChrome({
-    activePage,
-    benchmarkBaseline,
-    connectionTitle: connection.title,
-    dashboard,
-    featureFlags,
-    latestBenchmark,
-    logs,
-    optimization,
-    optimizationRuntime,
-    security,
-    session,
-    settings,
-    theme,
-    undoReadyCount,
-  })
-  const chromeStatuses = [pageChrome.primaryStatus, pageChrome.proofState, pageChrome.optionalSecondaryStatus].filter(
-    (item): item is NonNullable<typeof item> => Boolean(item),
-  )
-  const compactStatuses = chromeStatuses.slice(0, 2)
-  const showPageMeta = activePage !== 'home'
 
   const minimizeWindow = () => {
     if (!isTauriRuntime()) return
     void invoke('minimize_main_window')
   }
 
+  const toggleMaximizeWindow = () => {
+    if (!isTauriRuntime()) return
+    void invoke<boolean>('toggle_maximize_main_window')
+      .then((value) => setIsMaximized(value))
+      .catch(() => {})
+  }
+
   const closeWindow = () => {
     if (!isTauriRuntime()) return
     void invoke('close_main_window')
   }
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+    void invoke<boolean>('is_main_window_maximized')
+      .then((value) => setIsMaximized(value))
+      .catch(() => {})
+  }, [])
 
   const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
@@ -250,34 +219,11 @@ export default function App() {
     setLoaded((current) => ({ ...current, security: true }))
   })
 
-  const loadOptimization = useEffectEvent(async () => {
-    const [nextOptimization, nextDashboard] = await Promise.all([
-      api.optimization(),
-      loaded.dashboard ? Promise.resolve(dashboardRef.current ?? dashboard) : api.dashboard(),
-    ])
-    startTransition(() => {
-      setOptimization(nextOptimization)
-      if (!loaded.dashboard) {
-        dashboardRef.current = nextDashboard
-        setDashboard(nextDashboard)
-        setRealtime(nextDashboard.history.at(-1) ?? null)
-      }
-      setLoaded((current) => ({ ...current, dashboard: true, optimization: true }))
-    })
-    writeStartupCache(bootstrapRef.current, nextDashboard)
-  })
-
   const loadOptimizationRuntime = useEffectEvent(async (processId?: number) => {
     const nextState = await inspectOptimization(processId)
-    const sample = realtime ?? dashboardRef.current?.history.at(-1) ?? dashboard.history.at(-1) ?? null
-    const [nextInference] = await Promise.all([
-      sample ? runOptimizationInference(sample) : Promise.resolve(null),
-      getMlRuntimeTruth(),
-    ])
     startTransition(() => {
       setOptimizationRuntime(nextState)
       setSession(nextState.session)
-      setInference(nextInference)
       setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     })
   })
@@ -384,13 +330,14 @@ export default function App() {
 
   useEffect(() => {
     if (activePage === 'home' && !loaded.dashboard) void loadDashboard()
-    if ((activePage === 'home' || activePage === 'optimize') && !loaded.optimization) void loadOptimization()
-    if (activePage === 'optimize' && !loaded.optimizationRuntime) void loadOptimizationRuntime(selectedProcessId ?? undefined)
-    if ((activePage === 'home' || activePage === 'optimize') && !benchmarkBaseline && !latestBenchmark) void loadBenchmarkState()
+    if ((activePage === 'home' || activePage === 'optimize' || activePage === 'tests') && !loaded.optimizationRuntime)
+      void loadOptimizationRuntime(selectedProcessId ?? undefined)
+    if ((activePage === 'home' || activePage === 'optimize' || activePage === 'tests') && !benchmarkBaseline && !latestBenchmark)
+      void loadBenchmarkState()
     if (activePage === 'safety' && !loaded.security) void loadSecurity()
-    if (activePage === 'history' && !loaded.logs) void loadLogs()
+    if ((activePage === 'history' || activePage === 'optimize') && !loaded.logs) void loadLogs()
     if (activePage === 'settings' && !loaded.snapshots) void loadSettingsData()
-  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadOptimization, loadOptimizationRuntime, loadSecurity, loadSettingsData, selectedProcessId])
+  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadOptimizationRuntime, loadSecurity, loadSettingsData, selectedProcessId])
 
   const toggleFlag = async (key: keyof FeatureFlags, value: boolean) => {
     await api.updateFeatureFlags({ ...featureFlags, [key]: value })
@@ -422,17 +369,18 @@ export default function App() {
   }
 
   const updateAutomationAllowlist = async (action: 'process_priority' | 'cpu_affinity' | 'power_plan', enabled: boolean) => {
+    const defaultAllowlist: Array<'process_priority' | 'cpu_affinity' | 'power_plan'> = [
+      'process_priority',
+      'cpu_affinity',
+      'power_plan',
+    ]
+    const currentAllowlist =
+      settings.automation_allowlist.length > 0 ? settings.automation_allowlist : defaultAllowlist
     const next = enabled
-      ? Array.from(new Set([...settings.automation_allowlist, action]))
-      : settings.automation_allowlist.filter((item) => item !== action)
+      ? Array.from(new Set([...currentAllowlist, action]))
+      : currentAllowlist.filter((item) => item !== action)
     await api.updateSystem({ ...settings, automation_allowlist: next })
     await loadSettingsData()
-  }
-
-  const updateRegistryPresetsEnabled = async (enabled: boolean) => {
-    await api.updateSystem({ ...settings, registry_presets_enabled: enabled })
-    await loadSettingsData()
-    await loadOptimizationRuntime(selectedProcessId ?? undefined)
   }
 
   const updateAdvancedRegistryDetails = async (enabled: boolean) => {
@@ -447,155 +395,48 @@ export default function App() {
     await loadSettingsData()
   }
 
-  const previewTweak = (request: ApplyTweakRequest) => {
-    if (request.kind === 'process_priority') {
-      const name = optimizationRuntime.selected_process?.name ?? 'selected process'
-      const currentPriority = optimizationRuntime.selected_process?.priority_label ?? 'Normal'
-      return setPendingAction({
-        kind: 'tweak',
-        request,
-        title: 'Raise process priority',
-        description: `Aeterna will raise ${name} from ${currentPriority} to Above normal priority using the Windows scheduler. This change is session scoped, rollback-safe, and never touches game memory.`,
-        risk: 'medium',
-        changes: [
-          'Create a rollback snapshot of the current priority and affinity state.',
-          'Apply Above normal process priority to the attached session only.',
-          'Auto-restore the captured state when the tracked process exits or when you end the session.',
-        ],
-        trust: {
-          current_state: `${name} at ${currentPriority}`,
-          target_state: `${name} at Above normal priority`,
-          policy_status: settings.automation_allowlist.includes('process_priority') ? 'allowed inside policy' : 'manual-only unless allowlisted',
-          rollback_available: true,
-          blocking_reason: null,
-          admin_required: false,
-          scope: 'session',
-        },
-      })
-    }
-    if (request.kind === 'cpu_affinity') {
-      const name = optimizationRuntime.selected_process?.name ?? 'selected process'
-      const currentAffinity = optimizationRuntime.selected_process?.affinity_label ?? 'Current affinity'
-      return setPendingAction({
-        kind: 'tweak',
-        request,
-        title: 'Apply balanced CPU affinity',
-        description: `Aeterna will move ${name} from ${currentAffinity} to a reversible balanced affinity preset. Expert one-thread-per-core reduction stays out of the default safe path.`,
-        risk: 'medium',
-        changes: [
-          'Capture the current affinity mask in a rollback snapshot.',
-          'Apply a safer balanced affinity preset to the attached session only.',
-          'Auto-restore the original affinity when the session ends.',
-        ],
-        trust: {
-          current_state: `${name} using ${currentAffinity}`,
-          target_state: `${name} using balanced affinity`,
-          policy_status: settings.automation_allowlist.includes('cpu_affinity') ? 'allowed inside policy' : 'manual-only unless allowlisted',
-          rollback_available: true,
-          blocking_reason: null,
-          admin_required: false,
-          scope: 'session',
-        },
-      })
-    }
-    const plan = optimizationRuntime.power_plans.find((item) => item.guid === request.power_plan_guid)
-    const activePlan = optimizationRuntime.power_plans.find((item) => item.active)
-    setPendingAction({
-      kind: 'tweak',
-      request,
-      title: `Switch power plan to ${plan?.name ?? 'selected plan'}`,
-      description: `Aeterna will switch Windows from ${activePlan?.name ?? 'the current plan'} to ${plan?.name ?? 'the selected plan'} for the attached session and keep your original scheme in a rollback snapshot.`,
-      risk: 'low',
-      changes: [
-        'Capture the current active power plan.',
-        'Switch Windows to the selected existing power plan for the active session.',
-        'Auto-restore your original power plan after the session ends or on manual Undo.',
-      ],
-      trust: {
-        current_state: activePlan?.name ?? 'Current power plan',
-        target_state: plan?.name ?? 'Selected plan',
-        policy_status: settings.automation_allowlist.includes('power_plan') ? 'allowed inside policy' : 'manual-only unless allowlisted',
-        rollback_available: true,
-        blocking_reason: null,
-        admin_required: false,
-        scope: 'session',
-      },
-    })
-  }
-
-  const previewRegistryPreset = (request: ApplyRegistryPresetRequest) => {
-    const preset = optimizationRuntime.registry_presets.find((item) => item.id === request.preset_id)
-    if (!preset) return
-    setPendingAction({
-      kind: 'registry',
-      request,
-      title: preset.title,
-      description: `${preset.expected_benefit} This preset is allowlisted, reversible, and should only be trusted after a baseline and comparison.`,
-      risk: preset.risk,
-      changes: [
-        `Create an exact rollback snapshot for ${preset.affected_values_count} registry value${preset.affected_values_count === 1 ? '' : 's'}.`,
-        `Apply the preset at ${preset.scope}.`,
-        preset.requires_admin ? 'Request administrator approval only for this one action.' : 'Apply the preset without machine-wide elevation.',
-        ...preset.advanced_details,
-      ],
-      trust: {
-        current_state: preset.current_state,
-        target_state: preset.target_state,
-        policy_status: preset.allowed_now ? 'allowed inside policy' : 'blocked by policy',
-        rollback_available: true,
-        blocking_reason: preset.blocking_reason ?? null,
-        next_action: preset.next_action ?? null,
-        admin_required: preset.requires_admin,
-        scope: preset.scope,
-      },
-    })
-  }
-
-  const applyTweak = async () => {
-    if (!pendingAction) return
-    const result: ApplyTweakResponse | ApplyRegistryPresetResponse =
-      pendingAction.kind === 'tweak'
-        ? await applyOptimizationTweak(pendingAction.request)
-        : await applyRegistryPreset(pendingAction.request)
-    if (pendingAction.kind === 'registry' && 'status' in result && result.status === 'blocked') {
-      setOptimizationRuntime(result.state)
-      setSession(result.state.session)
-      await loadOptimization()
-      setPendingAction((current) =>
-        current && current.kind === 'registry'
-          ? {
-              ...current,
-              trust: {
-                ...current.trust,
-                blocking_reason: result.blocking_reason ?? current.trust.blocking_reason,
-                next_action: result.next_action ?? current.trust.next_action,
-              },
-            }
-          : current,
+  const stopSessionWithRollback = async () => {
+    if (stopBusy) return
+    setStopBusy(true)
+    try {
+      const currentProcessId = selectedProcessId ?? optimizationRuntime.session.process_id ?? undefined
+      const snapshotIds = Array.from(
+        new Set([
+          ...optimizationRuntime.session.active_snapshot_ids,
+          ...optimizationRuntime.activity.filter((entry) => entry.can_undo && entry.snapshot_id).map((entry) => entry.snapshot_id ?? ''),
+        ]),
       )
-      return
-    }
-    setOptimizationRuntime(result.state)
-    setSession(result.state.session)
-    await loadOptimization()
-    await loadBenchmarkState()
-    setPendingAction(null)
-    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
-  }
+        .filter((id) => id.length > 0)
+        .reverse()
 
-  const rollbackTweak = async (snapshotId: string) => {
-    const result = await rollbackOptimizationTweak(snapshotId, selectedProcessId ?? undefined)
-    setOptimizationRuntime(result.state)
-    setSession(result.state.session)
-    await loadOptimization()
-    await loadBenchmarkState()
-    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+      let nextState = optimizationRuntime
+      for (const snapshotId of snapshotIds) {
+        try {
+          const result = await rollbackOptimizationTweak(snapshotId, currentProcessId)
+          nextState = result.state
+        } catch {
+          // Continue rollback attempts for remaining snapshots.
+        }
+      }
+
+      const ended = await endOptimizationSession()
+      setOptimizationRuntime(ended)
+      setSession(ended.session)
+      setLastTweakAtMs(null)
+      await loadBenchmarkState()
+      setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+      if (nextState.session.state === 'active' && ended.session.state === 'active') {
+        // keep linter-silencing path explicit when runtime refuses to end
+      }
+    } finally {
+      setStopBusy(false)
+    }
   }
 
   const captureBaseline = async () => {
     setBenchmarkBusy(true)
     try {
-      const baseline = await api.captureBenchmarkBaseline()
+      const baseline = await api.captureBenchmarkBaseline(60)
       setBenchmarkBaseline(baseline)
       if (bootstrapRef.current) {
         const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline }
@@ -610,7 +451,7 @@ export default function App() {
   const runBenchmark = async (profileId?: string) => {
     setBenchmarkBusy(true)
     try {
-      const report = await api.runBenchmark(profileId)
+      const report = await api.runBenchmark(profileId, 60)
       setLatestBenchmark(report)
       await loadOptimizationRuntime(selectedProcessId ?? undefined)
       if (bootstrapRef.current) {
@@ -623,44 +464,86 @@ export default function App() {
     }
   }
 
+  const attachSession = async (request: { process_id: number; process_name: string }) => {
+    const nextState = await attachOptimizationSession(request)
+    setOptimizationRuntime(nextState)
+    setSession(nextState.session)
+    setSelectedProcessId(request.process_id)
+    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    return nextState
+  }
+
+  const applySessionTweak = async (request: Parameters<typeof applyOptimizationTweak>[0]) => {
+    const result = await applyOptimizationTweak(request)
+    setOptimizationRuntime(result.state)
+    setSession(result.state.session)
+    setLastTweakAtMs(Date.now())
+    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    return result
+  }
+
+  const applySystemPreset = async (request: Parameters<typeof applyRegistryPreset>[0]) => {
+    const result = await applyRegistryPreset(request)
+    setOptimizationRuntime(result.state)
+    setSession(result.state.session)
+    setLastTweakAtMs(Date.now())
+    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    return result
+  }
+
+  const rollbackSnapshot = async (snapshotId: string, processId?: number) => {
+    const result = await rollbackOptimizationTweak(snapshotId, processId)
+    setOptimizationRuntime(result.state)
+    setSession(result.state.session)
+    setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    return result
+  }
+
   const renderPage = () => {
     if (activePage === 'home' && !loaded.dashboard && dashboard.stats.length === 0) return <StartupSkeleton />
-    if (activePage === 'optimize') {
+    if (activePage === 'tests') {
       return (
-        <OptimizationPage
+        <TestsPage
           benchmarkBaseline={benchmarkBaseline}
           benchmarkBusy={benchmarkBusy}
-          dashboard={dashboard}
-          featureFlags={featureFlags}
-          inference={inference}
+          lastTweakAtMs={lastTweakAtMs}
           latestBenchmark={latestBenchmark}
-          onAttachSession={(request) => void attachOptimizationSession(request).then((nextState) => {
-            setOptimizationRuntime(nextState)
-            setSession(nextState.session)
-            setSelectedProcessId(request.process_id)
-            setLoaded((current) => ({ ...current, optimizationRuntime: true }))
-          })}
+          onAttachSession={(request) => void attachSession(request)}
           onCaptureBaseline={() => void captureBaseline()}
+          onClearSessionSelection={() => {
+            setSelectedProcessId(null)
+            void loadOptimizationRuntime(undefined)
+          }}
           onEndSession={() => void endOptimizationSession().then((nextState) => {
             setOptimizationRuntime(nextState)
             setSession(nextState.session)
+            setLastTweakAtMs(null)
             setLoaded((current) => ({ ...current, optimizationRuntime: true }))
           })}
+          onOpenLogs={() => setActivePage('history')}
           onOpenSettings={() => setActivePage('settings')}
-          onPreviewTweak={previewTweak}
-          onPreviewRegistryPreset={previewRegistryPreset}
           onRefresh={(processId) => void loadOptimizationRuntime(processId)}
-          onRollback={(snapshotId) => void rollbackTweak(snapshotId)}
           onRunBenchmark={(profileId) => void runBenchmark(profileId)}
           onSelectProcess={(processId) => {
             setSelectedProcessId(processId)
             void loadOptimizationRuntime(processId)
           }}
-          optimization={optimization}
+          onStopSession={() => void stopSessionWithRollback()}
           profiles={profiles}
           runtimeState={optimizationRuntime}
-          selectedProcessId={selectedProcessId}
-          settings={settings}
+          stopBusy={stopBusy}
+        />
+      )
+    }
+    if (activePage === 'optimize') {
+      return (
+        <OptimizationPage
+          dashboard={dashboard}
+          runtimeState={optimizationRuntime}
+          onApplyRegistryPreset={applySystemPreset}
+          onApplyTweak={applySessionTweak}
+          onAttachSession={attachSession}
+          onRollbackSnapshot={rollbackSnapshot}
         />
       )
     }
@@ -677,7 +560,6 @@ export default function App() {
           onUpdateAutomationAllowlist={(action, enabled) => void updateAutomationAllowlist(action, enabled)}
           onUpdateAutomationMode={(mode) => void updateAutomationMode(mode)}
           onUpdateAdvancedRegistryDetails={(enabled) => void updateAdvancedRegistryDetails(enabled)}
-          onUpdateRegistryPresetsEnabled={(enabled) => void updateRegistryPresetsEnabled(enabled)}
           onToggleFlag={(key, value) => requestFlagChange(key, value)}
           onUpdateTheme={(nextTheme) => setTheme(nextTheme)}
           onUpdateTelemetryMode={(mode) => void updateTelemetryMode(mode)}
@@ -692,20 +574,44 @@ export default function App() {
     return (
       <DashboardPage
         benchmarkBaseline={benchmarkBaseline}
+        benchmarkBusy={benchmarkBusy}
         dashboard={dashboard}
+        lastTweakAtMs={lastTweakAtMs}
         latestBenchmark={latestBenchmark}
+        onAttachSession={(request) => void attachSession(request)}
+        onCaptureBaseline={() => void captureBaseline()}
+        onClearSessionSelection={() => {
+          setSelectedProcessId(null)
+          void loadOptimizationRuntime(undefined)
+        }}
+        onEndSession={() => void endOptimizationSession().then((nextState) => {
+          setOptimizationRuntime(nextState)
+          setSession(nextState.session)
+          setLastTweakAtMs(null)
+          setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+        })}
+        onOpenLogs={() => setActivePage('history')}
         onOpenOptimization={() => setActivePage('optimize')}
-        optimization={optimization}
+        onOpenSettings={() => setActivePage('settings')}
+        onRefresh={(processId) => void loadOptimizationRuntime(processId)}
+        onRunBenchmark={(profileId) => void runBenchmark(profileId)}
+        onSelectProcess={(processId) => {
+          setSelectedProcessId(processId)
+          void loadOptimizationRuntime(processId)
+        }}
+        onStopSession={() => void stopSessionWithRollback()}
         profiles={profiles}
         realtime={realtime}
+        runtimeState={optimizationRuntime}
         session={session}
+        stopBusy={stopBusy}
       />
     )
   }
 
   return (
     <main className="h-screen bg-transparent">
-      <div className="mx-auto flex h-full max-w-[1280px] flex-col overflow-hidden rounded-[1.7rem] bg-canvas">
+      <div className={`flex h-full w-full flex-col overflow-hidden bg-canvas ${isMaximized ? '' : 'mx-auto max-w-[1280px] rounded-[1.7rem]'}`}>
         <header className="grid h-[62px] grid-cols-[auto_1fr_auto] items-center border-b border-border/70 bg-surface-elevated/95 px-3">
           <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
             <div className="grid h-9 w-9 place-items-center rounded-lg border border-border/70 bg-surface">
@@ -738,6 +644,14 @@ export default function App() {
               <Minus size={18} />
             </button>
             <button
+              aria-label="Maximize or restore"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-hover hover:text-text"
+              onClick={toggleMaximizeWindow}
+              type="button"
+            >
+              <Square size={14} />
+            </button>
+            <button
               aria-label="Close"
               className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-danger/25 hover:text-text"
               onClick={closeWindow}
@@ -748,38 +662,9 @@ export default function App() {
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[78px_1fr] gap-3 p-2.5">
-          <Sidebar activePage={activePage} connection={connection} onSelect={setActivePage} />
-          <section className="min-h-0 overflow-auto rounded-[1.5rem] border border-border/80 bg-surface/95 p-4 md:p-5">
-            <header className="mb-5">
-              {showPageMeta ? <p className="text-[10px] uppercase tracking-[0.24em] text-muted">{pageChrome.eyebrow}</p> : null}
-              <div className="mt-2 grid gap-3 xl:grid-cols-[1fr_auto] xl:items-start">
-                <div className="max-w-[56rem]">
-                  <h2 className={`font-semibold tracking-tight text-text ${activePage === 'home' ? 'text-[2rem] leading-[0.98] md:text-[2.35rem]' : 'text-[1.7rem] leading-[1.02] md:text-[1.95rem]'}`}>
-                    {pageChrome.title}
-                  </h2>
-                  {showPageMeta ? <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted">{pageChrome.subtitle}</p> : null}
-                </div>
-                <div className="grid gap-2 xl:w-[21rem]">
-                  <div className="rounded-xl border border-border/70 bg-surface-muted/80 px-4 py-3">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted">{pageChrome.primaryAction.label}</p>
-                    <p className="mt-1.5 text-sm font-semibold tracking-tight text-text">{pageChrome.primaryAction.value}</p>
-                    <p className="mt-1 text-sm leading-5 text-muted">{pageChrome.primaryAction.detail}</p>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                    {compactStatuses.map((item) => (
-                      <div key={`${item.label}-${item.value}`} className="rounded-xl border border-border/70 bg-surface-muted/80 px-4 py-3">
-                        <p className="text-[10px] uppercase tracking-[0.16em] text-muted">{item.label}</p>
-                        <p className="mt-1.5 text-sm font-semibold tracking-tight text-text">{item.value}</p>
-                        <p className="mt-1 text-sm leading-5 text-muted">{item.detail}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </header>
-            {renderPage()}
-          </section>
+        <div className={`grid min-h-0 flex-1 grid-cols-[78px_1fr] ${isMaximized ? 'gap-2 p-1.5' : 'gap-3 p-2.5'}`}>
+          <Sidebar activePage={activePage} onSelect={setActivePage} />
+          <section className={`min-h-0 overflow-auto bg-surface/95 ${isMaximized ? 'rounded-[1rem] p-4' : 'rounded-[1.5rem] p-4 md:p-5'}`}>{renderPage()}</section>
         </div>
       </div>
       {pendingConsent ? (
@@ -791,17 +676,6 @@ export default function App() {
             setPendingConsent(null)
           }}
           title={pendingConsent.title}
-        />
-      ) : null}
-      {pendingAction ? (
-        <TweakPreviewModal
-          changes={pendingAction.changes}
-          description={pendingAction.description}
-          onCancel={() => setPendingAction(null)}
-          onConfirm={() => void applyTweak()}
-          risk={pendingAction.risk}
-          title={pendingAction.title}
-          trust={pendingAction.trust}
         />
       ) : null}
     </main>

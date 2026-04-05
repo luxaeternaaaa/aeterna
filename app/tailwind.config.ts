@@ -25,7 +25,7 @@ export default {
         'danger-soft': 'rgb(var(--color-danger-soft) / <alpha-value>)',
       },
       fontFamily: {
-        sans: ['Inter', 'SF Pro Display', 'Geist', 'system-ui', 'sans-serif'],
+        sans: ['Geist', 'SF Pro Display', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         panel: 'var(--panel-shadow)',

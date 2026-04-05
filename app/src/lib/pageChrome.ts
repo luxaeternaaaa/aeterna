@@ -110,6 +110,16 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
         optionalSecondaryStatus: { label: 'Policy', value: authority.label, detail: authority.detail },
       }
+    case 'tests':
+      return {
+        eyebrow: 'Tests',
+        title: 'Tests',
+        subtitle: 'Attach, baseline, compare, and verify.',
+        primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
+        primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
+        proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
+        optionalSecondaryStatus: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
+      }
     case 'safety':
       return {
         eyebrow: 'Safety',

@@ -135,6 +135,25 @@ fn catalog() -> Vec<RegistryPreset> {
                 target_value: RegistryValueData::Dword(1),
             }],
         },
+        RegistryPreset {
+            id: "windowed_optimizations_on",
+            title: "Enable windowed optimizations",
+            category: "graphics",
+            risk: "low",
+            requires_admin: false,
+            requires_baseline: false,
+            expected_benefit: "Enables Windows optimizations for borderless and windowed DirectX games.",
+            current_state_label: "Windowed optimizations follow the current user setting.",
+            target_state_label: "Windowed optimizations are enabled for the current user.",
+            scope: "user-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hkcu,
+                path: r"Software\Microsoft\DirectX\UserGpuPreferences",
+                value_name: "DirectXUserGlobalSettings",
+                value_type: RegistryValueType::RegSz,
+                target_value: RegistryValueData::Sz("SwapEffectUpgradeEnable=1;".into()),
+            }],
+        },
     ]
 }
 
@@ -223,8 +242,22 @@ impl EmptyStringFallback for String {
 }
 
 fn query_value(mutation: &RegistryMutation) -> Result<Option<RegistryValueData>, String> {
-    let key = format!(r"{}\{}", hive_name(&mutation.hive), mutation.path);
-    let args = vec!["query".into(), key, "/v".into(), mutation.value_name.into()];
+    query_value_dynamic(
+        &mutation.hive,
+        mutation.path,
+        mutation.value_name,
+        &mutation.value_type,
+    )
+}
+
+fn query_value_dynamic(
+    hive: &RegistryHive,
+    path: &str,
+    value_name: &str,
+    value_type: &RegistryValueType,
+) -> Result<Option<RegistryValueData>, String> {
+    let key = format!(r"{}\{}", hive_name(hive), path);
+    let args = vec!["query".into(), key, "/v".into(), value_name.into()];
     let output = Command::new("reg")
         .args(&args)
         .output()
@@ -235,14 +268,14 @@ fn query_value(mutation: &RegistryMutation) -> Result<Option<RegistryValueData>,
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout
         .lines()
-        .find(|line| line.trim_start().starts_with(mutation.value_name))
+        .find(|line| line.trim_start().starts_with(value_name))
         .ok_or_else(|| "Registry query output could not be parsed.".to_string())?;
     let parts = line.split_whitespace().collect::<Vec<_>>();
     if parts.len() < 3 {
         return Err("Registry query output is incomplete.".into());
     }
     let data = parts[2..].join(" ");
-    Ok(parse_query_value(&mutation.value_type, &data))
+    Ok(parse_query_value(value_type, &data))
 }
 
 fn set_entry_target(entry: &RegistrySnapshotEntry, elevated: bool) -> Result<(), String> {
@@ -387,6 +420,51 @@ pub fn build_snapshot(preset_id: &str, session_id: Option<String>) -> Result<Twe
         registry_preset_id: Some(preset.id.into()),
         registry_entries: entries,
         requires_admin: preset.requires_admin,
+        applied_at: None,
+        restored_at: None,
+    })
+}
+
+pub fn build_windowed_optimizations_snapshot(session_id: Option<String>) -> Result<TweakSnapshot, String> {
+    build_snapshot("windowed_optimizations_on", session_id)
+}
+
+pub fn build_gpu_preference_snapshot(
+    process_path: &str,
+    session_id: Option<String>,
+) -> Result<TweakSnapshot, String> {
+    let hive = RegistryHive::Hkcu;
+    let path = r"Software\Microsoft\DirectX\UserGpuPreferences";
+    let value_type = RegistryValueType::RegSz;
+    let target_value = RegistryValueData::Sz("GpuPreference=2;".into());
+    let existing = query_value_dynamic(&hive, path, process_path, &value_type)?;
+    let entry = RegistrySnapshotEntry {
+        hive,
+        path: path.into(),
+        value_name: process_path.into(),
+        value_type,
+        old_value: existing.clone(),
+        existed_before: existing.is_some(),
+        target_value,
+    };
+    Ok(TweakSnapshot {
+        id: format!(
+            "{}-gpu-preference",
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+        ),
+        kind: "registry-preset".into(),
+        created_at: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("current utc time should format as rfc3339"),
+        note: format!("Before setting high GPU preference for {process_path}"),
+        scope: "session".into(),
+        session_id,
+        process: None,
+        power_plan_guid: None,
+        power_plan_name: None,
+        registry_preset_id: Some("gpu_preference_high".into()),
+        registry_entries: vec![entry],
+        requires_admin: false,
         applied_at: None,
         restored_at: None,
     })

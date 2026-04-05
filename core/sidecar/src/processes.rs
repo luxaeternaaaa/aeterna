@@ -10,7 +10,9 @@ use windows_sys::Win32::{
         SystemInformation::{GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO},
         Threading::{
             GetPriorityClass, GetProcessAffinityMask, GetProcessTimes, GetSystemTimes, OpenProcess,
-            SetPriorityClass, SetProcessAffinityMask, ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
+            QueryFullProcessImageNameW, SetPriorityClass, SetProcessAffinityMask, SetProcessInformation,
+            ProcessPowerThrottling, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            PROCESS_POWER_THROTTLING_STATE, ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
             PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
         },
     },
@@ -149,6 +151,18 @@ pub fn process_name(pid: u32) -> Option<String> {
     value
 }
 
+pub fn process_image_path(pid: u32) -> Option<String> {
+    let handle = open_process(pid).ok()?;
+    let mut size = 32768u32;
+    let mut buffer = vec![0u16; size as usize];
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size) } != 0;
+    unsafe { CloseHandle(handle) };
+    if !ok || size == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buffer[..size as usize]))
+}
+
 pub fn process_exists(pid: u32) -> bool {
     open_process(pid).map(|handle| unsafe { CloseHandle(handle) }).is_ok()
 }
@@ -253,6 +267,33 @@ pub fn apply_affinity(pid: u32, preset: &str) -> Result<(), String> {
     let applied = unsafe { SetProcessAffinityMask(handle, target_mask) } != 0;
     unsafe { CloseHandle(handle) };
     if applied { Ok(()) } else { Err(format!("Unable to set affinity for process {pid}.")) }
+}
+
+pub fn apply_process_qos(pid: u32, mode: &str) -> Result<(), String> {
+    let handle = open_process(pid)?;
+    let mut state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        StateMask: if mode.eq_ignore_ascii_case("eco") {
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        } else {
+            0
+        },
+    };
+    let ok = unsafe {
+        SetProcessInformation(
+            handle,
+            ProcessPowerThrottling,
+            &mut state as *mut _ as *mut _,
+            size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+    } != 0;
+    unsafe { CloseHandle(handle) };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("Unable to set process QoS for process {pid}."))
+    }
 }
 
 pub fn restore_process(state: &ProcessRestoreState) -> Result<(), String> {

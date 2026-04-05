@@ -1,4 +1,4 @@
-export type PageId = 'home' | 'optimize' | 'safety' | 'history' | 'settings'
+export type PageId = 'home' | 'optimize' | 'tests' | 'safety' | 'history' | 'settings'
 export type EvidenceStage = 'Live' | 'Degraded' | 'Demo' | 'Unavailable'
 export type SessionStageLabel = 'No session' | 'Attached' | 'Testing' | 'Restored' | 'Blocked'
 export type ProofStageLabel = 'No baseline' | 'Ready to test' | 'Comparison ready' | 'Inconclusive'
@@ -344,7 +344,7 @@ export interface OptimizationRuntimeState {
 }
 
 export interface ApplyTweakRequest {
-  kind: 'process_priority' | 'cpu_affinity' | 'power_plan'
+  kind: 'process_priority' | 'cpu_affinity' | 'power_plan' | 'process_qos'
   process_id?: number
   priority?: 'above_normal' | 'high'
   affinity_preset?: 'all_threads' | 'balanced_threads' | 'one_thread_per_core'

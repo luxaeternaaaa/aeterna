@@ -10,9 +10,9 @@ interface PanelProps extends PropsWithChildren {
 }
 
 const panelVariants = {
-  primary: 'bg-surface shadow-panel ring-1 ring-inset ring-border/70',
-  secondary: 'bg-surface-muted/72 shadow-none ring-1 ring-inset ring-border/45',
-  utility: 'bg-surface/72 shadow-none ring-1 ring-inset ring-border/50',
+  primary: 'bg-surface shadow-panel',
+  secondary: 'bg-surface shadow-none',
+  utility: 'bg-surface/88 shadow-none',
 } as const
 
 export function Panel({ action, children, className, title, subtitle, variant = 'secondary' }: PanelProps) {

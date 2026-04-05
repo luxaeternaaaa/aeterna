@@ -77,19 +77,10 @@ pub fn has_benchmark_baseline() -> bool {
 }
 
 pub fn require_tweak_allowed(kind: &str, session: &SessionState, requested_pid: Option<u32>) -> Result<(), String> {
-    if !optimizer_enabled() {
-        return Err("Enable Performance optimizer in Settings before applying session tweaks.".into());
-    }
-    if !matches!(session.state.as_str(), "attached" | "active") || session.session_id.is_none() {
-        return Err("Attach a game session before applying session-scoped tweaks.".into());
-    }
-    if matches!(kind, "process_priority" | "cpu_affinity") {
-        let attached_pid = session.process_id.ok_or("The attached session does not have a tracked process.")?;
-        if let Some(pid) = requested_pid {
-            if pid != attached_pid {
-                return Err("The selected process does not match the attached game session. Attach that process first.".into());
-            }
-        }
+    if matches!(kind, "process_priority" | "cpu_affinity" | "process_qos")
+        && requested_pid.or(session.process_id).is_none()
+    {
+        return Err("Select a running game process before applying this tweak.".into());
     }
     Ok(())
 }
@@ -115,38 +106,7 @@ pub fn require_registry_preset_allowed(session: &SessionState, requires_admin: b
     Ok(())
 }
 
-pub fn registry_preset_block(session: &SessionState, requires_admin: bool) -> Option<BlockingState> {
-    if !optimizer_enabled() {
-        return Some(BlockingState {
-            reason: "Performance optimizer is off, so system presets stay blocked.".into(),
-            next_action: "Enable Performance optimizer in Settings.".into(),
-        });
-    }
-    let settings = system_settings();
-    if !settings.registry_presets_enabled {
-        return Some(BlockingState {
-            reason: "System presets are disabled in Settings.".into(),
-            next_action: "Enable System presets in Settings.".into(),
-        });
-    }
-    if !matches!(session.state.as_str(), "attached" | "active") || session.session_id.is_none() {
-        return Some(BlockingState {
-            reason: "No attached game session is available for this preset.".into(),
-            next_action: "Attach a game session first.".into(),
-        });
-    }
-    if !has_benchmark_baseline() {
-        return Some(BlockingState {
-            reason: "This preset needs a baseline before it can be trusted.".into(),
-            next_action: "Capture a baseline first.".into(),
-        });
-    }
-    if session.pending_registry_restore {
-        return Some(BlockingState {
-            reason: "A previous system preset still needs to be restored.".into(),
-            next_action: "Restore pending changes before applying another preset.".into(),
-        });
-    }
+pub fn registry_preset_block(_session: &SessionState, requires_admin: bool) -> Option<BlockingState> {
     if requires_admin {
         return None;
     }
