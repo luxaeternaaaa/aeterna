@@ -11,17 +11,27 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     activity,
+    bootcfg,
     models::{CaptureStatus, DetectedGame, SessionState},
     paths::{feature_flags_path, live_telemetry_path, session_state_path, system_settings_path},
     power, presentmon, registry,
     processes::{self, logical_processor_count},
+    services,
     snapshots,
+    timer,
 };
 
 fn now() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .expect("current utc time should format as rfc3339")
+}
+
+fn snapshot_extra_u32(value: &Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok())
 }
 
 fn read_json(path: std::path::PathBuf, fallback: Value) -> Value {
@@ -231,6 +241,37 @@ fn restore_for_session_end(session: &mut SessionState, restore_process_state: bo
         }
         if !snapshot.registry_entries.is_empty() {
             let _ = registry::restore_snapshot(&snapshot);
+        }
+        if snapshot.kind == "boot-option" {
+            if let Some(option_key) = snapshot.extra.get("option_key").and_then(Value::as_str) {
+                if let Some(previous_value) = snapshot.extra.get("previous_value").and_then(Value::as_str) {
+                    let _ = bootcfg::set_option(option_key, previous_value);
+                } else {
+                    let _ = bootcfg::delete_option(option_key);
+                }
+            }
+        }
+        if snapshot.kind == "power-setting" {
+            if let (Some(subgroup_guid), Some(setting_guid)) = (
+                snapshot.extra.get("subgroup_guid").and_then(Value::as_str),
+                snapshot.extra.get("setting_guid").and_then(Value::as_str),
+            ) {
+                let old_ac = snapshot_extra_u32(&snapshot.extra, "old_ac");
+                let old_dc = snapshot_extra_u32(&snapshot.extra, "old_dc");
+                let _ = power::set_setting_indices(subgroup_guid, setting_guid, old_ac, old_dc);
+            }
+        }
+        if snapshot.kind == "timer-resolution" {
+            if let Some(requested) = snapshot_extra_u32(&snapshot.extra, "requested_100ns") {
+                let _ = timer::disable_resolution(requested);
+            }
+        }
+        if snapshot.extra.get("kind").and_then(Value::as_str) == Some("service")
+            && snapshot.extra.get("was_running").and_then(Value::as_bool).unwrap_or(false)
+        {
+            if let Some(service_name) = snapshot.extra.get("service_name").and_then(Value::as_str) {
+                let _ = services::start_service(service_name);
+            }
         }
         let _ = snapshots::mark_snapshot_restored(snapshot_id);
         let _ = activity::append(snapshots::activity(

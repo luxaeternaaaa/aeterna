@@ -77,7 +77,7 @@ pub fn has_benchmark_baseline() -> bool {
 }
 
 pub fn require_tweak_allowed(kind: &str, session: &SessionState, requested_pid: Option<u32>) -> Result<(), String> {
-    if matches!(kind, "process_priority" | "cpu_affinity" | "process_qos")
+    if matches!(kind, "process_priority" | "cpu_affinity" | "process_qos" | "process_isolation")
         && requested_pid.or(session.process_id).is_none()
     {
         return Err("Select a running game process before applying this tweak.".into());

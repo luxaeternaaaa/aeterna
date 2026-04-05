@@ -1,17 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   CircleHelp,
+  Clock3,
   Cpu,
   Crosshair,
   Gamepad2,
-  Layers,
   Keyboard,
+  Layers,
   MonitorSmartphone,
   MonitorUp,
+  Power,
   RotateCcw,
+  Search,
   ShieldAlert,
   SlidersHorizontal,
+  Usb,
   X,
   Zap,
 } from 'lucide-react'
@@ -31,7 +35,6 @@ import type {
 
 type ToolTab = 'system' | 'ram'
 type PresetMode = 'default' | 'high-performance' | 'custom'
-
 type DetailModalState = { cardId: string; kind: 'risk' | 'info' } | null
 
 interface OptimizationPageProps {
@@ -49,8 +52,12 @@ interface ToggleCard {
   description: string
   caution: string
   icon: LucideIcon
+  requiresReboot?: boolean
   action:
-    | { kind: 'tweak'; request: (processId: number | null, runtimeState: OptimizationRuntimeState) => ApplyTweakRequest | null }
+    | {
+        kind: 'tweak'
+        request: (processId: number | null, runtimeState: OptimizationRuntimeState) => ApplyTweakRequest | null
+      }
     | { kind: 'preset'; request: (processId: number | null) => ApplyRegistryPresetRequest | null }
   rollbackHint: (entry: { action: string; detail: string }) => boolean
 }
@@ -63,12 +70,25 @@ const ACTIVE_TWEAK_TO_CARD: Record<string, string> = {
   cpu_affinity: 'keep-cores',
   power_plan: 'ultimate-power',
   process_qos: 'process-qos-high',
+  process_isolation: 'process-isolation',
+  interrupt_affinity_lock: 'interrupt-affinity-lock',
+  disable_dynamic_ticks: 'disable-dynamic-ticks',
+  disable_hpet: 'disable-hpet',
+  timer_resolution_low: 'low-timer-resolution',
+  usb_selective_suspend_off: 'usb-selective-suspend-off',
+  pcie_lspm_off: 'pcie-lspm-off',
   'registry:mouse_precision_off': 'reduce-input-lag',
   'registry:game_capture_overhead_off': 'turn-off-recordings',
   'registry:game_mode_on': 'game-mode-on',
   'registry:power_throttling_off': 'power-throttling-off',
   'registry:windowed_optimizations_on': 'windowed-optimizations-on',
+  'registry:fullscreen_optimizations_off': 'fullscreen-optimizations-off',
   'registry:gpu_preference_high': 'gpu-preference-high',
+  'registry:hags_on': 'hags-on',
+  'registry:mpo_off': 'mpo-off',
+  'registry:sysmain_off': 'sysmain-off',
+  'registry:windows_search_off': 'windows-search-off',
+  'registry:dps_off': 'dps-off',
 }
 
 function hydrateSelection(runtimeState: OptimizationRuntimeState): Set<string> {
@@ -122,9 +142,9 @@ function ToggleSwitch({ active, onToggle }: { active: boolean; onToggle: (next: 
   return (
     <button
       aria-checked={active}
-      aria-label={active ? 'Disable tweak' : 'Enable tweak'}
+      aria-label={active ? 'Disable function' : 'Enable function'}
       className={`relative h-8 w-14 shrink-0 rounded-full transition ${
-        active ? 'bg-accent' : 'bg-surface-muted ring-1 ring-inset ring-border-strong/85'
+        active ? 'bg-[#3b82f6]' : 'bg-surface-muted ring-1 ring-inset ring-border-strong/85'
       } hover:opacity-90`}
       onClick={() => onToggle(!active)}
       role="switch"
@@ -166,7 +186,7 @@ function TweakCard({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <button
-          className="text-[13px] font-medium text-muted underline decoration-border-strong/60 underline-offset-4 hover:text-text"
+          className="text-[12px] font-medium text-muted underline decoration-border-strong/60 underline-offset-4 hover:text-text"
           onClick={() => onOpenRisk(card.id)}
           type="button"
         >
@@ -204,6 +224,7 @@ export function OptimizationPage({
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(selected.values())))
   }, [selected])
+
   useEffect(() => {
     persistSnapshotMap(snapshotMap)
   }, [snapshotMap])
@@ -215,17 +236,17 @@ export function OptimizationPage({
       {
         id: 'reduce-input-lag',
         title: 'Reduce input lag',
-        description: 'Disables Windows mouse acceleration.',
-        caution: 'Not recommended if you use non-RawInput aim muscle memory.',
+        description: 'Disables Windows mouse acceleration (Enhance Pointer Precision).',
+        caution: 'Not recommended if your aiming profile depends on Windows acceleration behavior.',
         icon: Crosshair,
         action: { kind: 'preset', request: (processId) => ({ preset_id: 'mouse_precision_off', process_id: processId ?? undefined }) },
-        rollbackHint: (entry) => entry.detail.toLowerCase().includes('disable mouse acceleration'),
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('mouse acceleration'),
       },
       {
         id: 'keep-cores',
         title: 'Keep all cores active',
-        description: 'Sets CPU affinity to all logical threads.',
-        caution: 'Not recommended if the game scales better with default scheduling.',
+        description: 'Sets game CPU affinity to all logical threads.',
+        caution: 'Not recommended for games that perform better with default Windows scheduler balancing.',
         icon: Cpu,
         action: {
           kind: 'tweak',
@@ -237,8 +258,8 @@ export function OptimizationPage({
       {
         id: 'max-games',
         title: 'Maximum performance for games',
-        description: 'Raises game process priority to High.',
-        caution: 'Not recommended if background apps must stay responsive.',
+        description: 'Raises selected game process priority to High.',
+        caution: 'Not recommended if streaming/recording apps must keep stable CPU access in parallel.',
         icon: Gamepad2,
         action: {
           kind: 'tweak',
@@ -249,8 +270,8 @@ export function OptimizationPage({
       {
         id: 'ultimate-power',
         title: 'Ultimate performance mode',
-        description: 'Switches active power plan to fastest available.',
-        caution: 'Not recommended on hot/noisy laptop profiles.',
+        description: 'Switches active power plan to Ultimate/High Performance.',
+        caution: 'Not recommended for laptops with strict thermals, battery mode, or acoustic limits.',
         icon: Zap,
         action: {
           kind: 'tweak',
@@ -268,8 +289,8 @@ export function OptimizationPage({
       {
         id: 'process-qos-high',
         title: 'Per-process QoS',
-        description: 'Applies High QoS to the game process.',
-        caution: 'Not recommended for battery mode or thermally limited systems.',
+        description: 'Removes process power-throttling for the selected game process.',
+        caution: 'Not recommended for low-power profiles where sustained clocks cause thermal throttling.',
         icon: Layers,
         action: {
           kind: 'tweak',
@@ -278,10 +299,22 @@ export function OptimizationPage({
         rollbackHint: (entry) => entry.action === 'Per-process QoS applied',
       },
       {
+        id: 'process-isolation',
+        title: 'Process isolation',
+        description: 'Pins the game to one thread per core (anti-SMT overlap preset).',
+        caution: 'Not recommended for CPU-heavy games that scale strongly with all logical threads.',
+        icon: Cpu,
+        action: {
+          kind: 'tweak',
+          request: (processId) => (processId ? { kind: 'process_isolation', process_id: processId } : null),
+        },
+        rollbackHint: (entry) => entry.action === 'Process isolation applied',
+      },
+      {
         id: 'turn-off-recordings',
         title: 'Turn off Game Bar recordings',
-        description: 'Disables Game DVR background capture.',
-        caution: 'Not recommended if instant clip recording is required.',
+        description: 'Disables Game DVR background capture flags.',
+        caution: 'Not recommended if you rely on instant replay or automatic gameplay clips.',
         icon: Keyboard,
         action: {
           kind: 'preset',
@@ -292,8 +325,8 @@ export function OptimizationPage({
       {
         id: 'game-mode-on',
         title: 'Force Game Mode on',
-        description: 'Forces Windows Game Mode to enabled.',
-        caution: 'Not recommended while heavy multitasking in parallel.',
+        description: 'Forces Windows Game Mode enabled for current user.',
+        caution: 'Not recommended when heavy non-game workloads run simultaneously on the same machine.',
         icon: SlidersHorizontal,
         action: { kind: 'preset', request: (processId) => ({ preset_id: 'game_mode_on', process_id: processId ?? undefined }) },
         rollbackHint: (entry) => entry.detail.toLowerCase().includes('game mode'),
@@ -301,8 +334,8 @@ export function OptimizationPage({
       {
         id: 'windowed-optimizations-on',
         title: 'Windowed optimizations',
-        description: 'Enables borderless/windowed DirectX optimizations.',
-        caution: 'Not recommended if a specific game gets new stutter after enabling.',
+        description: 'Enables borderless/windowed DirectX optimization path.',
+        caution: 'Not recommended if the specific game shows new frame pacing instability after enabling it.',
         icon: MonitorUp,
         action: {
           kind: 'preset',
@@ -311,10 +344,22 @@ export function OptimizationPage({
         rollbackHint: (entry) => entry.detail.toLowerCase().includes('windowed optimizations'),
       },
       {
+        id: 'fullscreen-optimizations-off',
+        title: 'Disable fullscreen optimizations',
+        description: 'Writes per-app compatibility flag to bypass fullscreen optimization layer.',
+        caution: 'Not recommended unless that exact game has proven fullscreen optimization regressions.',
+        icon: MonitorUp,
+        action: {
+          kind: 'preset',
+          request: (processId) => (processId ? { preset_id: 'fullscreen_optimizations_off', process_id: processId } : null),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('fullscreen optimizations'),
+      },
+      {
         id: 'gpu-preference-high',
         title: 'Per-app GPU preference',
-        description: 'Sets selected game to High performance GPU.',
-        caution: 'Not recommended on integrated-GPU-only systems.',
+        description: 'Sets selected game executable to High performance GPU preference.',
+        caution: 'Not recommended on iGPU-only systems or when dGPU power draw is a hard limit.',
         icon: MonitorSmartphone,
         action: {
           kind: 'preset',
@@ -325,14 +370,150 @@ export function OptimizationPage({
       {
         id: 'power-throttling-off',
         title: 'Turn off power throttling',
-        description: 'Disables machine-level power throttling policy.',
-        caution: 'Not recommended without admin rights and rollback plan.',
+        description: 'Disables machine-level PowerThrottling policy in registry.',
+        caution: 'Not recommended if you need balanced thermals and battery behavior outside gaming sessions.',
         icon: ShieldAlert,
         action: {
           kind: 'preset',
           request: (processId) => ({ preset_id: 'power_throttling_off', process_id: processId ?? undefined }),
         },
         rollbackHint: (entry) => entry.detail.toLowerCase().includes('power throttling'),
+      },
+      {
+        id: 'hags-on',
+        title: 'Enable HAGS',
+        description: 'Enables Hardware-accelerated GPU scheduling (HwSchMode=2).',
+        caution: 'Not recommended if your current GPU driver branch is unstable with HAGS on.',
+        icon: Zap,
+        requiresReboot: true,
+        action: {
+          kind: 'preset',
+          request: (processId) => ({ preset_id: 'hags_on', process_id: processId ?? undefined }),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('hardware-accelerated gpu scheduling'),
+      },
+      {
+        id: 'interrupt-affinity-lock',
+        title: 'Interrupt affinity lock',
+        description: 'Sets interrupt steering mode to lock routing in active power scheme.',
+        caution: 'Not recommended if system already shows DPC/ISR imbalance on current CPU topology.',
+        icon: Cpu,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'interrupt_affinity_lock' }),
+        },
+        rollbackHint: (entry) => entry.action === 'Interrupt affinity applied',
+      },
+      {
+        id: 'disable-hpet',
+        title: 'Deactivate HPET',
+        description: 'Sets boot option useplatformclock=false.',
+        caution: 'Not recommended if your platform timing stability depends on forced HPET mode.',
+        icon: Clock3,
+        requiresReboot: true,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'disable_hpet' }),
+        },
+        rollbackHint: (entry) => entry.action === 'HPET boot flag disabled',
+      },
+      {
+        id: 'disable-dynamic-ticks',
+        title: 'Disable Dynamic Ticks',
+        description: 'Sets boot option disabledynamictick=yes.',
+        caution: 'Not recommended on battery-first devices where idle power draw must stay minimal.',
+        icon: Clock3,
+        requiresReboot: true,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'disable_dynamic_ticks' }),
+        },
+        rollbackHint: (entry) => entry.action === 'Dynamic ticks disabled',
+      },
+      {
+        id: 'low-timer-resolution',
+        title: 'Lower timer resolution',
+        description: 'Requests minimum system timer resolution through NtSetTimerResolution.',
+        caution: 'Not recommended for long idle sessions because tighter timers increase wake-up frequency.',
+        icon: Clock3,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'low_timer_resolution' }),
+        },
+        rollbackHint: (entry) => entry.action === 'Timer resolution lowered',
+      },
+      {
+        id: 'mpo-off',
+        title: 'Disable MPO',
+        description: 'Sets DWM OverlayTestMode=5 to bypass Multiplane Overlay path.',
+        caution: 'Not recommended if your desktop/multimedia workflow currently relies on MPO behavior.',
+        icon: Layers,
+        requiresReboot: true,
+        action: {
+          kind: 'preset',
+          request: (processId) => ({ preset_id: 'mpo_off', process_id: processId ?? undefined }),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('multiplane overlay'),
+      },
+      {
+        id: 'usb-selective-suspend-off',
+        title: 'Disable USB selective suspend',
+        description: 'Sets USB selective suspend AC/DC indexes to Disabled.',
+        caution: 'Not recommended for battery-sensitive mobile devices with multiple USB peripherals.',
+        icon: Usb,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'usb_selective_suspend_off' }),
+        },
+        rollbackHint: (entry) => entry.action === 'USB selective suspend disabled',
+      },
+      {
+        id: 'pcie-lspm-off',
+        title: 'Disable PCIe LSPM',
+        description: 'Sets PCIe Link State Power Management AC/DC to Off.',
+        caution: 'Not recommended for systems where PCIe idle power savings are required.',
+        icon: Power,
+        action: {
+          kind: 'tweak',
+          request: () => ({ kind: 'pcie_lspm_off' }),
+        },
+        rollbackHint: (entry) => entry.action === 'PCIe LSPM disabled',
+      },
+      {
+        id: 'sysmain-off',
+        title: 'Disable SysMain service',
+        description: 'Disables SysMain startup and sends stop command.',
+        caution: 'Not recommended if your workload benefits from aggressive prefetch caching behavior.',
+        icon: Cpu,
+        action: {
+          kind: 'preset',
+          request: (processId) => ({ preset_id: 'sysmain_off', process_id: processId ?? undefined }),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('sysmain'),
+      },
+      {
+        id: 'windows-search-off',
+        title: 'Disable Windows Search service',
+        description: 'Disables WSearch startup and sends stop command.',
+        caution: 'Not recommended if you rely on real-time indexed search across large local datasets.',
+        icon: Search,
+        action: {
+          kind: 'preset',
+          request: (processId) => ({ preset_id: 'windows_search_off', process_id: processId ?? undefined }),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('windows search'),
+      },
+      {
+        id: 'dps-off',
+        title: 'Disable Diagnostic Policy Service',
+        description: 'Disables DPS startup and sends stop command.',
+        caution: 'Not recommended if you need built-in Windows troubleshooting diagnostics during sessions.',
+        icon: ShieldAlert,
+        action: {
+          kind: 'preset',
+          request: (processId) => ({ preset_id: 'dps_off', process_id: processId ?? undefined }),
+        },
+        rollbackHint: (entry) => entry.detail.toLowerCase().includes('diagnostic policy service'),
       },
     ],
     [],
@@ -358,8 +539,26 @@ export function OptimizationPage({
       })
       return runtimeState.detected_game.pid
     }
-    setStatusText(`Cannot apply "${card.title}": game process is not selected.`)
+    setStatusText(`Cannot apply "${card.title}": select or attach a game process first.`)
     return null
+  }
+
+  const buildTweakRequest = async (card: ToggleCard): Promise<ApplyTweakRequest | null> => {
+    let request = card.action.kind === 'tweak' ? card.action.request(null, runtimeState) : null
+    if (request) return request
+    const processId = await ensureProcessId(card)
+    if (!processId) return null
+    request = card.action.kind === 'tweak' ? card.action.request(processId, runtimeState) : null
+    return request
+  }
+
+  const buildPresetRequest = async (card: ToggleCard): Promise<ApplyRegistryPresetRequest | null> => {
+    let request = card.action.kind === 'preset' ? card.action.request(null) : null
+    if (request) return request
+    const processId = await ensureProcessId(card)
+    if (!processId) return null
+    request = card.action.kind === 'preset' ? card.action.request(processId) : null
+    return request
   }
 
   const toggleCard = async (card: ToggleCard, next: boolean) => {
@@ -367,22 +566,24 @@ export function OptimizationPage({
     setStatusText(null)
     try {
       if (next) {
-        const processId = await ensureProcessId(card)
         if (card.action.kind === 'tweak') {
-          const request = card.action.request(processId, runtimeState)
+          const request = await buildTweakRequest(card)
           if (!request) {
-            setStatusText(`Cannot apply "${card.title}": required runtime target not available.`)
+            setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
             return
           }
           const result = await onApplyTweak(request)
           setSelected((current) => new Set(current).add(card.id))
           setSnapshotMap((current) => ({ ...current, [card.id]: result.snapshot.id }))
+          if (card.requiresReboot) {
+            setStatusText(`${card.title} applied. Restart Windows to finalize.`)
+          }
           return
         }
 
-        const request = card.action.request(processId)
+        const request = await buildPresetRequest(card)
         if (!request) {
-          setStatusText(`Cannot apply "${card.title}": required runtime target not available.`)
+          setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
           return
         }
         const result = await onApplyRegistryPreset(request)
@@ -394,6 +595,9 @@ export function OptimizationPage({
         if (snapshotId) {
           setSelected((current) => new Set(current).add(card.id))
           setSnapshotMap((current) => ({ ...current, [card.id]: snapshotId }))
+          if (card.requiresReboot) {
+            setStatusText(`${card.title} applied. Restart Windows to finalize.`)
+          }
           return
         }
         setStatusText(`Preset "${card.title}" applied without rollback snapshot.`)
@@ -425,12 +629,64 @@ export function OptimizationPage({
         delete nextMap[card.id]
         return nextMap
       })
+      if (card.requiresReboot) {
+        setStatusText(`${card.title} reverted. Restart Windows to restore boot/driver behavior.`)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Action failed.'
       setStatusText(message)
     } finally {
       setBusyCardId(null)
     }
+  }
+
+  const revertAllEnabled = async () => {
+    if (busyCardId) return
+    const activeCards = cards.filter((card) => selected.has(card.id))
+    if (activeCards.length === 0) {
+      setStatusText('No enabled functions to revert.')
+      return
+    }
+
+    setBusyCardId('revert-all')
+    setStatusText(null)
+
+    const nextSelected = new Set(selected)
+    const nextSnapshotMap = { ...snapshotMap }
+    const failed: string[] = []
+    let revertedCount = 0
+    let rebootNotice = false
+
+    for (const card of activeCards) {
+      const snapshotId = nextSnapshotMap[card.id] ?? resolveRuntimeSnapshot(card)
+      if (!snapshotId) {
+        nextSelected.delete(card.id)
+        delete nextSnapshotMap[card.id]
+        continue
+      }
+      try {
+        await onRollbackSnapshot(snapshotId, runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? undefined)
+        nextSelected.delete(card.id)
+        delete nextSnapshotMap[card.id]
+        revertedCount += 1
+        if (card.requiresReboot) rebootNotice = true
+      } catch {
+        failed.push(card.title)
+      }
+    }
+
+    setSelected(nextSelected)
+    setSnapshotMap(nextSnapshotMap)
+
+    if (failed.length > 0) {
+      setStatusText(`Reverted ${revertedCount} function(s). Failed: ${failed.join(', ')}.`)
+    } else if (rebootNotice) {
+      setStatusText(`Reverted ${revertedCount} function(s). Restart Windows to finalize restored boot/driver flags.`)
+    } else {
+      setStatusText(`Reverted ${revertedCount} function(s).`)
+    }
+
+    setBusyCardId(null)
   }
 
   return (
@@ -461,7 +717,7 @@ export function OptimizationPage({
             <div className="rounded-[1.1rem] border border-border/60 bg-surface px-4 py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-[2rem] font-semibold tracking-tight text-text">Optimization</h2>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {[
                     { id: 'default', label: 'Default' },
                     { id: 'high-performance', label: 'High performance' },
@@ -480,6 +736,17 @@ export function OptimizationPage({
                       {item.label}
                     </button>
                   ))}
+                  <button
+                    className="inline-flex items-center rounded-xl border border-border/70 bg-surface-muted/60 px-4 py-2 text-sm font-semibold text-text transition hover:bg-hover disabled:opacity-50"
+                    disabled={busyCardId !== null || selected.size === 0}
+                    onClick={() => {
+                      void revertAllEnabled()
+                    }}
+                    type="button"
+                  >
+                    <RotateCcw size={14} />
+                    <span className="ml-2">Revert All Functions</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -544,7 +811,7 @@ export function OptimizationPage({
           <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-float">
             <div className="flex items-center justify-between border-b border-border/70 px-6 py-5">
               <h3 className="text-lg font-semibold tracking-tight text-muted">
-                {detailModal.kind === 'risk' ? 'Not recommended if...' : 'What this tweak does'}
+                {detailModal.kind === 'risk' ? 'Not recommended if...' : 'What this function changes'}
               </h3>
               <button
                 aria-label="Close details modal"

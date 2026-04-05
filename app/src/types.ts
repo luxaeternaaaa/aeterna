@@ -344,7 +344,18 @@ export interface OptimizationRuntimeState {
 }
 
 export interface ApplyTweakRequest {
-  kind: 'process_priority' | 'cpu_affinity' | 'power_plan' | 'process_qos'
+  kind:
+    | 'process_priority'
+    | 'cpu_affinity'
+    | 'power_plan'
+    | 'process_qos'
+    | 'process_isolation'
+    | 'interrupt_affinity_lock'
+    | 'disable_dynamic_ticks'
+    | 'disable_hpet'
+    | 'low_timer_resolution'
+    | 'usb_selective_suspend_off'
+    | 'pcie_lspm_off'
   process_id?: number
   priority?: 'above_normal' | 'high'
   affinity_preset?: 'all_threads' | 'balanced_threads' | 'one_thread_per_core'

@@ -154,6 +154,101 @@ fn catalog() -> Vec<RegistryPreset> {
                 target_value: RegistryValueData::Sz("SwapEffectUpgradeEnable=1;".into()),
             }],
         },
+        RegistryPreset {
+            id: "hags_on",
+            title: "Enable Hardware-accelerated GPU scheduling",
+            category: "graphics",
+            risk: "medium",
+            requires_admin: true,
+            requires_baseline: false,
+            expected_benefit: "Moves GPU scheduling overhead from CPU to GPU hardware scheduler.",
+            current_state_label: "HAGS follows the current machine graphics scheduler policy.",
+            target_state_label: "HAGS is enabled (HwSchMode=2).",
+            scope: "machine-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hklm,
+                path: r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers",
+                value_name: "HwSchMode",
+                value_type: RegistryValueType::RegDword,
+                target_value: RegistryValueData::Dword(2),
+            }],
+        },
+        RegistryPreset {
+            id: "mpo_off",
+            title: "Disable Multiplane Overlay (MPO)",
+            category: "graphics",
+            risk: "medium",
+            requires_admin: true,
+            requires_baseline: false,
+            expected_benefit: "Bypasses MPO composition path that can cause flicker/stutter on some drivers.",
+            current_state_label: "MPO follows the current DWM policy.",
+            target_state_label: "MPO test mode is forced off.",
+            scope: "machine-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hklm,
+                path: r"SOFTWARE\Microsoft\Windows\Dwm",
+                value_name: "OverlayTestMode",
+                value_type: RegistryValueType::RegDword,
+                target_value: RegistryValueData::Dword(5),
+            }],
+        },
+        RegistryPreset {
+            id: "sysmain_off",
+            title: "Disable SysMain service startup",
+            category: "services",
+            risk: "medium",
+            requires_admin: true,
+            requires_baseline: false,
+            expected_benefit: "Reduces background memory/disk prefetch activity.",
+            current_state_label: "SysMain startup follows current machine service policy.",
+            target_state_label: "SysMain startup is disabled.",
+            scope: "machine-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hklm,
+                path: r"SYSTEM\CurrentControlSet\Services\SysMain",
+                value_name: "Start",
+                value_type: RegistryValueType::RegDword,
+                target_value: RegistryValueData::Dword(4),
+            }],
+        },
+        RegistryPreset {
+            id: "windows_search_off",
+            title: "Disable Windows Search service startup",
+            category: "services",
+            risk: "medium",
+            requires_admin: true,
+            requires_baseline: false,
+            expected_benefit: "Reduces indexing-related CPU and disk activity.",
+            current_state_label: "Windows Search startup follows current service policy.",
+            target_state_label: "Windows Search startup is disabled.",
+            scope: "machine-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hklm,
+                path: r"SYSTEM\CurrentControlSet\Services\WSearch",
+                value_name: "Start",
+                value_type: RegistryValueType::RegDword,
+                target_value: RegistryValueData::Dword(4),
+            }],
+        },
+        RegistryPreset {
+            id: "dps_off",
+            title: "Disable Diagnostic Policy Service startup",
+            category: "services",
+            risk: "high",
+            requires_admin: true,
+            requires_baseline: false,
+            expected_benefit: "Removes diagnostics service runtime overhead.",
+            current_state_label: "Diagnostic Policy Service startup follows current service policy.",
+            target_state_label: "Diagnostic Policy Service startup is disabled.",
+            scope: "machine-scope",
+            mutations: vec![RegistryMutation {
+                hive: RegistryHive::Hklm,
+                path: r"SYSTEM\CurrentControlSet\Services\DPS",
+                value_name: "Start",
+                value_type: RegistryValueType::RegDword,
+                target_value: RegistryValueData::Dword(4),
+            }],
+        },
     ]
 }
 
@@ -422,6 +517,7 @@ pub fn build_snapshot(preset_id: &str, session_id: Option<String>) -> Result<Twe
         requires_admin: preset.requires_admin,
         applied_at: None,
         restored_at: None,
+        extra: serde_json::Value::Null,
     })
 }
 
@@ -467,6 +563,49 @@ pub fn build_gpu_preference_snapshot(
         requires_admin: false,
         applied_at: None,
         restored_at: None,
+        extra: serde_json::Value::Null,
+    })
+}
+
+pub fn build_fullscreen_optimizations_snapshot(
+    process_path: &str,
+    session_id: Option<String>,
+) -> Result<TweakSnapshot, String> {
+    let hive = RegistryHive::Hkcu;
+    let path = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+    let value_type = RegistryValueType::RegSz;
+    let target_value = RegistryValueData::Sz("~ DISABLEDXMAXIMIZEDWINDOWEDMODE".into());
+    let existing = query_value_dynamic(&hive, path, process_path, &value_type)?;
+    let entry = RegistrySnapshotEntry {
+        hive,
+        path: path.into(),
+        value_name: process_path.into(),
+        value_type,
+        old_value: existing.clone(),
+        existed_before: existing.is_some(),
+        target_value,
+    };
+    Ok(TweakSnapshot {
+        id: format!(
+            "{}-fullscreen-opt-off",
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+        ),
+        kind: "registry-preset".into(),
+        created_at: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("current utc time should format as rfc3339"),
+        note: format!("Before disabling fullscreen optimizations for {process_path}"),
+        scope: "session".into(),
+        session_id,
+        process: None,
+        power_plan_guid: None,
+        power_plan_name: None,
+        registry_preset_id: Some("fullscreen_optimizations_off".into()),
+        registry_entries: vec![entry],
+        requires_admin: false,
+        applied_at: None,
+        restored_at: None,
+        extra: serde_json::Value::Null,
     })
 }
 

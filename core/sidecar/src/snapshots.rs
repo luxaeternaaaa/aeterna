@@ -100,6 +100,7 @@ pub fn next_snapshot(kind: &str, note: String, process: Option<crate::models::Pr
         requires_admin: false,
         applied_at: None,
         restored_at: None,
+        extra: serde_json::Value::Null,
     }
 }
 

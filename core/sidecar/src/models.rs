@@ -335,8 +335,14 @@ pub struct TweakSnapshot {
     pub applied_at: Option<String>,
     #[serde(default)]
     pub restored_at: Option<String>,
+    #[serde(default = "default_extra")]
+    pub extra: serde_json::Value,
 }
 
 fn default_scope() -> String {
     "session".into()
+}
+
+fn default_extra() -> serde_json::Value {
+    serde_json::Value::Null
 }
