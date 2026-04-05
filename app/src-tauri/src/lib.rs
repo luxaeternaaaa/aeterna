@@ -54,6 +54,27 @@ fn is_main_window_maximized(app: tauri::AppHandle) -> Result<bool, String> {
     window.is_maximized().map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn restart_windows() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let status = Command::new("shutdown")
+            .args(["/r", "/t", "0"])
+            .status()
+            .map_err(|error| format!("Failed to request restart: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Windows restart request failed.".into())
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("System restart is only supported on Windows.".into())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup = StartupState::default();
@@ -81,7 +102,8 @@ pub fn run() {
             minimize_main_window,
             toggle_maximize_main_window,
             close_main_window,
-            is_main_window_maximized
+            is_main_window_maximized,
+            restart_windows
         ])
         .setup(|app| {
             let handle = app.handle().clone();

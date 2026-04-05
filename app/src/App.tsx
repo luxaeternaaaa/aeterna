@@ -142,7 +142,7 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>(cache?.bootstrap?.last_snapshot_meta ? [cache.bootstrap.last_snapshot_meta] : [])
   const [security, setSecurity] = useState<SecuritySummary>(initialSecurity)
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
-  const [session, setSession] = useState(cache?.bootstrap?.session ?? initialOptimizationRuntime.session)
+  const [, setSession] = useState(cache?.bootstrap?.session ?? initialOptimizationRuntime.session)
   const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null)
   const [realtime, setRealtime] = useState<TelemetryPoint | null>(cache?.dashboard?.history.at(-1) ?? null)
   const [diffText, setDiffText] = useState('')
@@ -573,38 +573,17 @@ export default function App() {
     }
     return (
       <DashboardPage
-        benchmarkBaseline={benchmarkBaseline}
-        benchmarkBusy={benchmarkBusy}
         dashboard={dashboard}
-        lastTweakAtMs={lastTweakAtMs}
-        latestBenchmark={latestBenchmark}
-        onAttachSession={(request) => void attachSession(request)}
-        onCaptureBaseline={() => void captureBaseline()}
-        onClearSessionSelection={() => {
-          setSelectedProcessId(null)
-          void loadOptimizationRuntime(undefined)
-        }}
-        onEndSession={() => void endOptimizationSession().then((nextState) => {
-          setOptimizationRuntime(nextState)
-          setSession(nextState.session)
-          setLastTweakAtMs(null)
-          setLoaded((current) => ({ ...current, optimizationRuntime: true }))
-        })}
+        onApplyRegistryPreset={applySystemPreset}
+        onApplyTweak={applySessionTweak}
+        onAttachSession={attachSession}
         onOpenLogs={() => setActivePage('history')}
         onOpenOptimization={() => setActivePage('optimize')}
-        onOpenSettings={() => setActivePage('settings')}
-        onRefresh={(processId) => void loadOptimizationRuntime(processId)}
-        onRunBenchmark={(profileId) => void runBenchmark(profileId)}
-        onSelectProcess={(processId) => {
-          setSelectedProcessId(processId)
-          void loadOptimizationRuntime(processId)
-        }}
-        onStopSession={() => void stopSessionWithRollback()}
+        onOpenTests={() => setActivePage('tests')}
+        onRollbackSnapshot={rollbackSnapshot}
         profiles={profiles}
         realtime={realtime}
         runtimeState={optimizationRuntime}
-        session={session}
-        stopBusy={stopBusy}
       />
     )
   }

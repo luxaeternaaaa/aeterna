@@ -132,3 +132,8 @@ export async function getMlRuntimeTruth(): Promise<MlRuntimeTruth | null> {
     return null
   }
 }
+
+export async function requestWindowsRestart(): Promise<void> {
+  if (!isTauriRuntime()) return
+  await invoke('restart_windows')
+}
