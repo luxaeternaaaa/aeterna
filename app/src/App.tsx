@@ -149,8 +149,6 @@ export default function App() {
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
-  const [lastTweakAtMs, setLastTweakAtMs] = useState<number | null>(null)
-  const [stopBusy, setStopBusy] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
@@ -368,21 +366,6 @@ export default function App() {
     await loadSettingsData()
   }
 
-  const updateAutomationAllowlist = async (action: 'process_priority' | 'cpu_affinity' | 'power_plan', enabled: boolean) => {
-    const defaultAllowlist: Array<'process_priority' | 'cpu_affinity' | 'power_plan'> = [
-      'process_priority',
-      'cpu_affinity',
-      'power_plan',
-    ]
-    const currentAllowlist =
-      settings.automation_allowlist.length > 0 ? settings.automation_allowlist : defaultAllowlist
-    const next = enabled
-      ? Array.from(new Set([...currentAllowlist, action]))
-      : currentAllowlist.filter((item) => item !== action)
-    await api.updateSystem({ ...settings, automation_allowlist: next })
-    await loadSettingsData()
-  }
-
   const updateAdvancedRegistryDetails = async (enabled: boolean) => {
     await api.updateSystem({ ...settings, show_advanced_registry_details: enabled })
     await loadSettingsData()
@@ -393,44 +376,6 @@ export default function App() {
   const restoreSnapshot = async (id: string) => {
     await api.restoreSnapshot(id)
     await loadSettingsData()
-  }
-
-  const stopSessionWithRollback = async () => {
-    if (stopBusy) return
-    setStopBusy(true)
-    try {
-      const currentProcessId = selectedProcessId ?? optimizationRuntime.session.process_id ?? undefined
-      const snapshotIds = Array.from(
-        new Set([
-          ...optimizationRuntime.session.active_snapshot_ids,
-          ...optimizationRuntime.activity.filter((entry) => entry.can_undo && entry.snapshot_id).map((entry) => entry.snapshot_id ?? ''),
-        ]),
-      )
-        .filter((id) => id.length > 0)
-        .reverse()
-
-      let nextState = optimizationRuntime
-      for (const snapshotId of snapshotIds) {
-        try {
-          const result = await rollbackOptimizationTweak(snapshotId, currentProcessId)
-          nextState = result.state
-        } catch {
-          // Continue rollback attempts for remaining snapshots.
-        }
-      }
-
-      const ended = await endOptimizationSession()
-      setOptimizationRuntime(ended)
-      setSession(ended.session)
-      setLastTweakAtMs(null)
-      await loadBenchmarkState()
-      setLoaded((current) => ({ ...current, optimizationRuntime: true }))
-      if (nextState.session.state === 'active' && ended.session.state === 'active') {
-        // keep linter-silencing path explicit when runtime refuses to end
-      }
-    } finally {
-      setStopBusy(false)
-    }
   }
 
   const captureBaseline = async () => {
@@ -477,7 +422,6 @@ export default function App() {
     const result = await applyOptimizationTweak(request)
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
-    setLastTweakAtMs(Date.now())
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     return result
   }
@@ -486,7 +430,6 @@ export default function App() {
     const result = await applyRegistryPreset(request)
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
-    setLastTweakAtMs(Date.now())
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     return result
   }
@@ -506,32 +449,34 @@ export default function App() {
         <TestsPage
           benchmarkBaseline={benchmarkBaseline}
           benchmarkBusy={benchmarkBusy}
-          lastTweakAtMs={lastTweakAtMs}
           latestBenchmark={latestBenchmark}
-          onAttachSession={(request) => void attachSession(request)}
-          onCaptureBaseline={() => void captureBaseline()}
+          onApplyRegistryPreset={applySystemPreset}
+          onApplyTweak={applySessionTweak}
+          onAttachSession={attachSession}
+          onCaptureBaseline={captureBaseline}
           onClearSessionSelection={() => {
             setSelectedProcessId(null)
             void loadOptimizationRuntime(undefined)
           }}
-          onEndSession={() => void endOptimizationSession().then((nextState) => {
-            setOptimizationRuntime(nextState)
-            setSession(nextState.session)
-            setLastTweakAtMs(null)
-            setLoaded((current) => ({ ...current, optimizationRuntime: true }))
-          })}
+          onEndSession={() =>
+            void endOptimizationSession().then((nextState) => {
+              setOptimizationRuntime(nextState)
+              setSession(nextState.session)
+              setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+            })
+          }
           onOpenLogs={() => setActivePage('history')}
           onOpenSettings={() => setActivePage('settings')}
           onRefresh={(processId) => void loadOptimizationRuntime(processId)}
-          onRunBenchmark={(profileId) => void runBenchmark(profileId)}
+          onRollbackSnapshot={rollbackSnapshot}
+          onRunBenchmark={runBenchmark}
           onSelectProcess={(processId) => {
             setSelectedProcessId(processId)
             void loadOptimizationRuntime(processId)
           }}
-          onStopSession={() => void stopSessionWithRollback()}
           profiles={profiles}
+          realtime={realtime}
           runtimeState={optimizationRuntime}
-          stopBusy={stopBusy}
         />
       )
     }
@@ -547,7 +492,7 @@ export default function App() {
         />
       )
     }
-    if (activePage === 'safety') return <SecurityPage security={security} />
+    if (activePage === 'safety') return <SecurityPage onClose={() => setActivePage('home')} onVerify={() => loadSecurity()} security={security} />
     if (activePage === 'history') return <LogsPage activity={optimizationRuntime.activity} logs={logs} onOpenOptimization={() => setActivePage('optimize')} />
     if (activePage === 'settings') {
       return (
@@ -557,7 +502,6 @@ export default function App() {
           featureFlags={featureFlags}
           onInspectSnapshot={(id) => void inspectSnapshot(id)}
           onRestoreSnapshot={(id) => void restoreSnapshot(id)}
-          onUpdateAutomationAllowlist={(action, enabled) => void updateAutomationAllowlist(action, enabled)}
           onUpdateAutomationMode={(mode) => void updateAutomationMode(mode)}
           onUpdateAdvancedRegistryDetails={(enabled) => void updateAdvancedRegistryDetails(enabled)}
           onToggleFlag={(key, value) => requestFlagChange(key, value)}

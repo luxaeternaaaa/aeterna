@@ -40,7 +40,7 @@ def get_detected_game() -> DetectedGame | None:
         exe_name=session.detected_candidate_name,
         pid=session.detected_candidate_pid,
         observed_for_ms=3000,
-        capture_available=session.capture_source == "presentmon" or session.capture_reason is None,
+        capture_available=True,
         recommended_profile_id=session.recommended_profile_id,
         reason=session.capture_reason or "Stable foreground candidate is ready for manual attach.",
     )
@@ -52,7 +52,7 @@ def get_capture_status() -> CaptureStatus:
         source=session.capture_source,
         available=True,
         quality=session.capture_quality,
-        helper_available=session.capture_source == "presentmon" or session.capture_reason is None,
+        helper_available=False,
         note=session.capture_reason,
     )
 

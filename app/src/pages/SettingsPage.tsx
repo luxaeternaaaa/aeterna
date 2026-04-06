@@ -1,8 +1,12 @@
+﻿import { useState } from 'react'
+
 import type { BuildMetadata, FeatureFlags, SnapshotRecord, StartupDiagnostics, SystemSettings } from '../types'
 import { Panel } from '../components/Panel'
-import { ToggleRow } from '../components/ToggleRow'
-import { stateCopy } from '../lib/stateCopy'
-import { formatTimestamp } from '../lib/time'
+import {
+  loadMlDenyFunctionList,
+  OPTIMIZATION_FUNCTIONS,
+  saveMlDenyFunctionList,
+} from '../lib/optimizationFunctions'
 
 interface SettingsPageProps {
   build: BuildMetadata
@@ -11,7 +15,6 @@ interface SettingsPageProps {
   onInspectSnapshot: (id: string) => void
   onRestoreSnapshot: (id: string) => void
   onUpdateAdvancedRegistryDetails: (enabled: boolean) => void
-  onUpdateAutomationAllowlist: (action: 'process_priority' | 'cpu_affinity' | 'power_plan', enabled: boolean) => void
   onUpdateAutomationMode: (mode: SystemSettings['automation_mode']) => void
   onToggleFlag: (key: keyof FeatureFlags, value: boolean) => void
   onUpdateTheme: (theme: 'dark' | 'light') => void
@@ -23,175 +26,91 @@ interface SettingsPageProps {
   theme: 'dark' | 'light'
 }
 
-function buildSummary(build: BuildMetadata) {
-  if (!build.build_timestamp) return stateCopy.buildPending
-  return `v${build.version} | Runtime schema ${build.runtime_schema_version} | Sidecar ${build.sidecar_protocol_version} | Built ${formatTimestamp(build.build_timestamp, 'Build time not recorded')}`
-}
-
 export function SettingsPage(props: SettingsPageProps) {
   const {
-    build,
-    diffText,
-    featureFlags,
-    onInspectSnapshot,
-    onRestoreSnapshot,
-    onUpdateAdvancedRegistryDetails,
-    onToggleFlag,
-    onUpdateAutomationAllowlist,
-    onUpdateAutomationMode,
-    onUpdateProfile,
-    onUpdateTheme,
-    onUpdateTelemetryMode,
-    settings,
-    snapshots,
-    startupDiagnostics,
-    theme,
+    build: _build,
+    diffText: _diffText,
+    featureFlags: _featureFlags,
+    onInspectSnapshot: _onInspectSnapshot,
+    onRestoreSnapshot: _onRestoreSnapshot,
+    onUpdateAdvancedRegistryDetails: _onUpdateAdvancedRegistryDetails,
+    onToggleFlag: _onToggleFlag,
+    onUpdateAutomationMode: _onUpdateAutomationMode,
+    onUpdateProfile: _onUpdateProfile,
+    onUpdateTheme: _onUpdateTheme,
+    onUpdateTelemetryMode: _onUpdateTelemetryMode,
+    settings: _settings,
+    snapshots: _snapshots,
+    startupDiagnostics: _startupDiagnostics,
+    theme: _theme,
   } = props
 
-  const approvedAutomationDefaults: Array<'process_priority' | 'cpu_affinity' | 'power_plan'> = [
-    'process_priority',
-    'cpu_affinity',
-    'power_plan',
-  ]
-  const effectiveAllowlist =
-    settings.automation_allowlist.length > 0 ? settings.automation_allowlist : approvedAutomationDefaults
+  const [denyListOpen, setDenyListOpen] = useState(false)
+  const [denyList, setDenyList] = useState<Set<string>>(() => loadMlDenyFunctionList())
+
+  const toggleDeniedFunction = (functionId: string, denied: boolean) => {
+    setDenyList((current) => {
+      const next = new Set(current)
+      if (denied) next.add(functionId)
+      else next.delete(functionId)
+      saveMlDenyFunctionList(next)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-5">
-      <Panel title="Approved automations" variant="secondary">
-        <div className="grid gap-3 xl:grid-cols-2">
-          <ToggleRow
-            checked={effectiveAllowlist.includes('process_priority')}
-            label="Priority changes"
-            onChange={(next) => onUpdateAutomationAllowlist('process_priority', next)}
-          />
-          <ToggleRow
-            checked={effectiveAllowlist.includes('cpu_affinity')}
-            label="CPU affinity"
-            onChange={(next) => onUpdateAutomationAllowlist('cpu_affinity', next)}
-          />
-          <ToggleRow
-            checked={effectiveAllowlist.includes('power_plan')}
-            label="Power plan changes"
-            onChange={(next) => onUpdateAutomationAllowlist('power_plan', next)}
-          />
+      <Panel title="ML Automation Rules" variant="secondary">
+        <div className="surface-card flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-text">Deny Function List</p>
+            <p className="mt-1 text-sm text-text/85">Blocked for auto-ML: {denyList.size} of {OPTIMIZATION_FUNCTIONS.length}</p>
+          </div>
+          <button className="button-secondary" onClick={() => setDenyListOpen(true)} type="button">
+            Open Deny Function List
+          </button>
         </div>
       </Panel>
 
-      <div className="grid gap-5">
-        <Panel title="Advanced" variant="secondary">
-          <div className="space-y-4">
-            <div className="grid gap-3 xl:grid-cols-2">
-              <ToggleRow
-                checked={featureFlags.anomaly_detection}
-                label="Anomaly detection"
-                onChange={(next) => onToggleFlag('anomaly_detection', next)}
-              />
-              <ToggleRow
-                checked={featureFlags.auto_security_scan}
-                label="Automatic safety review"
-                onChange={(next) => onToggleFlag('auto_security_scan', next)}
-              />
-              <ToggleRow
-                checked={settings.show_advanced_registry_details}
-                label="Show advanced registry details"
-                onChange={onUpdateAdvancedRegistryDetails}
-              />
+      {denyListOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4">
+          <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-float">
+            <div className="flex items-center justify-between border-b border-border/70 px-6 py-5">
+              <h3 className="text-lg font-semibold tracking-tight text-text">
+                Deny Function List ({denyList.size} blocked)
+              </h3>
+              <button className="button-secondary px-3 py-2" onClick={() => setDenyListOpen(false)} type="button">
+                Close
+              </button>
             </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="surface-card text-sm text-muted">
-                <span className="block text-sm font-medium text-text">Telemetry mode</span>
-                <select
-                  className="input-shell mt-2"
-                  onChange={(event) => onUpdateTelemetryMode(event.target.value as SystemSettings['telemetry_mode'])}
-                  value={settings.telemetry_mode}
-                >
-                  <option value="demo">Demo</option>
-                  <option value="live">Live</option>
-                  <option value="disabled">Disabled</option>
-                </select>
-              </label>
-
-              <label className="surface-card text-sm text-muted">
-                <span className="block text-sm font-medium text-text">Automation mode</span>
-                <select
-                  className="input-shell mt-2"
-                  onChange={(event) => onUpdateAutomationMode(event.target.value as SystemSettings['automation_mode'])}
-                  value={settings.automation_mode}
-                >
-                  <option value="manual">Manual</option>
-                  <option value="assisted">Assisted</option>
-                  <option value="trusted_profiles">Trusted profiles</option>
-                </select>
-              </label>
-
-              <label className="surface-card text-sm text-muted">
-                <span className="block text-sm font-medium text-text">Theme</span>
-                <select className="input-shell mt-2" onChange={(event) => onUpdateTheme(event.target.value as 'dark' | 'light')} value={theme}>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </label>
-
-              <label className="surface-card text-sm text-muted">
-                <span className="block text-sm font-medium text-text">Profile</span>
-                <select className="input-shell mt-2" onChange={(event) => onUpdateProfile(event.target.value)} value={settings.active_profile}>
-                  <option value="balanced">Balanced</option>
-                  <option value="competitive">Competitive</option>
-                  <option value="quiet">Quiet</option>
-                </select>
-              </label>
+            <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+              <div className="grid gap-2 md:grid-cols-2">
+                {OPTIMIZATION_FUNCTIONS.map((item) => {
+                  const blocked = denyList.has(item.id)
+                  return (
+                    <label key={item.id} className="rounded-xl border border-border/65 bg-surface-muted px-4 py-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-text">{item.title}</p>
+                          <p className="mt-1 text-text/85">{item.description}</p>
+                        </div>
+                        <div className="mt-1 text-right">
+                          <input
+                            checked={blocked}
+                            onChange={(event) => toggleDeniedFunction(item.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                          <p className="mt-1 text-xs text-text/85">Block for auto-ML</p>
+                        </div>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
             </div>
           </div>
-        </Panel>
-      </div>
-
-      <div className="grid items-start gap-5 xl:grid-cols-[0.92fr_1.08fr]">
-        <Panel title="Diagnostics" variant="secondary">
-          <div className="space-y-3">
-            <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Build</p>
-              <p className="mt-3 text-sm leading-6 text-muted">{buildSummary(build)}</p>
-            </div>
-
-            <div className="surface-card">
-              <p className="text-xs uppercase tracking-[0.18em] text-muted">Startup diagnostics</p>
-              <p className="mt-3 text-sm leading-6 text-muted">
-                {startupDiagnostics
-                  ? `Launch ${formatTimestamp(startupDiagnostics.launch_started_at, 'not recorded')} | Window ${formatTimestamp(startupDiagnostics.window_visible_at, 'not recorded')} | Sidecar ${formatTimestamp(startupDiagnostics.sidecar_ready_at, 'not recorded')} | Backend ${formatTimestamp(startupDiagnostics.backend_ready_at, 'not recorded')}`
-                  : 'Startup diagnostics are still loading.'}
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              {snapshots.length === 0 ? <div className="surface-card text-sm text-muted">{stateCopy.noConfigSnapshots}</div> : null}
-              {snapshots.map((snapshot) => (
-                <div key={snapshot.id} className="summary-card">
-                  <p className="text-sm font-semibold tracking-tight text-text">{snapshot.note}</p>
-                  <p className="mt-1 text-sm text-muted">
-                    {snapshot.surface ?? 'config'} snapshot | {snapshot.kind} | {formatTimestamp(snapshot.created_at)}
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    <button className="button-secondary" onClick={() => onInspectSnapshot(snapshot.id)} type="button">
-                      Inspect
-                    </button>
-                    <button className="button-secondary" onClick={() => onRestoreSnapshot(snapshot.id)} type="button">
-                      Restore
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="Snapshot details" variant="secondary">
-          <pre className="h-[22rem] overflow-auto rounded-[1.35rem] bg-surface px-4 py-4 text-xs leading-6 text-muted ring-1 ring-inset ring-border/60">
-            {diffText || stateCopy.noSnapshot}
-          </pre>
-        </Panel>
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }

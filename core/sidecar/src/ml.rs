@@ -110,10 +110,34 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         .weights
         .iter()
         .fold(metadata.intercept, |acc, (key, weight)| acc + feature_value(&payload, key) * weight);
-    let spike_probability = sigmoid(score).clamp(0.02, 0.98);
-    let risk_label = if spike_probability > 0.78 { "high" } else if spike_probability > 0.48 { "medium" } else { "low" };
+    let mut spike_probability = sigmoid(score).clamp(0.02, 0.98);
     let mut recommended_tweaks = Vec::new();
     let mut factors = Vec::new();
+    if let Some(profile) = payload.system_profile.as_ref() {
+        if let Some(cores) = profile.logical_cores {
+            if cores <= 8 {
+                spike_probability = (spike_probability + 0.04).min(0.98);
+                factors.push(format!("Detected {cores} logical cores. Scheduler pressure can rise faster under burst load."));
+            } else if cores >= 12 {
+                spike_probability = (spike_probability - 0.02).max(0.02);
+                factors.push(format!("Detected {cores} logical cores. Core headroom may absorb transient spikes better."));
+            }
+        }
+        if let Some(memory_gb) = profile.memory_gb {
+            if memory_gb <= 8.0 {
+                spike_probability = (spike_probability + 0.03).min(0.98);
+                factors.push(format!("Detected {memory_gb:.0} GB memory profile. Background pressure can impact frametime consistency."));
+            } else if memory_gb >= 16.0 {
+                factors.push(format!("Detected {memory_gb:.0} GB memory profile. Memory headroom favors stable frame delivery."));
+            }
+        }
+        if let Some(power_plan) = profile.active_power_plan.as_deref() {
+            factors.push(format!("Active power plan signal: {power_plan}."));
+        }
+        if profile.discrete_gpu_available == Some(false) {
+            factors.push("Discrete GPU signal is absent; avoid forcing GPU-only assumptions.".into());
+        }
+    }
     if payload.cpu_process_pct > 82.0 || payload.background_process_count > 42 {
         recommended_tweaks.push("process_priority".into());
     }
@@ -126,18 +150,20 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     if recommended_tweaks.is_empty() && spike_probability > 0.4 {
         recommended_tweaks.push("process_priority".into());
     }
+    let risk_label = if spike_probability > 0.78 { "high" } else if spike_probability > 0.48 { "medium" } else { "low" };
     for tweak in &recommended_tweaks {
         if let Some(lines) = metadata.recommendation_map.get(tweak) {
             factors.extend(lines.clone());
         }
     }
+    let confidence_bonus = if payload.system_profile.is_some() { 0.04 } else { 0.0 };
     MlInferencePayload {
         spike_probability,
         risk_label: risk_label.into(),
-        confidence: (0.58 + spike_probability * 0.28).min(0.97),
+        confidence: (0.58 + spike_probability * 0.28 + confidence_bonus).min(0.97),
         recommended_tweaks,
         summary: format!(
-            "Local model {} estimates a {} spike probability for the next gameplay window.",
+            "Local model {} estimates a {} spike probability using telemetry and system profile signals.",
             metadata.version,
             (spike_probability * 100.0).round()
         ),
@@ -166,6 +192,7 @@ mod tests {
             ram_working_set_mb: 8800.0,
             background_process_count: 64,
             anomaly_score: 0.88,
+            system_profile: None,
         });
         assert_eq!(result.risk_label, "high");
         assert!(!result.recommended_tweaks.is_empty());

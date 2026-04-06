@@ -64,6 +64,25 @@ interface ToggleCard {
 
 const STORAGE_KEY = 'aeterna.optimization.selection'
 const SNAPSHOT_STORAGE_KEY = 'aeterna.optimization.snapshots'
+const HIGH_PERFORMANCE_PROFILE_CARD_IDS = [
+  'ultimate-power',
+  'game-mode-on',
+  'turn-off-recordings',
+  'windowed-optimizations-on',
+  'power-throttling-off',
+  'reduce-input-lag',
+  'interrupt-affinity-lock',
+  'low-timer-resolution',
+  'usb-selective-suspend-off',
+  'pcie-lspm-off',
+  'max-games',
+  'keep-cores',
+  'process-qos-high',
+  'process-isolation',
+  'gpu-preference-high',
+  'fullscreen-optimizations-off',
+  'hags-on',
+] as const
 
 const ACTIVE_TWEAK_TO_CARD: Record<string, string> = {
   process_priority: 'max-games',
@@ -220,6 +239,7 @@ export function OptimizationPage({
   const [snapshotMap, setSnapshotMap] = useState<Record<string, string>>(() => loadSnapshotMap())
   const [busyCardId, setBusyCardId] = useState<string | null>(null)
   const [statusText, setStatusText] = useState<string | null>(null)
+  const [profileApplying, setProfileApplying] = useState(false)
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(selected.values())))
@@ -561,47 +581,48 @@ export function OptimizationPage({
     return request
   }
 
-  const toggleCard = async (card: ToggleCard, next: boolean) => {
+  const toggleCard = async (card: ToggleCard, next: boolean, options?: { silent?: boolean }): Promise<boolean> => {
+    const silent = options?.silent === true
     setBusyCardId(card.id)
-    setStatusText(null)
+    if (!silent) setStatusText(null)
     try {
       if (next) {
         if (card.action.kind === 'tweak') {
           const request = await buildTweakRequest(card)
           if (!request) {
-            setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
-            return
+            if (!silent) setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
+            return false
           }
           const result = await onApplyTweak(request)
           setSelected((current) => new Set(current).add(card.id))
           setSnapshotMap((current) => ({ ...current, [card.id]: result.snapshot.id }))
           if (card.requiresReboot) {
-            setStatusText(`${card.title} applied. Restart Windows to finalize.`)
+            if (!silent) setStatusText(`${card.title} applied. Restart Windows to finalize.`)
           }
-          return
+          return true
         }
 
         const request = await buildPresetRequest(card)
         if (!request) {
-          setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
-          return
+          if (!silent) setStatusText(`Cannot apply "${card.title}": required target is unavailable.`)
+          return false
         }
         const result = await onApplyRegistryPreset(request)
         if (result.status === 'blocked') {
-          setStatusText(result.blocking_reason ?? `Cannot apply "${card.title}" right now.`)
-          return
+          if (!silent) setStatusText(result.blocking_reason ?? `Cannot apply "${card.title}" right now.`)
+          return false
         }
         const snapshotId = result.snapshot?.id
         if (snapshotId) {
           setSelected((current) => new Set(current).add(card.id))
           setSnapshotMap((current) => ({ ...current, [card.id]: snapshotId }))
           if (card.requiresReboot) {
-            setStatusText(`${card.title} applied. Restart Windows to finalize.`)
+            if (!silent) setStatusText(`${card.title} applied. Restart Windows to finalize.`)
           }
-          return
+          return true
         }
-        setStatusText(`Preset "${card.title}" applied without rollback snapshot.`)
-        return
+        if (!silent) setStatusText(`Preset "${card.title}" applied without rollback snapshot.`)
+        return false
       }
 
       const knownSnapshotId = snapshotMap[card.id] ?? resolveRuntimeSnapshot(card)
@@ -616,7 +637,7 @@ export function OptimizationPage({
           delete nextMap[card.id]
           return nextMap
         })
-        return
+        return true
       }
       await onRollbackSnapshot(knownSnapshotId, runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? undefined)
       setSelected((current) => {
@@ -630,14 +651,47 @@ export function OptimizationPage({
         return nextMap
       })
       if (card.requiresReboot) {
-        setStatusText(`${card.title} reverted. Restart Windows to restore boot/driver behavior.`)
+        if (!silent) setStatusText(`${card.title} reverted. Restart Windows to restore boot/driver behavior.`)
       }
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Action failed.'
-      setStatusText(message)
+      if (!silent) setStatusText(message)
+      return false
     } finally {
       setBusyCardId(null)
     }
+  }
+
+  const applyHighPerformanceProfile = async () => {
+    if (profileApplying || busyCardId) return
+    setProfileApplying(true)
+    setMode('high-performance')
+    setStatusText('Applying High performance profile...')
+    let enabledNow = 0
+    let skipped = 0
+
+    try {
+      for (const cardId of HIGH_PERFORMANCE_PROFILE_CARD_IDS) {
+        const card = cards.find((item) => item.id === cardId)
+        if (!card) continue
+        if (selected.has(card.id)) {
+          skipped += 1
+          continue
+        }
+        const applied = await toggleCard(card, true, { silent: true })
+        if (applied) enabledNow += 1
+      }
+    } finally {
+      setProfileApplying(false)
+    }
+
+    const total = HIGH_PERFORMANCE_PROFILE_CARD_IDS.length
+    if (enabledNow > 0) {
+      setStatusText(`High performance profile applied: ${enabledNow} function(s) enabled automatically (${skipped} already active).`)
+      return
+    }
+    setStatusText(`High performance profile is already active or unavailable on current target (${total} planned functions).`)
   }
 
   const revertAllEnabled = async () => {
@@ -730,7 +784,14 @@ export function OptimizationPage({
                           ? 'bg-surface-muted text-text ring-1 ring-inset ring-[#24d7a5]/70'
                           : 'bg-surface-muted/60 text-muted hover:text-text'
                       }`}
-                      onClick={() => setMode(item.id as PresetMode)}
+                      disabled={profileApplying || busyCardId !== null}
+                      onClick={() => {
+                        if (item.id === 'high-performance') {
+                          void applyHighPerformanceProfile()
+                          return
+                        }
+                        setMode(item.id as PresetMode)
+                      }}
                       type="button"
                     >
                       {item.label}
@@ -738,7 +799,7 @@ export function OptimizationPage({
                   ))}
                   <button
                     className="inline-flex items-center rounded-xl border border-border/70 bg-surface-muted/60 px-4 py-2 text-sm font-semibold text-text transition hover:bg-hover disabled:opacity-50"
-                    disabled={busyCardId !== null || selected.size === 0}
+                    disabled={busyCardId !== null || profileApplying || selected.size === 0}
                     onClick={() => {
                       void revertAllEnabled()
                     }}
@@ -760,7 +821,7 @@ export function OptimizationPage({
                   onOpenInfo={(cardId) => setDetailModal({ cardId, kind: 'info' })}
                   onOpenRisk={(cardId) => setDetailModal({ cardId, kind: 'risk' })}
                   onToggle={(next) => {
-                    if (busyCardId) return
+                    if (busyCardId || profileApplying) return
                     void toggleCard(card, next)
                   }}
                 />

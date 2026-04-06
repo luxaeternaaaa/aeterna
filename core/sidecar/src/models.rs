@@ -227,6 +227,15 @@ pub struct RollbackResponse {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct MlSystemProfile {
+    pub logical_cores: Option<u32>,
+    pub memory_gb: Option<f64>,
+    pub discrete_gpu_available: Option<bool>,
+    pub active_power_plan: Option<String>,
+    pub session_attached: Option<bool>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct MlInferenceRequest {
     pub fps_avg: f64,
     pub frametime_avg_ms: f64,
@@ -238,6 +247,8 @@ pub struct MlInferenceRequest {
     pub ram_working_set_mb: f64,
     pub background_process_count: i32,
     pub anomaly_score: f64,
+    #[serde(default)]
+    pub system_profile: Option<MlSystemProfile>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

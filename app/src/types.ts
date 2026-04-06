@@ -78,7 +78,13 @@ export interface BenchmarkWindow {
   frametime_avg_ms: number
   frametime_p95_ms: number
   frame_drop_ratio: number
+  cpu_process_pct: number
   cpu_total_pct: number
+  gpu_usage_pct: number | null
+  ram_working_set_mb: number
+  ping: number
+  jitter: number
+  packet_loss: number
   background_cpu_pct: number
   anomaly_score: number
   session_health: string
@@ -89,7 +95,13 @@ export interface BenchmarkDelta {
   frametime_avg_ms: number
   frametime_p95_ms: number
   frame_drop_ratio: number
+  cpu_process_pct: number
   cpu_total_pct: number
+  gpu_usage_pct: number
+  ram_working_set_mb: number
+  ping: number
+  jitter: number
+  packet_loss: number
   background_cpu_pct: number
   anomaly_score: number
 }

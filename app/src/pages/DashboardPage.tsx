@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, FlaskConical, Loader2, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle2, ChevronRight, FlaskConical, Loader2, Sparkles } from 'lucide-react'
 
 import { EmptyState } from '../components/EmptyState'
-import { LineChart } from '../components/LineChart'
-import { MetricCard } from '../components/MetricCard'
 import { Panel } from '../components/Panel'
 import { getMlRuntimeTruth, requestWindowsRestart, runOptimizationInference } from '../lib/sidecar'
-import { stateCopy } from '../lib/stateCopy'
-import { formatTimestamp } from '../lib/time'
+import {
+  getOptimizationFunctionById,
+  loadMlDenyFunctionList,
+  ML_TWEAK_TO_FUNCTION_ID,
+  OPTIMIZATION_FUNCTIONS,
+} from '../lib/optimizationFunctions'
 import type {
-  ActivityEntry,
   ApplyRegistryPresetRequest,
   ApplyRegistryPresetResponse,
   ApplyTweakRequest,
@@ -67,69 +68,97 @@ interface ToastState {
   message: string
 }
 
-const FLOW_STEPS = [
-  'Detecting game',
-  'Collecting telemetry',
-  'Building safe plan',
-  'Applying changes',
-  'Verifying result',
-] as const
-
-function resolveProfile(profiles: GameProfile[], runtimeState: OptimizationRuntimeState, currentSample: TelemetryPoint | null) {
-  if (runtimeState.session.recommended_profile_id) {
-    const matched = profiles.find((profile) => profile.id === runtimeState.session.recommended_profile_id)
-    if (matched) return matched
-  }
-  const name = (currentSample?.game_name ?? '').toLowerCase()
-  return profiles.find((profile) => profile.detection_keywords.some((keyword) => name.includes(keyword)))
-}
-
-function findTargetProcess(runtimeState: OptimizationRuntimeState): { pid: number; name: string } | null {
-  if (runtimeState.session.process_id && runtimeState.session.process_name) {
-    return { pid: runtimeState.session.process_id, name: runtimeState.session.process_name }
-  }
-  if (runtimeState.selected_process) {
-    return { pid: runtimeState.selected_process.pid, name: runtimeState.selected_process.name }
-  }
-  if (runtimeState.detected_game) {
-    return { pid: runtimeState.detected_game.pid, name: runtimeState.detected_game.exe_name }
-  }
-  return null
-}
-
-function highestPerformancePlanGuid(runtimeState: OptimizationRuntimeState): string | null {
-  const plan =
-    runtimeState.power_plans.find((row) => row.name.toLowerCase().includes('ultimate performance')) ??
-    runtimeState.power_plans.find((row) => row.name.toLowerCase().includes('high performance')) ??
-    null
-  return plan?.guid ?? null
-}
+const FLOW_STEPS = ['Preparing ML input', 'Building safe plan', 'Applying changes', 'Verifying result', 'Finalizing'] as const
 
 function stageProgress(state: FlowState, index: number): 'done' | 'active' | 'pending' {
   if (state === 'complete') return 'done'
   if (state === 'failed' || state === 'cancelled' || state === 'idle') return 'pending'
-  if (state === 'ready') return index <= 2 ? 'done' : 'pending'
-  if (state === 'applying') return index <= 3 ? 'done' : 'active'
+  if (state === 'ready') return index <= 1 ? 'done' : 'pending'
+  if (state === 'applying') return index <= 2 ? 'done' : index === 3 ? 'active' : 'pending'
   return index === 0 ? 'active' : 'pending'
+}
+
+type InferenceInput = Parameters<typeof runOptimizationInference>[0]
+
+function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: TelemetryPoint | null): NonNullable<InferenceInput['system_profile']> {
+  const nav = typeof navigator === 'undefined' ? null : (navigator as Navigator & { deviceMemory?: number })
+  const powerPlan =
+    runtimeState.power_plans.find((row) => row.active)?.name ??
+    runtimeState.power_plans.find((row) => row.name.toLowerCase().includes('ultimate performance'))?.name ??
+    null
+
+  return {
+    logical_cores: nav?.hardwareConcurrency ?? null,
+    memory_gb: typeof nav?.deviceMemory === 'number' ? nav.deviceMemory : null,
+    discrete_gpu_available: sample?.gpu_usage_pct != null ? sample.gpu_usage_pct > 0 : null,
+    active_power_plan: powerPlan,
+    session_attached: runtimeState.session.state === 'attached' || runtimeState.session.state === 'active',
+  }
+}
+
+function buildInferenceInput(
+  sample: TelemetryPoint | null,
+  runtimeState: OptimizationRuntimeState,
+): { input: InferenceInput; sourceLabel: string; sampleLabel: string; profileLabel: string } {
+  const systemProfile = readSystemProfile(runtimeState, sample)
+  const profileLabel = `System profile: cores ${systemProfile.logical_cores ?? 'n/a'}, memory ${systemProfile.memory_gb ?? 'n/a'} GB, power ${
+    systemProfile.active_power_plan ?? 'unknown'
+  }`
+
+  if (sample) {
+    return {
+      input: {
+        fps_avg: sample.fps_avg,
+        frametime_avg_ms: sample.frametime_avg_ms,
+        frametime_p95_ms: sample.frametime_p95_ms,
+        frame_drop_ratio: sample.frame_drop_ratio,
+        cpu_process_pct: sample.cpu_process_pct,
+        cpu_total_pct: sample.cpu_total_pct,
+        gpu_usage_pct: sample.gpu_usage_pct ?? 0,
+        ram_working_set_mb: sample.ram_working_set_mb,
+        background_process_count: sample.background_process_count,
+        anomaly_score: sample.anomaly_score,
+        system_profile: systemProfile,
+      },
+      sourceLabel: 'Live telemetry sample',
+      sampleLabel: `FPS ${sample.fps_avg.toFixed(0)}, p95 ${sample.frametime_p95_ms.toFixed(1)} ms`,
+      profileLabel,
+    }
+  }
+  return {
+    input: {
+      fps_avg: 120,
+      frametime_avg_ms: 8.3,
+      frametime_p95_ms: 12.6,
+      frame_drop_ratio: 0.03,
+      cpu_process_pct: 28,
+      cpu_total_pct: 58,
+      gpu_usage_pct: 74,
+      ram_working_set_mb: 5400,
+      background_process_count: 95,
+      anomaly_score: 0.21,
+      system_profile: systemProfile,
+    },
+    sourceLabel: 'System baseline (no game session required)',
+    sampleLabel: 'Default baseline for system-level ML optimization',
+    profileLabel,
+  }
 }
 
 export function DashboardPage({
   dashboard,
   onApplyRegistryPreset,
   onApplyTweak,
-  onAttachSession,
-  onOpenLogs,
+  onAttachSession: _onAttachSession,
+  onOpenLogs: _onOpenLogs,
   onOpenOptimization,
   onOpenTests,
   onRollbackSnapshot,
-  profiles,
+  profiles: _profiles,
   realtime,
   runtimeState,
 }: DashboardPageProps) {
-  const values = dashboard.history.map((point) => point.frametime_p95_ms || point.frametime_avg_ms || point.ping)
   const currentSample = realtime ?? dashboard.history.at(-1) ?? null
-  const stats = dashboard.stats.slice(0, 4)
-  const profile = resolveProfile(profiles, runtimeState, currentSample)
 
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -140,6 +169,8 @@ export function DashboardPage({
   const [rebootPending, setRebootPending] = useState(false)
   const [precheck, setPrecheck] = useState<string[]>([])
   const [restartBusy, setRestartBusy] = useState(false)
+  const [introOpen, setIntroOpen] = useState(false)
+  const [introAccepted, setIntroAccepted] = useState(false)
   const cancelRequestedRef = useRef(false)
 
   useEffect(() => {
@@ -149,6 +180,61 @@ export function DashboardPage({
   }, [toast])
 
   const isBusy = flowState === 'analyzing' || flowState === 'applying'
+
+  const applyPlannedActions = async (nextPlan: OneClickPlan) => {
+    setFlowState('applying')
+    setFlowError(null)
+    const appliedItems: AppliedItem[] = []
+    let alreadyActiveCount = 0
+
+    try {
+      for (const action of nextPlan.actions) {
+        if (action.request.kind === 'tweak') {
+          const result = await onApplyTweak(action.request.payload)
+          appliedItems.push({
+            id: action.id,
+            label: action.label,
+            snapshotId: result.snapshot.id,
+            requiresReboot: action.requiresReboot,
+          })
+          continue
+        }
+
+        const result = await onApplyRegistryPreset(action.request.payload)
+        if (result.status !== 'applied' || !result.snapshot) {
+          const reason = (result.blocking_reason ?? '').toLowerCase()
+          if (reason.includes('already active')) {
+            alreadyActiveCount += 1
+            continue
+          }
+          throw new Error(result.blocking_reason ?? `Action ${action.label} was blocked by policy.`)
+        }
+        appliedItems.push({
+          id: action.id,
+          label: action.label,
+          snapshotId: result.snapshot.id,
+          requiresReboot: action.requiresReboot,
+        })
+      }
+
+      setApplied(appliedItems)
+      const hasRebootActions = appliedItems.some((item) => item.requiresReboot)
+      setRebootPending(hasRebootActions)
+      setFlowState('complete')
+      if (appliedItems.length === 0 && alreadyActiveCount > 0) {
+        setToast({ message: 'No changes were needed. Recommended settings are already active.' })
+      } else {
+        setToast({
+          message: hasRebootActions
+            ? 'Optimization applied. Some changes are pending reboot.'
+            : 'Optimization applied successfully.',
+        })
+      }
+    } catch (error) {
+      setFlowState('failed')
+      setFlowError(error instanceof Error ? error.message : 'Apply phase failed.')
+    }
+  }
 
   const runOneClickAnalysis = async () => {
     if (isBusy) return
@@ -162,103 +248,99 @@ export function DashboardPage({
     const checks: string[] = []
 
     try {
-      const target = findTargetProcess(runtimeState)
-      if (!target) {
-        setFlowState('failed')
-        setFlowError('Game not detected. Launch a game, then run one-click optimization.')
-        return
+      const seed = buildInferenceInput(currentSample, runtimeState)
+      const deniedList = loadMlDenyFunctionList()
+      checks.push(`Input source: ${seed.sourceLabel}`)
+      checks.push(`Input snapshot: ${seed.sampleLabel}`)
+      checks.push(seed.profileLabel)
+      if (deniedList.size > 0) {
+        checks.push(`Deny Function List active: ${deniedList.size} function(s) are blocked for auto-ML.`)
       }
-      if (!runtimeState.session.process_id) {
-        await Promise.resolve(onAttachSession({ process_id: target.pid, process_name: target.name }))
-      }
-      checks.push(`Game target: ${target.name}`)
-      checks.push(`Capture mode: ${runtimeState.capture_status.source}`)
 
       if (cancelRequestedRef.current) {
         setFlowState('cancelled')
         return
       }
 
-      const sample = currentSample
-      if (!sample) {
-        setFlowState('failed')
-        setFlowError('Telemetry missing. Play for a few seconds, then retry.')
-        return
-      }
-      checks.push(`Telemetry sample: FPS ${sample.fps_avg.toFixed(0)}, p95 ${sample.frametime_p95_ms.toFixed(1)} ms`)
-
-      if (cancelRequestedRef.current) {
-        setFlowState('cancelled')
-        return
-      }
-
-      const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(sample)])
+      const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(seed.input)])
       const fallbackUsed = !inference || runtimeTruth?.runtime_mode === 'unavailable'
 
       const rationale = fallbackUsed
-        ? ['Model path unavailable; using stable heuristic profile.', 'Priority and affinity are selected as low-risk defaults.']
-        : [
-            ...(inference?.factors ?? []).slice(0, 2),
-            ...((inference?.shap_preview ?? []).slice(0, 1)),
-          ]
+        ? ['Model path unavailable; using stable heuristic profile.', 'System-level safe actions were selected without game-session dependency.']
+        : [...(inference?.factors ?? []).slice(0, 2), ...((inference?.shap_preview ?? []).slice(0, 1))]
 
-      const processId = target.pid
+      const recommendedFunctionIds = new Set<string>()
+      const sessionProcessId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
+      for (const tweak of inference?.recommended_tweaks ?? ['power_plan']) {
+        const functionId = ML_TWEAK_TO_FUNCTION_ID[tweak]
+        if (functionId) recommendedFunctionIds.add(functionId)
+      }
+      recommendedFunctionIds.add('interrupt-affinity-lock')
+      recommendedFunctionIds.add('usb-selective-suspend-off')
+      if ((inference?.risk_label ?? 'medium') === 'high') recommendedFunctionIds.add('low-timer-resolution')
+      if ((seed.input.system_profile?.logical_cores ?? 0) >= 12) recommendedFunctionIds.add('pcie-lspm-off')
+      if ((currentSample?.background_cpu_pct ?? 0) >= 12) recommendedFunctionIds.add('turn-off-recordings')
+
+      const availableDefinitions = OPTIMIZATION_FUNCTIONS.filter((definition) => {
+        if (deniedList.has(definition.id)) return false
+        if (definition.processRequired && !sessionProcessId) return false
+        return definition.buildRequest({ processId: sessionProcessId, runtimeState }) !== null
+      })
+
+      const minimumTarget = availableDefinitions.length === 0 ? 0 : Math.max(1, Math.ceil(availableDefinitions.length * 0.9))
+      if (minimumTarget > 0 && recommendedFunctionIds.size < minimumTarget) {
+        const fillOrder = [
+          ...availableDefinitions.filter((definition) => definition.mlDefault),
+          ...availableDefinitions.filter((definition) => !definition.mlDefault),
+        ]
+        for (const definition of fillOrder) {
+          recommendedFunctionIds.add(definition.id)
+          if (recommendedFunctionIds.size >= minimumTarget) break
+        }
+      }
+
       const actions: PlanAction[] = []
-      const recommended = inference?.recommended_tweaks ?? ['process_priority', 'cpu_affinity']
-      if (recommended.includes('process_priority')) {
+      for (const functionId of recommendedFunctionIds) {
+        if (deniedList.has(functionId)) continue
+        const definition = getOptimizationFunctionById(functionId)
+        if (!definition) continue
+        if (definition.processRequired && !sessionProcessId) {
+          checks.push(`Skipped "${definition.title}" (requires attached game session, available in Tests/Optimization).`)
+          continue
+        }
+        const request = definition.buildRequest({ processId: sessionProcessId, runtimeState })
+        if (!request) {
+          checks.push(`Skipped "${definition.title}" (not available on this system state).`)
+          continue
+        }
         actions.push({
-          id: 'process_priority',
-          label: 'Set game priority to High',
-          requiresReboot: false,
-          request: { kind: 'tweak', payload: { kind: 'process_priority', process_id: processId, priority: 'high' } },
+          id: definition.id,
+          label: definition.title,
+          requiresReboot: Boolean(definition.requiresReboot),
+          request,
         })
       }
-      if (recommended.includes('cpu_affinity')) {
-        actions.push({
-          id: 'cpu_affinity',
-          label: 'Apply balanced CPU affinity',
-          requiresReboot: false,
-          request: { kind: 'tweak', payload: { kind: 'cpu_affinity', process_id: processId, affinity_preset: 'balanced_threads' } },
-        })
-      }
-      const planGuid = highestPerformancePlanGuid(runtimeState)
-      if (planGuid && recommended.includes('power_plan')) {
-        actions.push({
-          id: 'power_plan',
-          label: 'Switch to High/Ultimate power plan',
-          requiresReboot: false,
-          request: { kind: 'tweak', payload: { kind: 'power_plan', power_plan_guid: planGuid, process_id: processId } },
-        })
-      }
-      actions.push({
-        id: 'game_mode_on',
-        label: 'Force Game Mode on',
-        requiresReboot: false,
-        request: { kind: 'preset', payload: { preset_id: 'game_mode_on', process_id: processId } },
-      })
-      actions.push({
-        id: 'game_capture_overhead_off',
-        label: 'Disable Game DVR capture overhead',
-        requiresReboot: false,
-        request: { kind: 'preset', payload: { preset_id: 'game_capture_overhead_off', process_id: processId } },
-      })
 
-      const unique = Array.from(new Map(actions.map((item) => [item.id, item])).values()).slice(0, 5)
+      const unique = Array.from(new Map(actions.map((item) => [item.id, item])).values())
       if (unique.length === 0) {
         setFlowState('failed')
-        setFlowError('Planner produced no safe actions. Run Custom Optimization manually.')
+        setFlowError('Planner produced no safe actions. Open Custom Optimization for manual tuning.')
         return
       }
 
       const confidence = fallbackUsed ? 0.72 : inference?.confidence ?? 0.8
       const risk = (fallbackUsed ? 'medium' : inference?.risk_label ?? 'medium') as 'low' | 'medium' | 'high'
       const summary = fallbackUsed
-        ? 'Model error. System is using stable heuristic fallback.'
+        ? 'Model unavailable. Using a stable fallback plan with rollback snapshots.'
         : inference?.summary ?? 'Model generated a bounded optimization plan.'
+      const nextPlan: OneClickPlan = { actions: unique, confidence, risk, rationale, summary, fallbackUsed }
+
       setPrecheck(checks)
-      setPlan({ actions: unique, confidence, risk, rationale, summary, fallbackUsed })
+      setPlan(nextPlan)
       setFlowState('ready')
-      setToast({ message: 'Analysis complete. Review and apply the plan.' })
+      setToast({ message: 'Choice confirmed. Optimization starts automatically.' })
+
+      await applyPlannedActions(nextPlan)
     } catch (error) {
       setFlowState('failed')
       setFlowError(error instanceof Error ? error.message : 'One-click analysis failed.')
@@ -269,49 +351,7 @@ export function DashboardPage({
     if (flowState === 'applying') return
     cancelRequestedRef.current = true
     setFlowState('cancelled')
-    setToast({ message: 'One-click flow cancelled before apply.' })
-  }
-
-  const applyPlan = async () => {
-    if (!plan || flowState !== 'ready') return
-    setFlowState('applying')
-    setFlowError(null)
-    const appliedItems: AppliedItem[] = []
-    try {
-      for (const action of plan.actions) {
-        if (action.request.kind === 'tweak') {
-          const result = await onApplyTweak(action.request.payload)
-          appliedItems.push({
-            id: action.id,
-            label: action.label,
-            snapshotId: result.snapshot.id,
-            requiresReboot: action.requiresReboot,
-          })
-        } else {
-          const result = await onApplyRegistryPreset(action.request.payload)
-          if (result.status === 'applied' && result.snapshot) {
-            appliedItems.push({
-              id: action.id,
-              label: action.label,
-              snapshotId: result.snapshot.id,
-              requiresReboot: action.requiresReboot,
-            })
-          }
-        }
-      }
-      setApplied(appliedItems)
-      const hasRebootActions = appliedItems.some((item) => item.requiresReboot)
-      setRebootPending(hasRebootActions)
-      setFlowState('complete')
-      setToast({
-        message: hasRebootActions
-          ? 'Optimization applied. Some changes are pending reboot.'
-          : 'Optimization applied successfully.',
-      })
-    } catch (error) {
-      setFlowState('failed')
-      setFlowError(error instanceof Error ? error.message : 'Apply phase failed.')
-    }
+    setToast({ message: 'Automatic ML flow cancelled.' })
   }
 
   const rollbackApplied = async () => {
@@ -323,13 +363,13 @@ export function DashboardPage({
     }
     setApplied([])
     setRebootPending(false)
-    setToast({ message: 'Applied one-click changes were rolled back.' })
+    setToast({ message: 'Applied ML changes were rolled back.' })
     setFlowState('idle')
     setPlan(null)
   }
 
   const keepChanges = () => {
-    setToast({ message: 'Changes kept. You can revert later from logs or new session controls.' })
+    setToast({ message: 'Changes kept. Rollback remains available in history/logs.' })
     setFlowState('idle')
     setPlan(null)
     setApplied([])
@@ -359,7 +399,8 @@ export function DashboardPage({
             className="surface-card group text-left transition hover:border-border-strong/70"
             disabled={isBusy}
             onClick={() => {
-              void runOneClickAnalysis()
+              setIntroOpen(true)
+              setIntroAccepted(false)
             }}
             type="button"
           >
@@ -391,8 +432,55 @@ export function DashboardPage({
         </div>
       </Panel>
 
+      {introOpen ? (
+        <Panel title="Before You Start ML Automation" variant="secondary">
+          <div className="space-y-4">
+            <div className="surface-card text-sm text-muted">
+              <p className="font-semibold text-text">How this works</p>
+              <ul className="mt-2 space-y-1">
+                <li>- The function builds an ML-assisted safe action plan and applies it automatically after confirmation.</li>
+                <li>- Every applied action creates rollback snapshots so changes can be reverted.</li>
+                <li>- A game session is not required for optimization on Home. Session attach is used only in controlled tests.</li>
+              </ul>
+            </div>
+            <label className="surface-card flex items-start gap-3 text-sm text-muted">
+              <input
+                checked={introAccepted}
+                className="mt-0.5"
+                onChange={(event) => setIntroAccepted(event.target.checked)}
+                type="checkbox"
+              />
+              <span>I reviewed the function description and confirm automatic optimization start.</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="button-primary"
+                disabled={!introAccepted || isBusy}
+                onClick={() => {
+                  setIntroOpen(false)
+                  void runOneClickAnalysis()
+                }}
+                type="button"
+              >
+                Confirm choice and start
+              </button>
+              <button
+                className="button-secondary"
+                onClick={() => {
+                  setIntroOpen(false)
+                  setIntroAccepted(false)
+                }}
+                type="button"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+
       {flowState !== 'idle' ? (
-        <Panel title="One-Click ML Optimization" variant="secondary">
+        <Panel title="Automatic ML Optimization" variant="secondary">
           <div className="space-y-4">
             <div className="grid gap-2 md:grid-cols-2">
               <div className="surface-card">
@@ -440,27 +528,7 @@ export function DashboardPage({
               <div className="surface-card space-y-3">
                 <p className="text-sm font-semibold text-text">Plan ready</p>
                 <p className="text-sm text-muted">{plan.summary}</p>
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-muted">
-                    <span className="font-semibold text-text">Confidence:</span> {(plan.confidence * 100).toFixed(0)}%
-                  </div>
-                  <div className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-muted">
-                    <span className="font-semibold text-text">Risk:</span> {plan.risk}
-                  </div>
-                </div>
-                <ul className="space-y-1 text-sm text-muted">
-                  {plan.actions.map((item) => (
-                    <li key={item.id}>- {item.label}</li>
-                  ))}
-                </ul>
-                <div className="flex flex-wrap gap-2">
-                  <button className="button-primary" onClick={() => void applyPlan()} type="button">
-                    Apply one-click plan
-                  </button>
-                  <button className="button-secondary" onClick={cancelFlow} type="button">
-                    Cancel
-                  </button>
-                </div>
+                <p className="text-sm text-muted">Auto-apply is in progress. No additional confirmation is required.</p>
               </div>
             ) : null}
 
@@ -516,13 +584,7 @@ export function DashboardPage({
                       <button className="button-secondary" disabled={restartBusy} onClick={() => void restartNow()} type="button">
                         {restartBusy ? 'Requesting restart...' : 'Restart now'}
                       </button>
-                      <button
-                        className="button-secondary"
-                        onClick={() => {
-                          setRebootPending(false)
-                        }}
-                        type="button"
-                      >
+                      <button className="button-secondary" onClick={() => setRebootPending(false)} type="button">
                         Later
                       </button>
                     </div>
@@ -555,132 +617,22 @@ export function DashboardPage({
             ) : null}
 
             {flowState === 'failed' ? (
-              <div className="flex flex-wrap gap-2">
-                <button className="button-primary" onClick={() => void runOneClickAnalysis()} type="button">
-                  Retry one-click optimization
-                </button>
-                <button className="button-secondary" onClick={onOpenOptimization} type="button">
-                  Open custom optimization
-                </button>
-              </div>
+              <EmptyState
+                actionLabel="Retry automatic ML optimization"
+                description={flowError ?? 'Automatic flow failed before completion.'}
+                onAction={() => {
+                  void runOneClickAnalysis()
+                }}
+                title="Optimization was not completed"
+              />
             ) : null}
           </div>
         </Panel>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <Panel title="Session Snapshot" variant="secondary">
-          <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-            <div className="summary-card">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold tracking-tight text-text">Frametime trend</p>
-                {currentSample ? <span className="status-chip">p95 {currentSample.frametime_p95_ms.toFixed(1)} ms</span> : null}
-              </div>
-              <div className="mt-5">
-                <LineChart values={values} />
-              </div>
-              {!currentSample ? <p className="mt-4 text-sm leading-6 text-muted">{stateCopy.chartEmpty}</p> : null}
-            </div>
-
-            <div className="grid gap-3">
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Game</p>
-                <p className="mt-2 text-base font-semibold text-text">{currentSample?.game_name ?? 'No attached session yet'}</p>
-              </div>
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Background CPU</p>
-                <p className="mt-2 text-base font-semibold text-text">
-                  {currentSample ? `${currentSample.background_cpu_pct.toFixed(0)}%` : 'Waiting for live data'}
-                </p>
-              </div>
-              <div className="surface-card">
-                <p className="text-xs uppercase tracking-[0.18em] text-muted">Matched profile</p>
-                <p className="mt-2 text-sm text-muted">{profile ? profile.description : stateCopy.noProfile}</p>
-              </div>
-            </div>
-          </div>
-
-          {stats.length ? (
-            <div className="mt-5 grid gap-4 md:grid-cols-4">
-              {stats.map((item) => (
-                <MetricCard key={item.label} {...item} />
-              ))}
-            </div>
-          ) : null}
-        </Panel>
-
-        <Panel title="Quick Actions" variant="secondary">
-          <div className="space-y-3">
-            <button className="button-secondary w-full justify-start" onClick={onOpenOptimization} type="button">
-              Open custom optimization
-            </button>
-            <button className="button-secondary w-full justify-start" onClick={onOpenTests} type="button">
-              Run controlled test
-            </button>
-            <button className="button-secondary w-full justify-start" onClick={onOpenLogs} type="button">
-              Open full logs
-            </button>
-            {dashboard.recommendations.length ? (
-              dashboard.recommendations.slice(0, 2).map((item) => (
-                <div key={item.title} className="surface-card">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold tracking-tight text-text">{item.title}</p>
-                    <span className="status-chip">{item.impact}</span>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-muted">{item.summary}</p>
-                </div>
-              ))
-            ) : (
-              <EmptyState
-                actionLabel="Open custom optimization"
-                description="Recommendations become sharper after more telemetry."
-                onAction={onOpenOptimization}
-                title="No recommendation yet"
-              />
-            )}
-            <div className="surface-card">
-              <div className="flex items-center gap-2 text-sm text-text">
-                <ShieldCheck size={14} />
-                Safety note
-              </div>
-              <p className="mt-2 text-sm text-muted">
-                One-click always creates rollback snapshots. High-risk or reboot-level changes remain user-confirmed.
-              </p>
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      <Panel title="Logs" variant="secondary">
-        <div className="space-y-3">
-          {runtimeState.activity.length === 0 ? (
-            <div className="surface-card text-sm text-muted">No logs yet.</div>
-          ) : (
-            runtimeState.activity.slice(0, 4).map((item: ActivityEntry) => (
-              <div key={item.id} className="surface-card">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-text">{item.action}</p>
-                  <span className="status-chip">{item.risk}</span>
-                </div>
-                <p className="mt-2 text-sm text-muted">{item.detail}</p>
-                <p className="mt-2 text-xs text-muted">{formatTimestamp(item.timestamp)}</p>
-              </div>
-            ))
-          )}
-          <div>
-            <button className="button-secondary" onClick={onOpenLogs} type="button">
-              Open all logs
-            </button>
-          </div>
-        </div>
-      </Panel>
-
       {toast ? (
         <div className="fixed bottom-5 right-5 z-50 max-w-md rounded-xl border border-border/70 bg-surface px-4 py-3 shadow-float">
           <p className="text-sm text-text">{toast.message}</p>
-          <button className="mt-2 text-xs font-semibold text-muted underline underline-offset-2 hover:text-text" onClick={onOpenLogs} type="button">
-            View log
-          </button>
         </div>
       ) : null}
     </div>

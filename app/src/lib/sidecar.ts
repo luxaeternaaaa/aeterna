@@ -11,7 +11,6 @@ import type {
   OptimizationRuntimeState,
   RollbackResponse,
   SidecarStatusPayload,
-  TelemetryPoint,
 } from '../types'
 
 const fallbackStatus: SidecarStatusPayload = {
@@ -102,7 +101,27 @@ export async function rollbackOptimizationTweak(snapshotId: string, processId?: 
   return invoke<RollbackResponse>('rollback_tweak', { snapshotId, processId })
 }
 
-export async function runOptimizationInference(point: TelemetryPoint): Promise<MlInferencePayload | null> {
+export interface MlInferenceInput {
+  fps_avg: number
+  frametime_avg_ms: number
+  frametime_p95_ms: number
+  frame_drop_ratio: number
+  cpu_process_pct: number
+  cpu_total_pct: number
+  gpu_usage_pct: number
+  ram_working_set_mb: number
+  background_process_count: number
+  anomaly_score: number
+  system_profile?: {
+    logical_cores?: number | null
+    memory_gb?: number | null
+    discrete_gpu_available?: boolean | null
+    active_power_plan?: string | null
+    session_attached?: boolean | null
+  }
+}
+
+export async function runOptimizationInference(point: MlInferenceInput): Promise<MlInferencePayload | null> {
   if (!isTauriRuntime()) return null
   try {
     return await invoke<MlInferencePayload>('run_ml_inference', {
@@ -117,6 +136,7 @@ export async function runOptimizationInference(point: TelemetryPoint): Promise<M
         ram_working_set_mb: point.ram_working_set_mb,
         background_process_count: point.background_process_count,
         anomaly_score: point.anomaly_score,
+        system_profile: point.system_profile ?? null,
       },
     })
   } catch {

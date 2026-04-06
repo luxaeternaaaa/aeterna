@@ -77,7 +77,13 @@ class BenchmarkWindow(BaseModel):
     frametime_avg_ms: float
     frametime_p95_ms: float
     frame_drop_ratio: float
+    cpu_process_pct: float = 0
     cpu_total_pct: float
+    gpu_usage_pct: float | None = None
+    ram_working_set_mb: float = 0
+    ping: float = 0
+    jitter: float = 0
+    packet_loss: float = 0
     background_cpu_pct: float
     anomaly_score: float
     session_health: str
@@ -88,7 +94,13 @@ class BenchmarkDelta(BaseModel):
     frametime_avg_ms: float
     frametime_p95_ms: float
     frame_drop_ratio: float
+    cpu_process_pct: float = 0
     cpu_total_pct: float
+    gpu_usage_pct: float = 0
+    ram_working_set_mb: float = 0
+    ping: float = 0
+    jitter: float = 0
+    packet_loss: float = 0
     background_cpu_pct: float
     anomaly_score: float
 
