@@ -69,6 +69,21 @@ interface ToastState {
 }
 
 const FLOW_STEPS = ['Preparing ML input', 'Building safe plan', 'Applying changes', 'Verifying result', 'Finalizing'] as const
+const ONE_CLICK_EXCLUDED_FUNCTION_IDS = new Set<string>(['disable-hpet', 'disable-dynamic-ticks'])
+
+function formatUnknownError(error: unknown, fallback: string): string {
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim().length > 0) return message
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
+}
 
 function stageProgress(state: FlowState, index: number): 'done' | 'active' | 'pending' {
   if (state === 'complete') return 'done'
@@ -180,49 +195,70 @@ export function DashboardPage({
   }, [toast])
 
   const isBusy = flowState === 'analyzing' || flowState === 'applying'
+  const liveProcessIds = new Set(runtimeState.processes.map((process) => process.pid))
 
   const applyPlannedActions = async (nextPlan: OneClickPlan) => {
     setFlowState('applying')
     setFlowError(null)
     const appliedItems: AppliedItem[] = []
     let alreadyActiveCount = 0
+    const skippedFailures: string[] = []
 
     try {
       for (const action of nextPlan.actions) {
-        if (action.request.kind === 'tweak') {
-          const result = await onApplyTweak(action.request.payload)
+        try {
+          if (action.request.kind === 'tweak') {
+            const result = await onApplyTweak(action.request.payload)
+            appliedItems.push({
+              id: action.id,
+              label: action.label,
+              snapshotId: result.snapshot.id,
+              requiresReboot: action.requiresReboot,
+            })
+            continue
+          }
+
+          const result = await onApplyRegistryPreset(action.request.payload)
+          if (result.status !== 'applied' || !result.snapshot) {
+            const reason = (result.blocking_reason ?? '').toLowerCase()
+            if (reason.includes('already active')) {
+              alreadyActiveCount += 1
+              continue
+            }
+            throw new Error(result.blocking_reason ?? `Action ${action.label} was blocked by policy.`)
+          }
           appliedItems.push({
             id: action.id,
             label: action.label,
             snapshotId: result.snapshot.id,
             requiresReboot: action.requiresReboot,
           })
-          continue
+        } catch (error) {
+          const message = formatUnknownError(error, `Action ${action.label} failed.`)
+          const lower = message.toLowerCase()
+          const recoverable =
+            lower.includes('bcdedit command failed') ||
+            lower.includes('access is denied') ||
+            lower.includes('requires elevation')
+          if (!recoverable) throw error
+          skippedFailures.push(`${action.label}: ${message}`)
         }
+      }
 
-        const result = await onApplyRegistryPreset(action.request.payload)
-        if (result.status !== 'applied' || !result.snapshot) {
-          const reason = (result.blocking_reason ?? '').toLowerCase()
-          if (reason.includes('already active')) {
-            alreadyActiveCount += 1
-            continue
-          }
-          throw new Error(result.blocking_reason ?? `Action ${action.label} was blocked by policy.`)
-        }
-        appliedItems.push({
-          id: action.id,
-          label: action.label,
-          snapshotId: result.snapshot.id,
-          requiresReboot: action.requiresReboot,
-        })
+      if (appliedItems.length === 0 && skippedFailures.length > 0) {
+        throw new Error(skippedFailures[0])
       }
 
       setApplied(appliedItems)
       const hasRebootActions = appliedItems.some((item) => item.requiresReboot)
       setRebootPending(hasRebootActions)
       setFlowState('complete')
-      if (appliedItems.length === 0 && alreadyActiveCount > 0) {
+      if (appliedItems.length === 0 && alreadyActiveCount > 0 && skippedFailures.length === 0) {
         setToast({ message: 'No changes were needed. Recommended settings are already active.' })
+      } else if (skippedFailures.length > 0) {
+        setToast({
+          message: `Optimization applied with partial skips: ${skippedFailures.length} action(s) were skipped by system policy.`,
+        })
       } else {
         setToast({
           message: hasRebootActions
@@ -232,7 +268,7 @@ export function DashboardPage({
       }
     } catch (error) {
       setFlowState('failed')
-      setFlowError(error instanceof Error ? error.message : 'Apply phase failed.')
+      setFlowError(formatUnknownError(error, 'Apply phase failed.'))
     }
   }
 
@@ -270,7 +306,13 @@ export function DashboardPage({
         : [...(inference?.factors ?? []).slice(0, 2), ...((inference?.shap_preview ?? []).slice(0, 1))]
 
       const recommendedFunctionIds = new Set<string>()
-      const sessionProcessId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
+      const rawSessionProcessId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
+      const sessionProcessId = rawSessionProcessId && liveProcessIds.has(rawSessionProcessId) ? rawSessionProcessId : null
+      if (rawSessionProcessId && !sessionProcessId) {
+        checks.push(
+          `Session process ${rawSessionProcessId} is not alive now. Process-required actions were skipped until a live session is attached.`,
+        )
+      }
       for (const tweak of inference?.recommended_tweaks ?? ['power_plan']) {
         const functionId = ML_TWEAK_TO_FUNCTION_ID[tweak]
         if (functionId) recommendedFunctionIds.add(functionId)
@@ -282,6 +324,7 @@ export function DashboardPage({
       if ((currentSample?.background_cpu_pct ?? 0) >= 12) recommendedFunctionIds.add('turn-off-recordings')
 
       const availableDefinitions = OPTIMIZATION_FUNCTIONS.filter((definition) => {
+        if (ONE_CLICK_EXCLUDED_FUNCTION_IDS.has(definition.id)) return false
         if (deniedList.has(definition.id)) return false
         if (definition.processRequired && !sessionProcessId) return false
         return definition.buildRequest({ processId: sessionProcessId, runtimeState }) !== null
@@ -343,7 +386,7 @@ export function DashboardPage({
       await applyPlannedActions(nextPlan)
     } catch (error) {
       setFlowState('failed')
-      setFlowError(error instanceof Error ? error.message : 'One-click analysis failed.')
+      setFlowError(formatUnknownError(error, 'One-click analysis failed.'))
     }
   }
 

@@ -132,13 +132,13 @@ export function SecurityPage({ security, onClose, onVerify }: SecurityPageProps)
     <div className="space-y-6">
       <section className="rounded-[1.5rem] bg-surface p-0 md:p-1">
         <div className="flex flex-wrap items-start justify-between gap-3 p-2 md:p-3">
-          <h2 className="px-1 pt-1 text-[1.55rem] font-semibold tracking-tight text-text">Security audit</h2>
+          <h2 className="px-1 pt-1 text-[1.4rem] font-semibold tracking-tight text-text">Security audit</h2>
           <div className="flex items-center gap-2">
-            <button className="button-secondary px-4 py-2 text-[13px]" disabled={verifyBusy} onClick={() => void handleVerify()} type="button">
+            <button className="button-secondary px-4 py-2 text-[12px]" disabled={verifyBusy} onClick={() => void handleVerify()} type="button">
               <RotateCcw size={19} />
               <span className="ml-2">{verifyBusy ? 'Verifying...' : 'Verify'}</span>
             </button>
-            <button className="button-primary px-5 py-2 text-[13px]" disabled={rebootBusy} onClick={() => void handleRebootNow()} type="button">
+            <button className="button-primary px-5 py-2 text-[12px]" disabled={rebootBusy} onClick={() => void handleRebootNow()} type="button">
               <RotateCcw size={19} />
               <span className="ml-2">{rebootBusy ? 'Rebooting...' : 'Reboot now'}</span>
             </button>
@@ -156,15 +156,15 @@ export function SecurityPage({ security, onClose, onVerify }: SecurityPageProps)
         <div className="grid gap-4 p-2 md:grid-cols-3 md:p-3">
           <div className="rounded-[1.4rem] border border-border/50 bg-surface px-6 py-5">
             <p className="text-xs uppercase tracking-[0.12em] text-muted">Posture</p>
-            <p className="mt-2 text-[1.25rem] font-semibold leading-[1.22] tracking-tight text-text">{postureLabel}</p>
+            <p className="mt-2 text-[1.12rem] font-semibold leading-[1.22] tracking-tight text-text">{postureLabel}</p>
           </div>
           <div className="rounded-[1.4rem] border border-border/50 bg-surface px-6 py-5">
             <p className="text-xs uppercase tracking-[0.12em] text-muted">Confidence</p>
-            <p className="mt-2 text-[1.25rem] font-semibold leading-[1.22] tracking-tight text-text">{confidenceLabel}</p>
+            <p className="mt-2 text-[1.12rem] font-semibold leading-[1.22] tracking-tight text-text">{confidenceLabel}</p>
           </div>
           <div className="rounded-[1.4rem] border border-border/50 bg-surface px-6 py-5">
             <p className="text-xs uppercase tracking-[0.12em] text-muted">Session gate</p>
-            <p className="mt-2 text-[1.25rem] font-semibold leading-[1.22] tracking-tight text-text">
+            <p className="mt-2 text-[1.12rem] font-semibold leading-[1.22] tracking-tight text-text">
               {security.auto_scan_enabled ? 'Ready' : 'Review needed'}
             </p>
           </div>
@@ -172,12 +172,12 @@ export function SecurityPage({ security, onClose, onVerify }: SecurityPageProps)
       </section>
 
       <section className="rounded-[1.5rem] bg-surface p-2 md:p-3">
-        <h3 className="px-1 pb-3 pt-1 text-[1.45rem] font-semibold tracking-tight text-text">Controls</h3>
+        <h3 className="px-1 pb-3 pt-1 text-[1.3rem] font-semibold tracking-tight text-text">Controls</h3>
         <div className="grid gap-4 md:grid-cols-2">
           {CONTROL_CARDS.map((card) => (
             <article key={card.id} className="rounded-[1.5rem] bg-surface-muted/85 px-6 py-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <h4 className="text-[1.18rem] font-semibold leading-[1.24] tracking-tight text-text">{card.title}</h4>
+                <h4 className="text-[1.05rem] font-semibold leading-[1.24] tracking-tight text-text">{card.title}</h4>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {renderBadge(card)}
                   <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${chipToneClass(card.stateChip.tone)}`}>{card.stateChip.label}</span>
@@ -185,11 +185,11 @@ export function SecurityPage({ security, onClose, onVerify }: SecurityPageProps)
                 </div>
               </div>
 
-              <p className="mt-3 max-w-[90ch] text-[15px] leading-[1.5] text-muted">{card.description}</p>
+              <p className="mt-3 max-w-[90ch] text-[14px] leading-[1.5] text-muted">{card.description}</p>
 
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <button
-                  className={card.primaryAction.enabled ? 'button-primary px-5 py-2 text-[13px]' : 'button-primary cursor-not-allowed px-5 py-2 text-[13px] opacity-55'}
+                  className={card.primaryAction.enabled ? 'button-primary px-5 py-2 text-[12px]' : 'button-primary cursor-not-allowed px-5 py-2 text-[12px] opacity-55'}
                   disabled={!card.primaryAction.enabled}
                   type="button"
                 >
@@ -198,7 +198,7 @@ export function SecurityPage({ security, onClose, onVerify }: SecurityPageProps)
 
                 {card.secondaryAction ? (
                   <button
-                    className={card.secondaryAction.enabled ? 'button-secondary px-5 py-2 text-[13px]' : 'button-secondary cursor-not-allowed px-5 py-2 text-[13px] opacity-55'}
+                    className={card.secondaryAction.enabled ? 'button-secondary px-5 py-2 text-[12px]' : 'button-secondary cursor-not-allowed px-5 py-2 text-[12px] opacity-55'}
                     disabled={!card.secondaryAction.enabled}
                     type="button"
                   >

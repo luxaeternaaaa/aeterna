@@ -110,6 +110,20 @@ const ACTIVE_TWEAK_TO_CARD: Record<string, string> = {
   'registry:dps_off': 'dps-off',
 }
 
+function formatUnknownError(error: unknown, fallback: string): string {
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim().length > 0) return message
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
+}
+
 function hydrateSelection(runtimeState: OptimizationRuntimeState): Set<string> {
   try {
     const storedRaw = window.localStorage.getItem(STORAGE_KEY)
@@ -639,7 +653,7 @@ export function OptimizationPage({
         })
         return true
       }
-      await onRollbackSnapshot(knownSnapshotId, runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? undefined)
+      await onRollbackSnapshot(knownSnapshotId)
       setSelected((current) => {
         const nextSet = new Set(current)
         nextSet.delete(card.id)
@@ -655,7 +669,7 @@ export function OptimizationPage({
       }
       return true
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Action failed.'
+      const message = formatUnknownError(error, 'Action failed.')
       if (!silent) setStatusText(message)
       return false
     } finally {
@@ -719,13 +733,13 @@ export function OptimizationPage({
         continue
       }
       try {
-        await onRollbackSnapshot(snapshotId, runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? undefined)
+        await onRollbackSnapshot(snapshotId)
         nextSelected.delete(card.id)
         delete nextSnapshotMap[card.id]
         revertedCount += 1
         if (card.requiresReboot) rebootNotice = true
-      } catch {
-        failed.push(card.title)
+      } catch (error) {
+        failed.push(`${card.title} (${formatUnknownError(error, 'rollback failed')})`)
       }
     }
 
