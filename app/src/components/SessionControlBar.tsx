@@ -94,13 +94,13 @@ export function SessionControlBar({
   runtimeState,
   stopBusy,
 }: SessionControlBarProps) {
-  const [clockTick, setClockTick] = useState(0)
+  const [nowMs, setNowMs] = useState(0)
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const sessionPickerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!lastTweakAtMs) return
-    const timer = window.setInterval(() => setClockTick((tick) => tick + 1), 1000)
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [lastTweakAtMs])
 
@@ -122,7 +122,7 @@ export function SessionControlBar({
   const hasBaseline = Boolean(benchmarkBaseline)
   const hasActiveTweaks = runtimeState.session.active_tweaks.length > 0 || runtimeState.session.active_snapshot_ids.length > 0
   const canCaptureBaseline = sessionAttached && !benchmarkBusy
-  const elapsedSeconds = lastTweakAtMs ? Math.floor((Date.now() + clockTick * 0 - lastTweakAtMs) / 1000) : COMPARE_COOLDOWN_SECONDS
+  const elapsedSeconds = lastTweakAtMs && nowMs ? Math.floor((nowMs - lastTweakAtMs) / 1000) : COMPARE_COOLDOWN_SECONDS
   const cooldownRemaining = Math.max(0, COMPARE_COOLDOWN_SECONDS - elapsedSeconds)
   const canCompare = hasBaseline && hasActiveTweaks && cooldownRemaining === 0 && !benchmarkBusy
   const selectedProcessLabel = runtimeState.selected_process?.name ?? runtimeState.session.process_name ?? 'None'

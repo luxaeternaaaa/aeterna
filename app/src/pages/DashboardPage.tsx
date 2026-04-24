@@ -16,6 +16,8 @@ import type {
   ApplyTweakRequest,
   ApplyTweakResponse,
   AttachSessionRequest,
+  BenchmarkReport,
+  BenchmarkWindow,
   DashboardPayload,
   GameProfile,
   OptimizationRuntimeState,
@@ -24,7 +26,9 @@ import type {
 } from '../types'
 
 interface DashboardPageProps {
+  benchmarkBaseline: BenchmarkWindow | null
   dashboard: DashboardPayload
+  latestBenchmark: BenchmarkReport | null
   onApplyRegistryPreset: (request: ApplyRegistryPresetRequest) => Promise<ApplyRegistryPresetResponse>
   onApplyTweak: (request: ApplyTweakRequest) => Promise<ApplyTweakResponse>
   onAttachSession: (request: AttachSessionRequest) => Promise<unknown> | void
@@ -160,20 +164,122 @@ function buildInferenceInput(
   }
 }
 
-export function DashboardPage({
+function formatEvidenceLabel(dashboard: DashboardPayload, runtimeState: OptimizationRuntimeState) {
+  if (dashboard.mode === 'disabled') return { label: 'Off', detail: 'Telemetry is disabled.' }
+  if (dashboard.mode === 'demo') return { label: 'Demo', detail: 'Practice data only.' }
+  if (runtimeState.capture_status.source === 'presentmon') return { label: 'Live', detail: 'Full session capture is attached.' }
+  if (runtimeState.capture_status.quality === 'idle') return { label: 'Waiting', detail: 'Attach a session for live evidence.' }
+  return { label: 'Degraded', detail: 'Local counters are active.' }
+}
+
+function formatSessionLabel(runtimeState: OptimizationRuntimeState) {
+  if (runtimeState.session.pending_registry_restore) return { label: 'Restore first', detail: 'Finish the pending restore before another system preset.' }
+  if (runtimeState.session.state === 'active') return { label: 'Testing', detail: runtimeState.session.process_name ?? 'Session is active.' }
+  if (runtimeState.session.state === 'attached') return { label: 'Attached', detail: runtimeState.session.process_name ?? 'Ready for proof.' }
+  if (runtimeState.detected_game) return { label: 'Detected', detail: runtimeState.detected_game.exe_name }
+  return { label: 'No session', detail: 'Open a game or use system-only optimization.' }
+}
+
+function formatProofLabel(benchmarkBaseline: BenchmarkWindow | null, latestBenchmark: BenchmarkReport | null) {
+  if (latestBenchmark) {
+    const label = latestBenchmark.verdict.charAt(0).toUpperCase() + latestBenchmark.verdict.slice(1)
+    return { label, detail: latestBenchmark.summary }
+  }
+  if (benchmarkBaseline) return { label: 'Baseline ready', detail: 'Apply one change, then compare.' }
+  return { label: 'No baseline', detail: 'Capture one before making proof claims.' }
+}
+
+function DashboardCommandStrip({
+  benchmarkBaseline,
   dashboard,
+  latestBenchmark,
+  onAttachSession,
+  onOpenLogs,
+  onOpenTests,
+  runtimeState,
+}: {
+  benchmarkBaseline: BenchmarkWindow | null
+  dashboard: DashboardPayload
+  latestBenchmark: BenchmarkReport | null
+  onAttachSession: (request: AttachSessionRequest) => Promise<unknown> | void
+  onOpenLogs: () => void
+  onOpenTests: () => void
+  runtimeState: OptimizationRuntimeState
+}) {
+  const session = formatSessionLabel(runtimeState)
+  const proof = formatProofLabel(benchmarkBaseline, latestBenchmark)
+  const evidence = formatEvidenceLabel(dashboard, runtimeState)
+  const undoReady = runtimeState.activity.filter((entry) => entry.can_undo && entry.snapshot_id).length
+  const sessionAttached = runtimeState.session.state === 'attached' || runtimeState.session.state === 'active'
+  const nextAction = runtimeState.session.pending_registry_restore
+    ? { label: 'Open restore history', detail: 'A system preset restore is pending.', onClick: onOpenLogs }
+    : !sessionAttached && runtimeState.detected_game
+      ? {
+          label: 'Attach detected game',
+          detail: `Attach ${runtimeState.detected_game.exe_name} before process-level proof.`,
+          onClick: () =>
+            onAttachSession({
+              process_id: runtimeState.detected_game!.pid,
+              process_name: runtimeState.detected_game!.exe_name,
+            }),
+        }
+      : !benchmarkBaseline
+        ? { label: 'Capture baseline', detail: 'Start the proof path before testing changes.', onClick: onOpenTests }
+        : latestBenchmark
+          ? { label: 'Review result', detail: latestBenchmark.recommended_next_step, onClick: onOpenLogs }
+          : { label: 'Run controlled test', detail: 'Apply one reversible change, then compare.', onClick: onOpenTests }
+
+  return (
+    <Panel title="Next safe move" variant="primary">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_2.1fr]">
+        {[
+          { label: 'Session', value: session.label, detail: session.detail },
+          { label: 'Proof', value: proof.label, detail: proof.detail },
+          { label: 'Evidence', value: evidence.label, detail: evidence.detail },
+        ].map((item) => (
+          <div key={item.label} className="rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3">
+            <p className="text-[11px] uppercase text-muted">{item.label}</p>
+            <p className="mt-2 text-base font-semibold text-text">{item.value}</p>
+            <p className="mt-1 text-sm leading-5 text-muted">{item.detail}</p>
+          </div>
+        ))}
+        <div className="rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3">
+          <p className="text-[11px] uppercase text-muted">Next</p>
+          <p className="mt-2 text-base font-semibold text-text">{nextAction.label}</p>
+          <p className="mt-1 text-sm leading-5 text-muted">{nextAction.detail}</p>
+          <button className="button-primary mt-3 w-full px-3 py-2 text-xs" onClick={() => void nextAction.onClick()} type="button">
+            Continue
+          </button>
+        </div>
+      </div>
+      {undoReady > 0 ? (
+        <button className="button-secondary mt-3 px-3 py-2 text-xs" onClick={onOpenLogs} type="button">
+          {undoReady} rollback point{undoReady === 1 ? '' : 's'} ready
+        </button>
+      ) : null}
+    </Panel>
+  )
+}
+
+export function DashboardPage({
+  benchmarkBaseline,
+  dashboard,
+  latestBenchmark,
   onApplyRegistryPreset,
   onApplyTweak,
-  onAttachSession: _onAttachSession,
-  onOpenLogs: _onOpenLogs,
+  onAttachSession,
+  onOpenLogs,
   onOpenOptimization,
   onOpenTests,
   onRollbackSnapshot,
-  profiles: _profiles,
+  profiles,
   realtime,
   runtimeState,
 }: DashboardPageProps) {
   const currentSample = realtime ?? dashboard.history.at(-1) ?? null
+  const recommendedProfile = profiles.find(
+    (profile) => profile.id === (runtimeState.session.recommended_profile_id ?? runtimeState.detected_game?.recommended_profile_id),
+  )
 
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -292,6 +398,7 @@ export function DashboardPage({
       if (deniedList.size > 0) {
         checks.push(`Deny Function List active: ${deniedList.size} function(s) are blocked for auto-ML.`)
       }
+      checks.push('One-click excludes reboot and elevated boot-timer changes. Use Custom Optimization for those.')
 
       if (cancelRequestedRef.current) {
         setFlowState('cancelled')
@@ -325,6 +432,7 @@ export function DashboardPage({
 
       const availableDefinitions = OPTIMIZATION_FUNCTIONS.filter((definition) => {
         if (ONE_CLICK_EXCLUDED_FUNCTION_IDS.has(definition.id)) return false
+        if (definition.requiresReboot) return false
         if (deniedList.has(definition.id)) return false
         if (definition.processRequired && !sessionProcessId) return false
         return definition.buildRequest({ processId: sessionProcessId, runtimeState }) !== null
@@ -347,6 +455,10 @@ export function DashboardPage({
         if (deniedList.has(functionId)) continue
         const definition = getOptimizationFunctionById(functionId)
         if (!definition) continue
+        if (definition.requiresReboot) {
+          checks.push(`Skipped "${definition.title}" (requires restart, Custom Optimization only).`)
+          continue
+        }
         if (definition.processRequired && !sessionProcessId) {
           checks.push(`Skipped "${definition.title}" (requires attached game session, available in Tests/Optimization).`)
           continue
@@ -436,7 +548,23 @@ export function DashboardPage({
 
   return (
     <div className="space-y-5">
+      <DashboardCommandStrip
+        benchmarkBaseline={benchmarkBaseline}
+        dashboard={dashboard}
+        latestBenchmark={latestBenchmark}
+        onAttachSession={onAttachSession}
+        onOpenLogs={onOpenLogs}
+        onOpenTests={onOpenTests}
+        runtimeState={runtimeState}
+      />
+
       <Panel title="Choose Your Mode" variant="secondary">
+        {recommendedProfile ? (
+          <div className="mb-4 rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3 text-sm text-muted">
+            <span className="font-semibold text-text">{recommendedProfile.title}</span>
+            <span className="ml-2">{recommendedProfile.expected_benefit}</span>
+          </div>
+        ) : null}
         <div className="grid gap-4 lg:grid-cols-3">
           <button
             className="surface-card group text-left transition hover:border-border-strong/70"
@@ -452,7 +580,7 @@ export function DashboardPage({
               <ChevronRight className="text-muted transition group-hover:translate-x-0.5" size={18} />
             </div>
             <p className="mt-4 text-base font-semibold text-text">Start one-click optimization</p>
-            <p className="mt-2 text-sm text-muted">ML-assisted safe plan with bounded automation and rollback.</p>
+            <p className="mt-2 text-sm text-muted">Safe automatic plan. No reboot actions. Rollback snapshots required.</p>
           </button>
 
           <button className="surface-card group text-left transition hover:border-border-strong/70" onClick={onOpenOptimization} type="button">
@@ -483,7 +611,7 @@ export function DashboardPage({
               <ul className="mt-2 space-y-1">
                 <li>- The function builds an ML-assisted safe action plan and applies it automatically after confirmation.</li>
                 <li>- Every applied action creates rollback snapshots so changes can be reverted.</li>
-                <li>- A game session is not required for optimization on Home. Session attach is used only in controlled tests.</li>
+                <li>- Reboot and elevated boot-timer actions stay in Custom Optimization, not one-click.</li>
               </ul>
             </div>
             <label className="surface-card flex items-start gap-3 text-sm text-muted">

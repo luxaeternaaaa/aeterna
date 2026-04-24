@@ -192,6 +192,72 @@ function ToggleSwitch({ active, onToggle }: { active: boolean; onToggle: (next: 
   )
 }
 
+function OptimizerProofStrip({
+  dashboard,
+  runtimeState,
+  selectedCount,
+}: {
+  dashboard: DashboardPayload
+  runtimeState: OptimizationRuntimeState
+  selectedCount: number
+}) {
+  const latestSample = dashboard.history.at(-1) ?? null
+  const sessionAttached = runtimeState.session.state === 'attached' || runtimeState.session.state === 'active'
+  const undoReady = runtimeState.activity.filter((entry) => entry.can_undo && entry.snapshot_id).length
+  const evidence =
+    dashboard.mode === 'demo'
+      ? 'Demo'
+      : runtimeState.capture_status.source === 'presentmon'
+        ? 'Live'
+        : runtimeState.capture_status.quality === 'idle'
+          ? 'Waiting'
+          : 'Degraded'
+  const nextMove = runtimeState.session.pending_registry_restore
+    ? 'Restore pending preset'
+    : sessionAttached
+      ? selectedCount > 0
+        ? 'Compare or revert'
+        : 'Apply one safe function'
+      : runtimeState.detected_game
+        ? 'Attach detected game'
+        : 'Choose system-only function'
+
+  return (
+    <Panel title="Optimizer command" subtitle="One change at a time. Snapshot first. Restore stays visible." variant="primary">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            label: 'Next',
+            value: nextMove,
+            detail: runtimeState.session.pending_registry_restore ? 'Finish restore before new system presets.' : 'Keep the loop short and provable.',
+          },
+          {
+            label: 'Session',
+            value: sessionAttached ? runtimeState.session.process_name ?? 'Attached' : runtimeState.detected_game?.exe_name ?? 'None',
+            detail: sessionAttached ? 'Process-level functions are available.' : 'System-level registry presets remain available.',
+          },
+          {
+            label: 'Evidence',
+            value: evidence,
+            detail: latestSample ? `FPS ${latestSample.fps_avg.toFixed(0)} | p95 ${latestSample.frametime_p95_ms.toFixed(1)} ms` : 'No sample yet.',
+          },
+          {
+            label: 'Undo',
+            value: undoReady > 0 ? `${undoReady} ready` : 'Clean',
+            detail: selectedCount > 0 ? `${selectedCount} enabled function${selectedCount === 1 ? '' : 's'}.` : 'No active local selection.',
+          },
+        ].map((item) => (
+          <div key={item.label} className="rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3">
+            <p className="text-[11px] uppercase text-muted">{item.label}</p>
+            <p className="mt-2 text-base font-semibold text-text">{item.value}</p>
+            <p className="mt-1 text-sm leading-5 text-muted">{item.detail}</p>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  )
+}
+
 function TweakCard({
   card,
   active,
@@ -601,6 +667,10 @@ export function OptimizationPage({
     if (!silent) setStatusText(null)
     try {
       if (next) {
+        if (card.requiresReboot && !silent) {
+          const confirmed = window.confirm(`${card.title} needs a Windows restart to finish.\n\n${card.caution}\n\nCreate a rollback snapshot and continue?`)
+          if (!confirmed) return false
+        }
         if (card.action.kind === 'tweak') {
           const request = await buildTweakRequest(card)
           if (!request) {
@@ -689,6 +759,10 @@ export function OptimizationPage({
       for (const cardId of HIGH_PERFORMANCE_PROFILE_CARD_IDS) {
         const card = cards.find((item) => item.id === cardId)
         if (!card) continue
+        if (card.requiresReboot) {
+          skipped += 1
+          continue
+        }
         if (selected.has(card.id)) {
           skipped += 1
           continue
@@ -759,6 +833,8 @@ export function OptimizationPage({
 
   return (
     <div className="space-y-4">
+      <OptimizerProofStrip dashboard={dashboard} runtimeState={runtimeState} selectedCount={selected.size} />
+
       <Panel className="overflow-hidden p-0" variant="secondary">
         <div className="border-b border-border/70 bg-surface-elevated/90 px-4 py-3">
           <div className="flex flex-wrap gap-2">
@@ -784,7 +860,10 @@ export function OptimizationPage({
           <div className="space-y-4 px-4 py-4">
             <div className="rounded-[1.1rem] border border-border/60 bg-surface px-4 py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-[2rem] font-semibold tracking-tight text-text">Optimization</h2>
+                <div>
+                  <h2 className="text-[1.35rem] font-semibold tracking-tight text-text">System optimizer</h2>
+                  <p className="mt-1 text-sm text-muted">Registry presets are primary tools, but proof and restore come first.</p>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {[
                     { id: 'default', label: 'Default' },

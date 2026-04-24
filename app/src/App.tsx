@@ -1,13 +1,25 @@
-import { startTransition, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { Minus, MoonStar, Square, SunMedium, X } from 'lucide-react'
-import { invoke } from '@tauri-apps/api/core'
 
 import { ConsentModal } from './components/ConsentModal'
 import { Sidebar } from './components/Sidebar'
 import { StartupSkeleton } from './components/StartupSkeleton'
+import { useThemeMode } from './hooks/useThemeMode'
+import { useWindowControls } from './hooks/useWindowControls'
 import { api } from './lib/api'
 import { readStartupCache, writeStartupCache } from './lib/cache'
 import { featureConsent } from './lib/consent'
+import {
+  initialBuild,
+  initialConnection,
+  initialDashboard,
+  initialFlags,
+  initialOptimizationRuntime,
+  initialSecurity,
+  initialSystem,
+  type ConnectionState,
+  type LoadedState,
+} from './lib/defaultState'
 import {
   applyOptimizationTweak,
   applyRegistryPreset,
@@ -41,86 +53,7 @@ import type {
   TelemetryPoint,
 } from './types'
 
-type ConnectionState = { title: string; detail: string }
-type ThemeMode = 'dark' | 'light'
 type PendingConsent = { description: string; key: keyof FeatureFlags; title: string }
-type LoadedState = { dashboard: boolean; logs: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
-
-const THEME_STORAGE_KEY = 'aeterna-theme'
-
-function readInitialTheme(): ThemeMode {
-  if (typeof window === 'undefined') return 'light'
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
-  if (stored === 'dark' || stored === 'light') return stored
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-const initialFlags: FeatureFlags = {
-  telemetry_collect: false,
-  network_optimizer: false,
-  anomaly_detection: false,
-  auto_security_scan: false,
-  cloud_features: false,
-  cloud_training: false,
-}
-const initialSystem: SystemSettings = {
-  privacy_mode: 'local-only',
-  telemetry_retention_days: 14,
-  sampling_interval_seconds: 5,
-  active_profile: 'balanced',
-  allow_outbound_sync: false,
-  telemetry_mode: 'demo',
-  automation_mode: 'manual',
-  automation_allowlist: ['process_priority', 'cpu_affinity', 'power_plan'],
-  registry_presets_enabled: false,
-  show_advanced_registry_details: false,
-}
-const initialDashboard: DashboardPayload = { stats: [], history: [], recommendations: [], session_health: 'Loading', mode: 'demo', badge: 'Loading' }
-const initialSecurity: SecuritySummary = { status: 'low', label: 'normal-session', confidence: 0.89, auto_scan_enabled: false }
-const initialOptimizationRuntime: OptimizationRuntimeState = {
-  processes: [],
-  advanced_processes: [],
-  selected_process: null,
-  power_plans: [],
-  activity: [],
-  last_snapshot: null,
-  session: {
-    state: 'idle',
-    active_tweaks: [],
-    active_snapshot_ids: [],
-    telemetry_source: 'demo',
-    auto_restore_pending: false,
-    pending_registry_restore: false,
-    pending_registry_snapshot_id: null,
-    capture_source: 'counters-fallback',
-    capture_quality: 'idle',
-  },
-  detected_game: null,
-  capture_status: {
-    source: 'counters-fallback',
-    available: true,
-    quality: 'idle',
-    helper_available: false,
-    note: null,
-  },
-  registry_presets: [],
-}
-const initialBuild: BuildMetadata = {
-  version: '1.0.0',
-  build_timestamp: '',
-  git_commit: 'development',
-  runtime_schema_version: '3.0.0',
-  sidecar_protocol_version: '3',
-}
-
-function initialConnection(cache: BootstrapPayload | null): ConnectionState {
-  if (!cache) return { title: 'Runtime starting', detail: 'Preparing the local sidecar and cached shell state.' }
-  return toConnection({ state: 'starting', ready: false, launched_by_app: false }, cache.demo_mode)
-}
-
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-}
 
 export default function App() {
   const cache = useRef(readStartupCache()).current
@@ -128,7 +61,8 @@ export default function App() {
   const bootStarted = useRef(false)
   const bootstrapRef = useRef<BootstrapPayload | null>(cache?.bootstrap ?? null)
   const dashboardRef = useRef<DashboardPayload | null>(cache?.dashboard ?? null)
-  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme)
+  const { setTheme, theme } = useThemeMode()
+  const { closeWindow, isMaximized, minimizeWindow, toggleMaximizeWindow } = useWindowControls()
   const [activePage, setActivePage] = useState<PageId>('home')
   const [connection, setConnection] = useState<ConnectionState>(initialConnection(cache?.bootstrap ?? null))
   const [dashboard, setDashboard] = useState(cache?.dashboard ?? initialDashboard)
@@ -149,7 +83,6 @@ export default function App() {
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
     logs: false,
@@ -158,31 +91,7 @@ export default function App() {
     snapshots: Boolean(cache?.bootstrap?.last_snapshot_meta),
   })
 
-  const minimizeWindow = () => {
-    if (!isTauriRuntime()) return
-    void invoke('minimize_main_window')
-  }
-
-  const toggleMaximizeWindow = () => {
-    if (!isTauriRuntime()) return
-    void invoke<boolean>('toggle_maximize_main_window')
-      .then((value) => setIsMaximized(value))
-      .catch(() => {})
-  }
-
-  const closeWindow = () => {
-    if (!isTauriRuntime()) return
-    void invoke('close_main_window')
-  }
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return
-    void invoke<boolean>('is_main_window_maximized')
-      .then((value) => setIsMaximized(value))
-      .catch(() => {})
-  }, [])
-
-  const hydrateShell = useEffectEvent((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
+  const hydrateShell = useCallback((nextBootstrap: BootstrapPayload, nextDashboard?: DashboardPayload) => {
     bootstrapRef.current = nextBootstrap
     setFeatureFlags({ ...initialFlags, ...nextBootstrap.settings.feature_flags })
     setSettings({ ...initialSystem, ...nextBootstrap.settings.system })
@@ -198,9 +107,9 @@ export default function App() {
       setRealtime(nextDashboard.history.at(-1) ?? null)
     }
     writeStartupCache(nextBootstrap, nextDashboard ?? dashboardRef.current)
-  })
+  }, [])
 
-  const loadDashboard = useEffectEvent(async () => {
+  const loadDashboard = useCallback(async () => {
     const nextDashboard = await api.dashboard()
     startTransition(() => {
       dashboardRef.current = nextDashboard
@@ -209,29 +118,29 @@ export default function App() {
       setLoaded((current) => ({ ...current, dashboard: true }))
     })
     writeStartupCache(bootstrapRef.current, nextDashboard)
-  })
+  }, [])
 
-  const loadSecurity = useEffectEvent(async () => {
+  const loadSecurity = useCallback(async () => {
     const nextSecurity = await api.security()
     setSecurity(nextSecurity)
     setLoaded((current) => ({ ...current, security: true }))
-  })
+  }, [])
 
-  const loadOptimizationRuntime = useEffectEvent(async (processId?: number) => {
+  const loadOptimizationRuntime = useCallback(async (processId?: number) => {
     const nextState = await inspectOptimization(processId)
     startTransition(() => {
       setOptimizationRuntime(nextState)
       setSession(nextState.session)
       setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     })
-  })
+  }, [])
 
-  const loadLogs = useEffectEvent(async () => {
+  const loadLogs = useCallback(async () => {
     setLogs(await api.logs())
     setLoaded((current) => ({ ...current, logs: true }))
-  })
+  }, [])
 
-  const loadSettingsData = useEffectEvent(async () => {
+  const loadSettingsData = useCallback(async () => {
     const [nextFlags, nextSettings, nextSnapshots] = await Promise.all([api.featureFlags(), api.system(), api.snapshots()])
     const nextBootstrap = bootstrapRef.current
       ? {
@@ -253,9 +162,9 @@ export default function App() {
       bootstrapRef.current = nextBootstrap
       writeStartupCache(nextBootstrap, dashboardRef.current)
     }
-  })
+  }, [])
 
-  const loadBenchmarkState = useEffectEvent(async () => {
+  const loadBenchmarkState = useCallback(async () => {
     const [baseline, latest] = await Promise.all([api.benchmarkBaseline(), api.benchmarkLatest()])
     setBenchmarkBaseline(baseline)
     setLatestBenchmark(latest)
@@ -264,13 +173,7 @@ export default function App() {
       bootstrapRef.current = nextBootstrap
       writeStartupCache(nextBootstrap, dashboardRef.current)
     }
-  })
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.documentElement.style.colorScheme = theme
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-  }, [theme])
+  }, [])
 
   useEffect(() => {
     if (bootStarted.current) return
@@ -517,7 +420,9 @@ export default function App() {
     }
     return (
       <DashboardPage
+        benchmarkBaseline={benchmarkBaseline}
         dashboard={dashboard}
+        latestBenchmark={latestBenchmark}
         onApplyRegistryPreset={applySystemPreset}
         onApplyTweak={applySessionTweak}
         onAttachSession={attachSession}
