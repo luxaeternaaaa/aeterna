@@ -1,4 +1,5 @@
 mod activity;
+mod autoruns;
 mod bootcfg;
 mod ml;
 mod models;
@@ -43,12 +44,15 @@ const USB_SELECTIVE_SUSPEND_GUID: &str = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
 const PCIE_SUBGROUP_GUID: &str = "501a4d13-42af-4429-9fd1-a8218c268e20";
 const PCIE_LSPM_GUID: &str = "ee12f906-d277-404b-b6da-e5fa1a576df5";
 
-fn service_name_for_preset(preset_id: &str) -> Option<&'static str> {
+fn service_names_for_preset(preset_id: &str) -> Vec<&'static str> {
     match preset_id {
-        "sysmain_off" => Some("SysMain"),
-        "windows_search_off" => Some("WSearch"),
-        "dps_off" => Some("DPS"),
-        _ => None,
+        "sysmain_off" => vec!["SysMain"],
+        "windows_search_off" => vec!["WSearch"],
+        "dps_off" => vec!["DPS"],
+        "diagtrack_off" => vec!["DiagTrack"],
+        "maps_broker_off" => vec!["MapsBroker"],
+        "xbox_services_off" => vec!["XblAuthManager", "XblGameSave", "XboxNetApiSvc", "XboxGipSvc"],
+        _ => Vec::new(),
     }
 }
 
@@ -132,6 +136,7 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
         advanced_processes,
         selected_process,
         power_plans: power::list_power_plans()?,
+        autoruns: autoruns::list_autoruns().unwrap_or_default(),
         registry_presets: registry::preset_summaries(&session, policy::system_settings().show_advanced_registry_details),
         activity: activity::list_recent(12),
         last_snapshot: snapshots::latest_snapshot(),
@@ -151,6 +156,7 @@ fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, Str
             priority: Some("above_normal".into()),
             affinity_preset: None,
             power_plan_guid: None,
+            autorun_id: None,
         });
     }
     if policy::auto_apply_allowed("cpu_affinity", &session) {
@@ -160,6 +166,7 @@ fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, Str
             priority: None,
             affinity_preset: Some("balanced_threads".into()),
             power_plan_guid: None,
+            autorun_id: None,
         });
     }
     if policy::auto_apply_allowed("power_plan", &session) {
@@ -170,6 +177,7 @@ fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, Str
                 priority: None,
                 affinity_preset: None,
                 power_plan_guid: Some(guid),
+                autorun_id: None,
             });
         }
     }
@@ -499,6 +507,31 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             ))?;
             Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
         }
+        "autorun_disable" => {
+            let autorun_id = request.autorun_id.ok_or("Autorun id is required.")?;
+            let draft = autoruns::build_disable_snapshot(&autorun_id, session_id.clone())?;
+            let snapshot = snapshots::create_snapshot(draft)?;
+            let stored = snapshots::load_snapshot(&snapshot.id)?;
+            autoruns::disable_from_snapshot(&stored)?;
+            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+            telemetry::track_tweak(&snapshot.id, "autorun_disable");
+            let value_name = stored
+                .extra
+                .get("value_name")
+                .and_then(Value::as_str)
+                .unwrap_or("autorun entry")
+                .to_string();
+            let entry = activity::append(snapshots::activity(
+                "tweak",
+                "Autorun disabled",
+                format!("Disabled startup entry {value_name}."),
+                "low",
+                Some(snapshot.id.clone()),
+                session_id,
+                true,
+            ))?;
+            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
+        }
         _ => Err(format!("Unsupported tweak kind: {}", request.kind)),
     }
 }
@@ -587,20 +620,27 @@ fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyReg
     } else {
         registry::build_snapshot(&request.preset_id, session_id.clone())?
     };
-    if let Some(service_name) = service_name_for_preset(&request.preset_id) {
-        let was_running = services::is_service_running(service_name).unwrap_or(false);
-        let old_start = services::query_service_start_type(service_name).ok().flatten();
+    let service_names = service_names_for_preset(&request.preset_id);
+    if !service_names.is_empty() {
+        let states = service_names
+            .iter()
+            .map(|service_name| {
+                json!({
+                    "name": service_name,
+                    "was_running": services::is_service_running(service_name).unwrap_or(false),
+                    "old_start": services::query_service_start_type(service_name).ok().flatten(),
+                })
+            })
+            .collect::<Vec<_>>();
         draft.extra = json!({
-            "kind": "service",
-            "service_name": service_name,
-            "was_running": was_running,
-            "old_start": old_start,
+            "kind": "services",
+            "services": states,
         });
     }
     let snapshot = snapshots::create_snapshot(draft)?;
     let stored = snapshots::load_snapshot(&snapshot.id)?;
     registry::apply_snapshot(&stored)?;
-    if let Some(service_name) = service_name_for_preset(&request.preset_id) {
+    for service_name in &service_names {
         let _ = services::stop_service(service_name);
     }
     let _ = snapshots::mark_snapshot_applied(&snapshot.id);
@@ -670,6 +710,19 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
         if snapshot.extra.get("was_running").and_then(Value::as_bool).unwrap_or(false) {
             if let Some(service_name) = snapshot.extra.get("service_name").and_then(Value::as_str) {
                 let _ = services::start_service(service_name);
+            }
+        }
+    }
+    if snapshot.extra.get("kind").and_then(Value::as_str) == Some("services") {
+        if let Some(service_states) = snapshot.extra.get("services").and_then(Value::as_array) {
+            for service in service_states {
+                let was_running = service.get("was_running").and_then(Value::as_bool).unwrap_or(false);
+                let service_name = service.get("name").and_then(Value::as_str);
+                if was_running {
+                    if let Some(service_name) = service_name {
+                        let _ = services::start_service(service_name);
+                    }
+                }
             }
         }
     }

@@ -11,15 +11,14 @@ import { readStartupCache, writeStartupCache } from './lib/cache'
 import { featureConsent } from './lib/consent'
 import {
   initialBuild,
-  initialConnection,
   initialDashboard,
   initialFlags,
   initialOptimizationRuntime,
   initialSecurity,
   initialSystem,
-  type ConnectionState,
   type LoadedState,
 } from './lib/defaultState'
+import { getOptimizationLevel } from './lib/optimizationLevel'
 import {
   applyOptimizationTweak,
   applyRegistryPreset,
@@ -28,9 +27,11 @@ import {
   inspectOptimization,
   rollbackOptimizationTweak,
 } from './lib/sidecar'
-import { getInitialState, getStartupState, toConnection } from './lib/startup'
+import { getInitialState, getStartupState } from './lib/startup'
+import { getWindowsUsername } from './lib/system'
 import { DashboardPage } from './pages/DashboardPage'
-import { LogsPage } from './pages/LogsPage'
+import { HomePage } from './pages/HomePage'
+import { BackupPage } from './pages/BackupPage'
 import { OptimizationPage } from './pages/OptimizationPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -43,13 +44,13 @@ import type {
   DashboardPayload,
   FeatureFlags,
   GameProfile,
-  LogRecord,
   OptimizationRuntimeState,
   PageId,
   SecuritySummary,
   SnapshotRecord,
   StartupDiagnostics,
   SystemSettings,
+  SystemTelemetryPayload,
   TelemetryPoint,
 } from './types'
 
@@ -64,7 +65,6 @@ export default function App() {
   const { setTheme, theme } = useThemeMode()
   const { closeWindow, isMaximized, minimizeWindow, toggleMaximizeWindow } = useWindowControls()
   const [activePage, setActivePage] = useState<PageId>('home')
-  const [connection, setConnection] = useState<ConnectionState>(initialConnection(cache?.bootstrap ?? null))
   const [dashboard, setDashboard] = useState(cache?.dashboard ?? initialDashboard)
   const [featureFlags, setFeatureFlags] = useState({ ...initialFlags, ...(cache?.bootstrap?.settings.feature_flags ?? {}) })
   const [settings, setSettings] = useState({ ...initialSystem, ...(cache?.bootstrap?.settings.system ?? {}) })
@@ -72,7 +72,6 @@ export default function App() {
   const [build, setBuild] = useState<BuildMetadata>(cache?.bootstrap?.build ?? initialBuild)
   const [benchmarkBaseline, setBenchmarkBaseline] = useState<BenchmarkWindow | null>(cache?.bootstrap?.benchmark_baseline ?? null)
   const [latestBenchmark, setLatestBenchmark] = useState<BenchmarkReport | null>(cache?.bootstrap?.latest_benchmark ?? null)
-  const [logs, setLogs] = useState<LogRecord[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>(cache?.bootstrap?.last_snapshot_meta ? [cache.bootstrap.last_snapshot_meta] : [])
   const [security, setSecurity] = useState<SecuritySummary>(initialSecurity)
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
@@ -83,6 +82,8 @@ export default function App() {
   const [startupDiagnostics, setStartupDiagnostics] = useState<StartupDiagnostics | null>(null)
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null)
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
+  const [systemTelemetry, setSystemTelemetry] = useState<SystemTelemetryPayload | null>(null)
+  const [windowsUsername, setWindowsUsername] = useState('Player')
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
     logs: false,
@@ -135,11 +136,6 @@ export default function App() {
     })
   }, [])
 
-  const loadLogs = useCallback(async () => {
-    setLogs(await api.logs())
-    setLoaded((current) => ({ ...current, logs: true }))
-  }, [])
-
   const loadSettingsData = useCallback(async () => {
     const [nextFlags, nextSettings, nextSnapshots] = await Promise.all([api.featureFlags(), api.system(), api.snapshots()])
     const nextBootstrap = bootstrapRef.current
@@ -184,21 +180,14 @@ export default function App() {
       try {
         const initial = await getStartupState()
         if (disposed) return
-        setConnection(toConnection(initial.sidecar, cache?.bootstrap?.demo_mode ?? true))
         setStartupDiagnostics(initial.sidecar.diagnostics ?? null)
         const fresh = await getInitialState()
         if (disposed) return
         hydrateShell(fresh.bootstrap, fresh.dashboard)
         setStartupDiagnostics(fresh.diagnostics)
-        setConnection(toConnection(initial.sidecar, fresh.bootstrap.demo_mode))
         setLoaded((current) => ({ ...current, dashboard: true }))
       } catch {
         if (disposed) return
-        setConnection(
-          cache?.bootstrap
-            ? { title: 'Using cached local data', detail: 'Refreshing desktop services in the background.' }
-            : { title: 'Runtime starting', detail: 'Waiting for the local bootstrap to become available.' },
-        )
       }
     }
 
@@ -207,7 +196,46 @@ export default function App() {
       disposed = true
       if (retryTimer.current) window.clearTimeout(retryTimer.current)
     }
-  }, [cache?.bootstrap, hydrateShell])
+  }, [hydrateShell])
+
+  useEffect(() => {
+    let disposed = false
+    void getWindowsUsername().then((name) => {
+      if (!disposed) setWindowsUsername(name)
+    })
+    return () => {
+      disposed = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activePage !== 'home') return
+    let disposed = false
+    let busy = false
+
+    const loadSystemTelemetry = async () => {
+      if (busy) return
+      busy = true
+      try {
+        const payload = await api.systemTelemetry()
+        if (!disposed) setSystemTelemetry(payload)
+      } catch {
+        // Keep the last sample visible if Windows counters are warming up.
+      } finally {
+        busy = false
+      }
+    }
+
+    void loadSystemTelemetry()
+    const interval = window.setInterval(() => {
+      void loadSystemTelemetry()
+    }, 1000)
+
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [activePage])
 
   useEffect(() => {
     if (settings.telemetry_mode !== 'live' || !featureFlags.telemetry_collect) return
@@ -231,14 +259,16 @@ export default function App() {
 
   useEffect(() => {
     if (activePage === 'home' && !loaded.dashboard) void loadDashboard()
-    if ((activePage === 'home' || activePage === 'optimize' || activePage === 'tests') && !loaded.optimizationRuntime)
+    if (
+      (activePage === 'home' || activePage === 'ml' || activePage === 'optimize' || activePage === 'tests' || activePage === 'history') &&
+      !loaded.optimizationRuntime
+    )
       void loadOptimizationRuntime(selectedProcessId ?? undefined)
-    if ((activePage === 'home' || activePage === 'optimize' || activePage === 'tests') && !benchmarkBaseline && !latestBenchmark)
+    if ((activePage === 'home' || activePage === 'ml' || activePage === 'optimize' || activePage === 'tests') && !benchmarkBaseline && !latestBenchmark)
       void loadBenchmarkState()
     if (activePage === 'safety' && !loaded.security) void loadSecurity()
-    if ((activePage === 'history' || activePage === 'optimize') && !loaded.logs) void loadLogs()
-    if (activePage === 'settings' && !loaded.snapshots) void loadSettingsData()
-  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadLogs, loadOptimizationRuntime, loadSecurity, loadSettingsData, selectedProcessId])
+    if ((activePage === 'history' || activePage === 'settings') && !loaded.snapshots) void loadSettingsData()
+  }, [activePage, benchmarkBaseline, latestBenchmark, loaded, loadBenchmarkState, loadDashboard, loadOptimizationRuntime, loadSecurity, loadSettingsData, selectedProcessId])
 
   const toggleFlag = async (key: keyof FeatureFlags, value: boolean) => {
     await api.updateFeatureFlags({ ...featureFlags, [key]: value })
@@ -250,35 +280,44 @@ export default function App() {
     setPendingConsent({ key, ...featureConsent[key] })
   }
 
-  const updateProfile = async (profile: string) => {
-    await api.updateSystem({ ...settings, active_profile: profile })
+  const updateSystemSettings = async (nextSettings: SystemSettings) => {
+    const telemetryModeChanged = nextSettings.telemetry_mode !== settings.telemetry_mode
+    const registryDetailChanged =
+      nextSettings.show_advanced_registry_details !== settings.show_advanced_registry_details ||
+      nextSettings.registry_presets_enabled !== settings.registry_presets_enabled
+    await api.updateSystem(nextSettings)
     await loadSettingsData()
-  }
-
-  const updateTelemetryMode = async (mode: SystemSettings['telemetry_mode']) => {
-    await api.updateSystem({ ...settings, telemetry_mode: mode })
-    await loadSettingsData()
-    await loadDashboard()
-    if (mode !== 'live') {
-      setRealtime(dashboardRef.current?.history.at(-1) ?? null)
+    if (telemetryModeChanged) {
+      await loadDashboard()
+      if (nextSettings.telemetry_mode !== 'live') {
+        setRealtime(dashboardRef.current?.history.at(-1) ?? null)
+      }
     }
-  }
-
-  const updateAutomationMode = async (mode: SystemSettings['automation_mode']) => {
-    await api.updateSystem({ ...settings, automation_mode: mode })
-    await loadSettingsData()
-  }
-
-  const updateAdvancedRegistryDetails = async (enabled: boolean) => {
-    await api.updateSystem({ ...settings, show_advanced_registry_details: enabled })
-    await loadSettingsData()
-    await loadOptimizationRuntime(selectedProcessId ?? undefined)
+    if (registryDetailChanged) {
+      await loadOptimizationRuntime(selectedProcessId ?? undefined)
+    }
   }
 
   const inspectSnapshot = async (id: string) => setDiffText((await api.snapshotDiff(id)).diff)
   const restoreSnapshot = async (id: string) => {
     await api.restoreSnapshot(id)
     await loadSettingsData()
+  }
+  const createSnapshot = async (note?: string) => {
+    await api.createSnapshot(note)
+    await loadSettingsData()
+  }
+  const deleteSnapshot = async (id: string) => {
+    await api.deleteSnapshot(id)
+    await loadSettingsData()
+    setDiffText('')
+  }
+  const importSnapshot = async (record: unknown) => {
+    await api.importSnapshot(record)
+    await loadSettingsData()
+  }
+  const refreshBackup = async () => {
+    await Promise.all([loadSettingsData(), loadOptimizationRuntime(selectedProcessId ?? undefined)])
   }
 
   const captureBaseline = async () => {
@@ -347,6 +386,25 @@ export default function App() {
 
   const renderPage = () => {
     if (activePage === 'home' && !loaded.dashboard && dashboard.stats.length === 0) return <StartupSkeleton />
+    if (activePage === 'ml') {
+      return (
+        <DashboardPage
+          benchmarkBaseline={benchmarkBaseline}
+          dashboard={dashboard}
+          latestBenchmark={latestBenchmark}
+          onApplyRegistryPreset={applySystemPreset}
+          onApplyTweak={applySessionTweak}
+          onAttachSession={attachSession}
+          onOpenLogs={() => setActivePage('history')}
+          onOpenOptimization={() => setActivePage('optimize')}
+          onOpenTests={() => setActivePage('tests')}
+          onRollbackSnapshot={rollbackSnapshot}
+          profiles={profiles}
+          realtime={realtime}
+          runtimeState={optimizationRuntime}
+        />
+      )
+    }
     if (activePage === 'tests') {
       return (
         <TestsPage
@@ -391,72 +449,74 @@ export default function App() {
           onApplyRegistryPreset={applySystemPreset}
           onApplyTweak={applySessionTweak}
           onAttachSession={attachSession}
+          onRefresh={() => loadOptimizationRuntime(selectedProcessId ?? undefined)}
           onRollbackSnapshot={rollbackSnapshot}
         />
       )
     }
     if (activePage === 'safety') return <SecurityPage onClose={() => setActivePage('home')} onVerify={() => loadSecurity()} security={security} />
-    if (activePage === 'history') return <LogsPage activity={optimizationRuntime.activity} logs={logs} onOpenOptimization={() => setActivePage('optimize')} />
+    if (activePage === 'history') {
+      return (
+        <BackupPage
+          activity={optimizationRuntime.activity}
+          diffText={diffText}
+          onCreateSnapshot={(note) => createSnapshot(note)}
+          onDeleteSnapshot={(id) => deleteSnapshot(id)}
+          onExportSnapshot={(id) => api.exportSnapshot(id)}
+          onImportSnapshot={(record) => importSnapshot(record)}
+          onInspectSnapshot={(id) => inspectSnapshot(id)}
+          onRefresh={refreshBackup}
+          onRestoreSnapshot={(id) => restoreSnapshot(id)}
+          onRollbackSnapshot={(snapshotId) => rollbackSnapshot(snapshotId, selectedProcessId ?? undefined)}
+          snapshots={snapshots}
+        />
+      )
+    }
     if (activePage === 'settings') {
       return (
         <SettingsPage
           build={build}
-          diffText={diffText}
           featureFlags={featureFlags}
-          onInspectSnapshot={(id) => void inspectSnapshot(id)}
-          onRestoreSnapshot={(id) => void restoreSnapshot(id)}
-          onUpdateAutomationMode={(mode) => void updateAutomationMode(mode)}
-          onUpdateAdvancedRegistryDetails={(enabled) => void updateAdvancedRegistryDetails(enabled)}
           onToggleFlag={(key, value) => requestFlagChange(key, value)}
+          onUpdateSystemSettings={(nextSettings) => updateSystemSettings(nextSettings)}
           onUpdateTheme={(nextTheme) => setTheme(nextTheme)}
-          onUpdateTelemetryMode={(mode) => void updateTelemetryMode(mode)}
-          onUpdateProfile={(profile) => void updateProfile(profile)}
           settings={settings}
-          snapshots={snapshots}
           startupDiagnostics={startupDiagnostics}
           theme={theme}
         />
       )
     }
     return (
-      <DashboardPage
-        benchmarkBaseline={benchmarkBaseline}
+      <HomePage
+        build={build}
         dashboard={dashboard}
-        latestBenchmark={latestBenchmark}
-        onApplyRegistryPreset={applySystemPreset}
-        onApplyTweak={applySessionTweak}
-        onAttachSession={attachSession}
-        onOpenLogs={() => setActivePage('history')}
+        onOpenMl={() => setActivePage('ml')}
         onOpenOptimization={() => setActivePage('optimize')}
         onOpenTests={() => setActivePage('tests')}
-        onRollbackSnapshot={rollbackSnapshot}
-        profiles={profiles}
         realtime={realtime}
         runtimeState={optimizationRuntime}
+        systemTelemetry={systemTelemetry}
+        username={windowsUsername}
       />
     )
   }
 
-  return (
-    <main className="h-screen bg-transparent">
-      <div className={`flex h-full w-full flex-col overflow-hidden bg-canvas ${isMaximized ? '' : 'mx-auto max-w-[1280px] rounded-[1.7rem]'}`}>
-        <header className="grid h-[62px] grid-cols-[auto_1fr_auto] items-center border-b border-border/70 bg-surface-elevated/95 px-3">
-          <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
-            <div className="grid h-9 w-9 place-items-center rounded-lg border border-border/70 bg-surface">
-              <span className="text-sm font-semibold tracking-tight text-text">A</span>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-surface px-3 py-2">
-              <p className="text-[11px] uppercase tracking-[0.15em] text-muted">Session</p>
-              <p className="text-sm font-semibold text-text">{connection.title}</p>
-            </div>
-          </div>
+  const optimizationLevel = getOptimizationLevel(optimizationRuntime)
 
-          <div data-tauri-drag-region className="h-10" />
+  return (
+    <main className="h-screen bg-[#081026]">
+      <div
+        className={`flex h-full w-full flex-col overflow-hidden bg-[radial-gradient(circle_at_76%_18%,rgba(38,95,196,0.34),transparent_36%),radial-gradient(circle_at_38%_84%,rgba(84,45,185,0.28),transparent_42%),linear-gradient(135deg,#171251_0%,#0b1b3f_52%,#0d2a4b_100%)] ${
+          isMaximized ? '' : 'rounded-[1.7rem]'
+        }`}
+      >
+        <header className="grid h-[58px] grid-cols-[1fr_auto] items-center bg-transparent px-4">
+          <div data-tauri-drag-region className="h-full" />
 
           <div className="window-no-drag flex items-center gap-1">
             <button
               aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              className="window-control inline-flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-surface px-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted transition hover:bg-hover hover:text-text"
+              className="window-control inline-flex h-9 items-center gap-2 rounded-full bg-[#070b1b]/78 px-3 text-xs font-semibold text-white/82 transition hover:bg-[#111936] hover:text-white"
               onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
               type="button"
             >
@@ -465,7 +525,7 @@ export default function App() {
             </button>
             <button
               aria-label="Minimize"
-              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-hover hover:text-text"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-black/75 transition hover:bg-white/20 hover:text-black"
               onClick={minimizeWindow}
               type="button"
             >
@@ -473,7 +533,7 @@ export default function App() {
             </button>
             <button
               aria-label="Maximize or restore"
-              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-hover hover:text-text"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-black/75 transition hover:bg-white/20 hover:text-black"
               onClick={toggleMaximizeWindow}
               type="button"
             >
@@ -481,7 +541,7 @@ export default function App() {
             </button>
             <button
               aria-label="Close"
-              className="window-control grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-danger/25 hover:text-text"
+              className="window-control grid h-9 w-9 place-items-center rounded-lg text-black/75 transition hover:bg-danger/40 hover:text-black"
               onClick={closeWindow}
               type="button"
             >
@@ -490,9 +550,13 @@ export default function App() {
           </div>
         </header>
 
-        <div className={`grid min-h-0 flex-1 grid-cols-[78px_1fr] ${isMaximized ? 'gap-2 p-1.5' : 'gap-3 p-2.5'}`}>
-          <Sidebar activePage={activePage} onSelect={setActivePage} />
-          <section className={`min-h-0 overflow-auto bg-surface/95 ${isMaximized ? 'rounded-[1rem] p-4' : 'rounded-[1.5rem] p-4 md:p-5'}`}>{renderPage()}</section>
+        <div
+          className={`grid min-h-0 flex-1 grid-cols-[78px_minmax(0,1fr)] gap-3 lg:grid-cols-[276px_minmax(0,1fr)] lg:gap-5 ${
+            isMaximized ? 'p-3 pt-0' : 'p-3 pt-0 lg:p-4 lg:pt-0'
+          }`}
+        >
+          <Sidebar activePage={activePage} optimizationLevel={optimizationLevel} onSelect={setActivePage} />
+          <section className="min-h-0 overflow-auto overflow-x-hidden rounded-[1.55rem] bg-transparent p-2 pr-3">{renderPage()}</section>
         </div>
       </div>
       {pendingConsent ? (

@@ -26,6 +26,7 @@ const fallbackState: OptimizationRuntimeState = {
   advanced_processes: [],
   selected_process: null,
   power_plans: [],
+  autoruns: [],
   activity: [],
   last_snapshot: null,
   session: {

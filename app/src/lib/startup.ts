@@ -2,7 +2,7 @@ import { api } from './api'
 import { getSidecarStatus, startSidecar } from './sidecar'
 import { markBootstrapLoaded } from './runtime'
 
-import type { BootstrapPayload, DashboardPayload, SidecarStatusPayload } from '../types'
+import type { BootstrapPayload, DashboardPayload } from '../types'
 
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -33,20 +33,6 @@ async function waitForDashboard(attempts = 8): Promise<DashboardPayload> {
     }
   }
   throw lastError ?? new Error('Dashboard failed')
-}
-
-
-export function toConnection(status: SidecarStatusPayload, demoMode = true) {
-  if (status.ready) {
-    return {
-      title: 'Optimization runtime ready',
-      detail: demoMode ? 'Sidecar online | cached local data active' : 'Sidecar online | local-only control path',
-    }
-  }
-  return {
-    title: 'Optimization runtime starting',
-    detail: 'Preparing the local sidecar and restoring the last shell state...',
-  }
 }
 
 

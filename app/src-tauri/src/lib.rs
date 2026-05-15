@@ -55,6 +55,20 @@ fn is_main_window_maximized(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_windows_username() -> String {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .and_then(|path| std::path::Path::new(&path).file_name().map(|name| name.to_string_lossy().to_string()))
+        })
+        .unwrap_or_else(|| "Player".into())
+}
+
+#[tauri::command]
 fn restart_windows() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -99,6 +113,7 @@ pub fn run() {
             ml_runtime_truth,
             startup_diagnostics,
             mark_bootstrap_loaded,
+            get_windows_username,
             minimize_main_window,
             toggle_maximize_main_window,
             close_main_window,

@@ -10,6 +10,7 @@ import type {
   SecuritySummary,
   SnapshotRecord,
   SystemSettings,
+  SystemTelemetryPayload,
   TelemetryPoint,
 } from '../types'
 import { ensureBackendReady } from './runtime'
@@ -51,9 +52,16 @@ export const api = {
   rollbackModel: (id: string) => request<{ ok: boolean; message: string }>(`/api/models/${id}/rollback`, { method: 'POST' }),
   logs: () => request<LogRecord[]>('/api/logs'),
   snapshots: () => request<SnapshotRecord[]>('/api/snapshots'),
+  createSnapshot: (note?: string) =>
+    request<SnapshotRecord>('/api/snapshots', { method: 'POST', body: JSON.stringify({ note: note ?? null }) }),
+  importSnapshot: (record: unknown) =>
+    request<SnapshotRecord>('/api/snapshots/import', { method: 'POST', body: JSON.stringify({ record }) }),
+  exportSnapshot: (id: string) => request<Record<string, unknown>>(`/api/snapshots/${id}/export`),
+  deleteSnapshot: (id: string) => request<{ ok: boolean; message: string }>(`/api/snapshots/${id}`, { method: 'DELETE' }),
   restoreSnapshot: (id: string) => request<{ ok: boolean; message: string }>(`/api/snapshots/${id}/restore`, { method: 'POST' }),
   snapshotDiff: (id: string) => request<{ diff: string }>(`/api/snapshots/${id}/diff`),
   security: () => request<SecuritySummary>('/api/security'),
+  systemTelemetry: () => request<SystemTelemetryPayload>('/api/system/telemetry'),
   optimization: () => request<OptimizationSummary>('/api/optimization'),
   telemetrySocket: (onMessage: (payload: TelemetryPoint) => void) => {
     void ensureBackendReady()

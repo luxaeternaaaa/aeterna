@@ -36,6 +36,7 @@ export async function getBackendStatus(): Promise<RuntimeStatusPayload> {
 
 
 export async function ensureBackendReady() {
+  if (!isTauriRuntime()) return fallbackStatus
   const status = await startBackend()
   if (status.ready) return status
   for (let attempt = 0; attempt < 14; attempt += 1) {

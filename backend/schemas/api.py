@@ -52,6 +52,16 @@ class DashboardPayload(BaseModel):
     badge: str
 
 
+class SystemTelemetryPayload(BaseModel):
+    timestamp: str
+    cpu_total_pct: float
+    gpu_usage_pct: float | None = None
+    ram_used_gb: float
+    ram_total_gb: float
+    memory_pressure_pct: float
+    source: str
+
+
 class GameProfile(BaseModel):
     id: str
     game: str
@@ -166,6 +176,14 @@ class SnapshotRecord(BaseModel):
     created_at: str
     note: str
     surface: Literal["config"] = "config"
+
+
+class SnapshotCreateRequest(BaseModel):
+    note: str | None = None
+
+
+class SnapshotImportRequest(BaseModel):
+    record: dict[str, object]
 
 
 class ActivityEntry(BaseModel):

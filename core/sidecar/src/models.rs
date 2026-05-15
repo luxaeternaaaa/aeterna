@@ -58,6 +58,17 @@ pub struct PowerPlanSummary {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct AutorunEntry {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub location: String,
+    pub command: String,
+    pub enabled: bool,
+    pub supported: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct RegistryPresetSummary {
     pub id: String,
     pub title: String,
@@ -161,6 +172,8 @@ pub struct OptimizationStatePayload {
     pub selected_process: Option<SelectedProcessState>,
     pub power_plans: Vec<PowerPlanSummary>,
     #[serde(default)]
+    pub autoruns: Vec<AutorunEntry>,
+    #[serde(default)]
     pub registry_presets: Vec<RegistryPresetSummary>,
     pub activity: Vec<ActivityEntry>,
     pub last_snapshot: Option<SnapshotMeta>,
@@ -187,6 +200,8 @@ pub struct ApplyTweakRequest {
     pub priority: Option<String>,
     pub affinity_preset: Option<String>,
     pub power_plan_guid: Option<String>,
+    #[serde(default)]
+    pub autorun_id: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

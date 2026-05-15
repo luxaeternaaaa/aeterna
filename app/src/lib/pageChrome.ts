@@ -100,6 +100,16 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
         proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
         optionalSecondaryStatus: { label: 'Evidence', value: evidence.label, detail: evidence.detail },
       }
+    case 'ml':
+      return {
+        eyebrow: 'Aeterna AI',
+        title: 'ML Optimization',
+        subtitle: 'One-click plan, rollback, proof.',
+        primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
+        primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
+        proofState: { label: 'Proof', value: surfaceState.proofState.label, detail: proof.detail },
+        optionalSecondaryStatus: { label: 'Model', value: optimization.model_source, detail: optimization.next_action ?? 'Waiting for local inference.' },
+      }
     case 'optimize':
       return {
         eyebrow: 'Optimize',

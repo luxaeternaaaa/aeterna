@@ -10,6 +10,7 @@ from backend.api.routers.realtime import router as realtime_router
 from backend.api.routers.settings import router as settings_router
 from backend.api.routers.snapshots import router as snapshots_router
 from backend.api.routers.summary import router as summary_router
+from backend.api.routers.system import router as system_router
 
 
 api_router = APIRouter()
@@ -22,4 +23,5 @@ api_router.include_router(models_router)
 api_router.include_router(logs_router)
 api_router.include_router(snapshots_router)
 api_router.include_router(summary_router)
+api_router.include_router(system_router)
 api_router.include_router(realtime_router)

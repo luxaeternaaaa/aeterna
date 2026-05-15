@@ -1,4 +1,4 @@
-export type PageId = 'home' | 'optimize' | 'tests' | 'safety' | 'history' | 'settings'
+export type PageId = 'home' | 'ml' | 'optimize' | 'tests' | 'safety' | 'history' | 'settings'
 export type EvidenceStage = 'Live' | 'Degraded' | 'Demo' | 'Unavailable'
 export type SessionStageLabel = 'No session' | 'Attached' | 'Testing' | 'Restored' | 'Blocked'
 export type ProofStageLabel = 'No baseline' | 'Ready to test' | 'Comparison ready' | 'Inconclusive'
@@ -51,6 +51,16 @@ export interface DashboardPayload {
   session_health: string
   mode: 'demo' | 'live' | 'disabled'
   badge: string
+}
+
+export interface SystemTelemetryPayload {
+  timestamp: string
+  cpu_total_pct: number
+  gpu_usage_pct: number | null
+  ram_used_gb: number
+  ram_total_gb: number
+  memory_pressure_pct: number
+  source: string
 }
 
 export interface GameProfile {
@@ -327,6 +337,16 @@ export interface PowerPlanSummary {
   active: boolean
 }
 
+export interface AutorunEntry {
+  id: string
+  name: string
+  source: string
+  location: string
+  command: string
+  enabled: boolean
+  supported: boolean
+}
+
 export interface ActivityEntry {
   id: string
   timestamp: string
@@ -347,6 +367,7 @@ export interface OptimizationRuntimeState {
   advanced_processes: ProcessSummary[]
   selected_process: SelectedProcessState | null
   power_plans: PowerPlanSummary[]
+  autoruns: AutorunEntry[]
   registry_presets: RegistryPresetSummary[]
   activity: ActivityEntry[]
   last_snapshot: SnapshotRecord | null
@@ -368,10 +389,12 @@ export interface ApplyTweakRequest {
     | 'low_timer_resolution'
     | 'usb_selective_suspend_off'
     | 'pcie_lspm_off'
+    | 'autorun_disable'
   process_id?: number
   priority?: 'above_normal' | 'high'
   affinity_preset?: 'all_threads' | 'balanced_threads' | 'one_thread_per_core'
   power_plan_guid?: string
+  autorun_id?: string
 }
 
 export interface ApplyRegistryPresetRequest {

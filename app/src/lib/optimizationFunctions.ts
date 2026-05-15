@@ -193,6 +193,97 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     description: 'Disable DPS startup and stop running service.',
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'dps_off', process_id: processId ?? undefined } }),
   },
+  {
+    id: 'diagtrack-off',
+    title: 'Disable telemetry service',
+    description: 'Disable Connected User Experiences and Telemetry service startup.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'diagtrack_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'maps-broker-off',
+    title: 'Disable maps broker service',
+    description: 'Disable offline maps maintenance service startup.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'maps_broker_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'xbox-services-off',
+    title: 'Disable Xbox services',
+    description: 'Disable Xbox background services when they are not used.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'xbox_services_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'consumer-features-off',
+    title: 'Disable consumer content',
+    description: 'Block suggested apps and consumer content provisioning.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'consumer_features_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'content-delivery-off',
+    title: 'Disable promoted content',
+    description: 'Disable suggested apps and promoted content for the current user.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'content_delivery_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'widgets-off',
+    title: 'Disable Widgets and News',
+    description: 'Disable Windows Widgets/News background surface by policy.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'widgets_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'advertising-id-off',
+    title: 'Disable advertising ID',
+    description: 'Disable the per-user advertising identifier.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'advertising_id_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'telemetry-minimal',
+    title: 'Minimal Windows telemetry',
+    description: 'Set diagnostic telemetry policy to the minimum value.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'telemetry_minimal', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'feedback-frequency-off',
+    title: 'Disable feedback prompts',
+    description: 'Disable Windows feedback prompt frequency for the current user.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'feedback_frequency_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'activity-history-off',
+    title: 'Disable activity history sync',
+    description: 'Disable activity history publishing and upload policies.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'activity_history_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'windows-error-reporting-off',
+    title: 'Disable Windows Error Reporting',
+    description: 'Disable Windows Error Reporting background collection.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'windows_error_reporting_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'app-launch-tracking-off',
+    title: 'Disable app launch tracking',
+    description: 'Disable app launch tracking used by Start personalization.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'app_launch_tracking_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'smartscreen-on',
+    title: 'Keep SmartScreen enabled',
+    description: 'Explicitly keep Windows SmartScreen enabled while optimizing.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'smartscreen_on', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'memory-integrity-off',
+    title: 'Disable Memory Integrity',
+    description: 'Disable VBS Memory Integrity where it causes latency overhead.',
+    requiresReboot: true,
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'memory_integrity_off', process_id: processId ?? undefined } }),
+  },
+  {
+    id: 'ntfs-last-access-off',
+    title: 'Disable NTFS last access updates',
+    description: 'Disable last access timestamp updates to reduce metadata writes.',
+    buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'ntfs_last_access_off', process_id: processId ?? undefined } }),
+  },
 ]
 
 const FUNCTION_BY_ID = new Map(OPTIMIZATION_FUNCTIONS.map((item) => [item.id, item]))

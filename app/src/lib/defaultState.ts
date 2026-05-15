@@ -1,6 +1,4 @@
-import { toConnection } from './startup'
 import type {
-  BootstrapPayload,
   BuildMetadata,
   DashboardPayload,
   FeatureFlags,
@@ -9,7 +7,6 @@ import type {
   SystemSettings,
 } from '../types'
 
-export type ConnectionState = { title: string; detail: string }
 export type LoadedState = { dashboard: boolean; logs: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
 
 export const initialFlags: FeatureFlags = {
@@ -55,6 +52,7 @@ export const initialOptimizationRuntime: OptimizationRuntimeState = {
   advanced_processes: [],
   selected_process: null,
   power_plans: [],
+  autoruns: [],
   activity: [],
   last_snapshot: null,
   session: {
@@ -85,9 +83,4 @@ export const initialBuild: BuildMetadata = {
   git_commit: 'development',
   runtime_schema_version: '3.0.0',
   sidecar_protocol_version: '3',
-}
-
-export function initialConnection(cache: BootstrapPayload | null): ConnectionState {
-  if (!cache) return { title: 'Runtime starting', detail: 'Preparing the local sidecar and cached shell state.' }
-  return toConnection({ state: 'starting', ready: false, launched_by_app: false }, cache.demo_mode)
 }

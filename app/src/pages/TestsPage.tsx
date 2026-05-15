@@ -26,7 +26,7 @@ import type {
 const PASS_SECONDS = 60
 
 const DEMO_BASELINE_VIEW = {
-  game_name: 'cs2.exe',
+  game_name: 'game.exe',
   capture_source: 'counters-fallback',
   sample_count: 60,
   fps_avg: 190.0,
