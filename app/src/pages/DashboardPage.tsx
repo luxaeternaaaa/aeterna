@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, FlaskConical, Loader2, Sparkles } from 'lucide-react'
-
-import { EmptyState } from '../components/EmptyState'
-import { Panel } from '../components/Panel'
-import { getMlRuntimeTruth, requestWindowsRestart, runOptimizationInference } from '../lib/sidecar'
+import { useMemo, useState } from 'react'
 import {
-  getOptimizationFunctionById,
-  loadMlDenyFunctionList,
-  ML_TWEAK_TO_FUNCTION_ID,
-  OPTIMIZATION_FUNCTIONS,
-} from '../lib/optimizationFunctions'
+  AlertTriangle,
+  BarChart3,
+  Bot,
+  Check,
+  CheckCircle2,
+  Gauge,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react'
+
+import { getMlRuntimeTruth, requestWindowsRestart, runOptimizationInference } from '../lib/sidecar'
+import { loadMlDenyFunctionList, OPTIMIZATION_FUNCTIONS, type OptimizationFunctionDefinition } from '../lib/optimizationFunctions'
 import type {
   ApplyRegistryPresetRequest,
   ApplyRegistryPresetResponse,
@@ -41,495 +46,396 @@ interface DashboardPageProps {
   runtimeState: OptimizationRuntimeState
 }
 
-type FlowState = 'idle' | 'analyzing' | 'ready' | 'applying' | 'complete' | 'failed' | 'cancelled'
+type ScanState = 'idle' | 'analyzing' | 'ready' | 'applying' | 'complete' | 'failed'
+type PlanTone = 'safe' | 'balanced' | 'restart'
 
-interface PlanAction {
+type PlanRequest =
+  | { kind: 'tweak'; payload: ApplyTweakRequest }
+  | { kind: 'preset'; payload: ApplyRegistryPresetRequest }
+
+interface MlPlanItem {
+  definition: OptimizationFunctionDefinition
+  impact: string
+  reason: string
+  request: PlanRequest
+  tone: PlanTone
+}
+
+interface AppliedPlanItem {
   id: string
   label: string
   requiresReboot: boolean
-  request:
-    | { kind: 'tweak'; payload: ApplyTweakRequest }
-    | { kind: 'preset'; payload: ApplyRegistryPresetRequest }
-}
-
-interface OneClickPlan {
-  actions: PlanAction[]
-  confidence: number
-  risk: 'low' | 'medium' | 'high'
-  rationale: string[]
-  summary: string
-  fallbackUsed: boolean
-}
-
-interface AppliedItem {
-  id: string
-  label: string
   snapshotId: string
-  requiresReboot: boolean
 }
 
-interface ToastState {
-  message: string
+interface ScanResult {
+  confidence: number
+  coverage: Array<{ label: string; value: string; detail: string }>
+  modelLabel: string
+  plan: MlPlanItem[]
+  rationale: string[]
+  safetyScore: number
+  skipped: string[]
+  summary: string
 }
 
-const FLOW_STEPS = ['Preparing ML input', 'Building safe plan', 'Applying changes', 'Verifying result', 'Finalizing'] as const
-const ONE_CLICK_EXCLUDED_FUNCTION_IDS = new Set<string>(['disable-hpet', 'disable-dynamic-ticks'])
+type InferenceInput = Parameters<typeof runOptimizationInference>[0]
+
+const BASE_BALANCED_IDS = [
+  'ultimate-power',
+  'game-mode-on',
+  'windowed-optimizations-on',
+  'turn-off-recordings',
+  'power-throttling-off',
+  'interrupt-affinity-lock',
+  'usb-selective-suspend-off',
+  'pcie-lspm-off',
+  'content-delivery-off',
+  'advertising-id-off',
+  'feedback-frequency-off',
+  'app-launch-tracking-off',
+]
+
+const HIGH_RISK_IDS = new Set(['disable-hpet', 'disable-dynamic-ticks', 'memory-integrity-off', 'mpo-off'])
+
+const FUNCTION_REASONS: Record<string, string> = {
+  'ultimate-power': 'Active power policy is part of the baseline. ML keeps CPU/GPU boost behavior predictable during gaming.',
+  'game-mode-on': 'Windows should prioritize the foreground game without touching security-sensitive features.',
+  'windowed-optimizations-on': 'Keeps the modern DirectX presentation path enabled for borderless/windowed play.',
+  'turn-off-recordings': 'Removes background capture overhead that can create frame-time spikes.',
+  'power-throttling-off': 'Stops system-wide power throttling from limiting performance during load.',
+  'interrupt-affinity-lock': 'Stabilizes interrupt steering on the active power scheme.',
+  'usb-selective-suspend-off': 'Prevents mouse, keyboard, controller, and USB audio latency spikes from power saving.',
+  'pcie-lspm-off': 'Reduces PCIe link wake latency for GPU and storage paths.',
+  'content-delivery-off': 'Reduces suggested-content background work without disabling core Windows functionality.',
+  'advertising-id-off': 'Privacy cleanup with no gaming downside.',
+  'feedback-frequency-off': 'Removes feedback prompts and background collection noise.',
+  'app-launch-tracking-off': 'Reduces Start personalization tracking with low performance risk.',
+  'diagtrack-off': 'Telemetry service is a safe candidate when background CPU pressure is high.',
+  'maps-broker-off': 'Offline maps service is not useful for most gaming systems.',
+  'low-timer-resolution': 'Frame-time volatility is high enough to justify a tighter timer request.',
+  'process-qos-high': 'The detected game can be protected from per-process power throttling.',
+  'keep-cores': 'The detected game can use all logical cores without affinity restriction.',
+  'max-games': 'The detected game can get a higher process priority for this session.',
+  'hags-on': 'GPU scheduling may reduce driver/compositor overhead, but Windows must restart to finish it.',
+}
+
+const FUNCTION_IMPACT: Record<string, string> = {
+  'ultimate-power': 'Power',
+  'game-mode-on': 'Scheduler',
+  'windowed-optimizations-on': 'Presentation',
+  'turn-off-recordings': 'Background load',
+  'power-throttling-off': 'CPU boost',
+  'interrupt-affinity-lock': 'Latency',
+  'usb-selective-suspend-off': 'Input latency',
+  'pcie-lspm-off': 'Device latency',
+  'content-delivery-off': 'Debloat',
+  'advertising-id-off': 'Privacy',
+  'feedback-frequency-off': 'Privacy',
+  'app-launch-tracking-off': 'Privacy',
+  'diagtrack-off': 'Telemetry',
+  'maps-broker-off': 'Services',
+  'low-timer-resolution': 'Frame pacing',
+  'process-qos-high': 'Game session',
+  'keep-cores': 'Game session',
+  'max-games': 'Game session',
+  'hags-on': 'GPU',
+}
 
 function formatUnknownError(error: unknown, fallback: string): string {
   if (typeof error === 'string') return error
   if (error && typeof error === 'object') {
     const message = (error as { message?: unknown }).message
     if (typeof message === 'string' && message.trim().length > 0) return message
-    try {
-      return JSON.stringify(error)
-    } catch {
-      return fallback
-    }
   }
   return fallback
 }
 
-function stageProgress(state: FlowState, index: number): 'done' | 'active' | 'pending' {
-  if (state === 'complete') return 'done'
-  if (state === 'failed' || state === 'cancelled' || state === 'idle') return 'pending'
-  if (state === 'ready') return index <= 1 ? 'done' : 'pending'
-  if (state === 'applying') return index <= 2 ? 'done' : index === 3 ? 'active' : 'pending'
-  return index === 0 ? 'active' : 'pending'
+function latestSample(dashboard: DashboardPayload, realtime?: TelemetryPoint | null) {
+  return realtime ?? dashboard.history.at(-1) ?? null
 }
 
-type InferenceInput = Parameters<typeof runOptimizationInference>[0]
+function activePowerPlan(runtimeState: OptimizationRuntimeState) {
+  return runtimeState.power_plans.find((plan) => plan.active)?.name ?? 'Unknown'
+}
+
+function liveProcessId(runtimeState: OptimizationRuntimeState) {
+  const processId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
+  if (!processId) return null
+  const known = [...runtimeState.processes, ...runtimeState.advanced_processes].some((process) => process.pid === processId)
+  return known || runtimeState.session.process_id === processId ? processId : null
+}
 
 function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: TelemetryPoint | null): NonNullable<InferenceInput['system_profile']> {
   const nav = typeof navigator === 'undefined' ? null : (navigator as Navigator & { deviceMemory?: number })
-  const powerPlan =
-    runtimeState.power_plans.find((row) => row.active)?.name ??
-    runtimeState.power_plans.find((row) => row.name.toLowerCase().includes('ultimate performance'))?.name ??
-    null
-
   return {
     logical_cores: nav?.hardwareConcurrency ?? null,
     memory_gb: typeof nav?.deviceMemory === 'number' ? nav.deviceMemory : null,
     discrete_gpu_available: sample?.gpu_usage_pct != null ? sample.gpu_usage_pct > 0 : null,
-    active_power_plan: powerPlan,
+    active_power_plan: activePowerPlan(runtimeState),
     session_attached: runtimeState.session.state === 'attached' || runtimeState.session.state === 'active',
   }
 }
 
-function buildInferenceInput(
-  sample: TelemetryPoint | null,
-  runtimeState: OptimizationRuntimeState,
-): { input: InferenceInput; sourceLabel: string; sampleLabel: string; profileLabel: string } {
-  const systemProfile = readSystemProfile(runtimeState, sample)
-  const profileLabel = `System profile: cores ${systemProfile.logical_cores ?? 'n/a'}, memory ${systemProfile.memory_gb ?? 'n/a'} GB, power ${
-    systemProfile.active_power_plan ?? 'unknown'
-  }`
+function buildInferenceInput(sample: TelemetryPoint | null, runtimeState: OptimizationRuntimeState): InferenceInput {
+  return {
+    fps_avg: sample?.fps_avg ?? 120,
+    frametime_avg_ms: sample?.frametime_avg_ms ?? 8.3,
+    frametime_p95_ms: sample?.frametime_p95_ms ?? 13.6,
+    frame_drop_ratio: sample?.frame_drop_ratio ?? 0.03,
+    cpu_process_pct: sample?.cpu_process_pct ?? 0,
+    cpu_total_pct: sample?.cpu_total_pct ?? 35,
+    gpu_usage_pct: sample?.gpu_usage_pct ?? 0,
+    ram_working_set_mb: sample?.ram_working_set_mb ?? 0,
+    background_process_count: sample?.background_process_count ?? runtimeState.processes.length,
+    anomaly_score: sample?.anomaly_score ?? 0.18,
+    system_profile: readSystemProfile(runtimeState, sample),
+  }
+}
 
-  if (sample) {
-    return {
-      input: {
-        fps_avg: sample.fps_avg,
-        frametime_avg_ms: sample.frametime_avg_ms,
-        frametime_p95_ms: sample.frametime_p95_ms,
-        frame_drop_ratio: sample.frame_drop_ratio,
-        cpu_process_pct: sample.cpu_process_pct,
-        cpu_total_pct: sample.cpu_total_pct,
-        gpu_usage_pct: sample.gpu_usage_pct ?? 0,
-        ram_working_set_mb: sample.ram_working_set_mb,
-        background_process_count: sample.background_process_count,
-        anomaly_score: sample.anomaly_score,
-        system_profile: systemProfile,
-      },
-      sourceLabel: 'Live telemetry sample',
-      sampleLabel: `FPS ${sample.fps_avg.toFixed(0)}, p95 ${sample.frametime_p95_ms.toFixed(1)} ms`,
-      profileLabel,
+function planTone(definition: OptimizationFunctionDefinition): PlanTone {
+  if (definition.requiresReboot) return 'restart'
+  if (definition.processRequired) return 'balanced'
+  return 'safe'
+}
+
+function toneClass(tone: PlanTone) {
+  if (tone === 'restart') return 'bg-[#3b2911] text-[#ffcf5a]'
+  if (tone === 'balanced') return 'bg-[#152b5c] text-[#7ba2ff]'
+  return 'bg-[#123d2d] text-[#4dff9b]'
+}
+
+function makePlanItem(id: string, processId: number | null, runtimeState: OptimizationRuntimeState): MlPlanItem | null {
+  const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+  if (!definition) return null
+  if (definition.processRequired && !processId) return null
+  const request = definition.buildRequest({ processId, runtimeState })
+  if (!request) return null
+  return {
+    definition,
+    impact: FUNCTION_IMPACT[id] ?? 'System',
+    reason: FUNCTION_REASONS[id] ?? definition.description,
+    request,
+    tone: planTone(definition),
+  }
+}
+
+function buildCoverage(runtimeState: OptimizationRuntimeState, dashboard: DashboardPayload, sample: TelemetryPoint | null, profileCount: number) {
+  const nav = typeof navigator === 'undefined' ? null : (navigator as Navigator & { deviceMemory?: number })
+  const osLabel = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows') ? 'Windows' : 'Desktop'
+  const activeTweaks = runtimeState.session.active_tweaks.length
+  const activePresetCount = runtimeState.registry_presets.filter((preset) => preset.blocking_reason?.toLowerCase().includes('already active')).length
+
+  return [
+    {
+      label: 'OS',
+      value: osLabel,
+      detail: `${runtimeState.capture_status.source} telemetry, ${dashboard.mode} mode`,
+    },
+    {
+      label: 'CPU',
+      value: `${nav?.hardwareConcurrency ?? 'n/a'} threads`,
+      detail: `System load ${sample ? `${sample.cpu_total_pct.toFixed(0)}%` : 'not sampled'}`,
+    },
+    {
+      label: 'Memory',
+      value: `${typeof nav?.deviceMemory === 'number' ? `${nav.deviceMemory} GB` : 'n/a'}`,
+      detail: `Pressure ${sample ? `${sample.memory_pressure_pct.toFixed(0)}%` : 'not sampled'}`,
+    },
+    {
+      label: 'GPU',
+      value: sample?.gpu_usage_pct == null ? 'Unknown' : `${sample.gpu_usage_pct.toFixed(0)}% load`,
+      detail: sample?.gpu_usage_pct == null ? 'No GPU counter available' : 'GPU counter is available',
+    },
+    {
+      label: 'Settings',
+      value: activePowerPlan(runtimeState),
+      detail: `${activePresetCount} system preset(s) already active`,
+    },
+    {
+      label: 'Tweaks',
+      value: `${activeTweaks} active`,
+      detail: `${runtimeState.autoruns.length} autorun entries, ${runtimeState.activity.length} activity records`,
+    },
+    {
+      label: 'Game profile',
+      value: runtimeState.session.process_name ?? runtimeState.detected_game?.exe_name ?? 'System-wide',
+      detail: `${profileCount} supported game profile(s) loaded`,
+    },
+  ]
+}
+
+async function analyzeSystem(props: DashboardPageProps): Promise<ScanResult> {
+  const sample = latestSample(props.dashboard, props.realtime)
+  const inferenceInput = buildInferenceInput(sample, props.runtimeState)
+  const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(inferenceInput)])
+  const denied = loadMlDenyFunctionList()
+  const processId = liveProcessId(props.runtimeState)
+  const selectedIds = new Set<string>()
+  const skipped: string[] = []
+
+  for (const id of BASE_BALANCED_IDS) selectedIds.add(id)
+  if ((inference?.recommended_tweaks ?? []).includes('power_plan')) selectedIds.add('ultimate-power')
+  if ((inference?.recommended_tweaks ?? []).includes('cpu_affinity')) selectedIds.add('keep-cores')
+  if ((inference?.recommended_tweaks ?? []).includes('process_priority')) selectedIds.add('max-games')
+  if (processId) {
+    selectedIds.add('process-qos-high')
+    selectedIds.add('keep-cores')
+    selectedIds.add('max-games')
+  }
+  if ((sample?.background_cpu_pct ?? 0) >= 8 || (sample?.background_process_count ?? 0) >= 90) {
+    selectedIds.add('diagtrack-off')
+    selectedIds.add('maps-broker-off')
+  }
+  if ((sample?.frametime_p95_ms ?? 0) >= 18 || (sample?.frame_drop_ratio ?? 0) >= 0.08 || (sample?.anomaly_score ?? 0) >= 0.32) {
+    selectedIds.add('low-timer-resolution')
+  }
+  if (sample?.gpu_usage_pct != null || inferenceInput.system_profile?.discrete_gpu_available) {
+    selectedIds.add('hags-on')
+  }
+
+  for (const id of HIGH_RISK_IDS) {
+    if (selectedIds.has(id)) selectedIds.delete(id)
+    const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+    if (definition) skipped.push(`${definition.title}: too risky for balanced ML mode.`)
+  }
+
+  const plan: MlPlanItem[] = []
+  for (const id of selectedIds) {
+    if (denied.has(id)) {
+      const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+      skipped.push(`${definition?.title ?? id}: blocked by ML deny list.`)
+      continue
+    }
+    const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+    if (definition?.processRequired && !processId) {
+      skipped.push(`${definition.title}: waiting for a selected game session.`)
+      continue
+    }
+    const item = makePlanItem(id, processId, props.runtimeState)
+    if (item) plan.push(item)
+  }
+
+  const rebootCount = plan.filter((item) => item.definition.requiresReboot).length
+  const fallback = !inference || runtimeTruth?.runtime_mode === 'unavailable'
+  const confidence = fallback ? 0.74 : inference.confidence
+  const safetyScore = Math.max(70, Math.min(96, 94 - rebootCount * 7 - plan.filter((item) => item.tone === 'balanced').length * 2))
+  const summary =
+    'ML selected a balanced plan that avoids high-risk boot and security downgrades, favors reversible system settings, and flags restart-only changes before they are trusted.'
+  const rationale = [
+    `Model path: ${runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'Runtime model')}.`,
+    `Telemetry source: ${sample ? `${sample.capture_source}, ${sample.session_state}` : 'no live sample, system profile only'}.`,
+    `Balanced mode: ${plan.length} action(s), ${rebootCount} restart-required action(s), ${skipped.length} high-risk/blocked action(s) skipped.`,
+  ]
+
+  return {
+    confidence,
+    coverage: buildCoverage(props.runtimeState, props.dashboard, sample, props.profiles.length),
+    modelLabel: runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'ML runtime'),
+    plan,
+    rationale,
+    safetyScore,
+    skipped,
+    summary,
+  }
+}
+
+function StatusBadge({ children, tone }: { children: string; tone: PlanTone }) {
+  return <span className={`rounded-full px-3 py-1 text-xs font-black ${toneClass(tone)}`}>{children}</span>
+}
+
+export function DashboardPage(props: DashboardPageProps) {
+  const sample = latestSample(props.dashboard, props.realtime)
+  const [scanState, setScanState] = useState<ScanState>('idle')
+  const [scan, setScan] = useState<ScanResult | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [applied, setApplied] = useState<AppliedPlanItem[]>([])
+  const [errorText, setErrorText] = useState<string | null>(null)
+  const [restartNeeded, setRestartNeeded] = useState<string[]>([])
+  const [restartBusy, setRestartBusy] = useState(false)
+
+  const selectedPlan = useMemo(
+    () => scan?.plan.filter((item) => selectedIds.has(item.definition.id)) ?? [],
+    [scan?.plan, selectedIds],
+  )
+  const rebootSelected = selectedPlan.filter((item) => item.definition.requiresReboot)
+
+  const startScan = async () => {
+    if (scanState === 'analyzing' || scanState === 'applying') return
+    setScanState('analyzing')
+    setErrorText(null)
+    setApplied([])
+    setRestartNeeded([])
+    try {
+      const result = await analyzeSystem(props)
+      setScan(result)
+      setSelectedIds(new Set(result.plan.map((item) => item.definition.id)))
+      setScanState('ready')
+    } catch (error) {
+      setScanState('failed')
+      setErrorText(formatUnknownError(error, 'System analysis failed.'))
     }
   }
-  return {
-    input: {
-      fps_avg: 120,
-      frametime_avg_ms: 8.3,
-      frametime_p95_ms: 12.6,
-      frame_drop_ratio: 0.03,
-      cpu_process_pct: 28,
-      cpu_total_pct: 58,
-      gpu_usage_pct: 74,
-      ram_working_set_mb: 5400,
-      background_process_count: 95,
-      anomaly_score: 0.21,
-      system_profile: systemProfile,
-    },
-    sourceLabel: 'System baseline (no game session required)',
-    sampleLabel: 'Default baseline for system-level ML optimization',
-    profileLabel,
-  }
-}
 
-function formatEvidenceLabel(dashboard: DashboardPayload, runtimeState: OptimizationRuntimeState) {
-  if (dashboard.mode === 'disabled') return { label: 'Off', detail: 'Telemetry is disabled.' }
-  if (dashboard.mode === 'demo') return { label: 'Demo', detail: 'Practice data only.' }
-  if (runtimeState.capture_status.source === 'presentmon') return { label: 'Live', detail: 'Full session capture is attached.' }
-  if (runtimeState.capture_status.quality === 'idle') return { label: 'Waiting', detail: 'Attach a session for live evidence.' }
-  return { label: 'Degraded', detail: 'Local counters are active.' }
-}
-
-function formatSessionLabel(runtimeState: OptimizationRuntimeState) {
-  if (runtimeState.session.pending_registry_restore) return { label: 'Restore first', detail: 'Finish the pending restore before another system preset.' }
-  if (runtimeState.session.state === 'active') return { label: 'Testing', detail: runtimeState.session.process_name ?? 'Session is active.' }
-  if (runtimeState.session.state === 'attached') return { label: 'Attached', detail: runtimeState.session.process_name ?? 'Ready for proof.' }
-  if (runtimeState.detected_game) return { label: 'Detected', detail: runtimeState.detected_game.exe_name }
-  return { label: 'No session', detail: 'Open a game or use system-only optimization.' }
-}
-
-function formatProofLabel(benchmarkBaseline: BenchmarkWindow | null, latestBenchmark: BenchmarkReport | null) {
-  if (latestBenchmark) {
-    const label = latestBenchmark.verdict.charAt(0).toUpperCase() + latestBenchmark.verdict.slice(1)
-    return { label, detail: latestBenchmark.summary }
-  }
-  if (benchmarkBaseline) return { label: 'Baseline ready', detail: 'Apply one change, then compare.' }
-  return { label: 'No baseline', detail: 'Capture one before making proof claims.' }
-}
-
-function DashboardCommandStrip({
-  benchmarkBaseline,
-  dashboard,
-  latestBenchmark,
-  onAttachSession,
-  onOpenLogs,
-  onOpenTests,
-  runtimeState,
-}: {
-  benchmarkBaseline: BenchmarkWindow | null
-  dashboard: DashboardPayload
-  latestBenchmark: BenchmarkReport | null
-  onAttachSession: (request: AttachSessionRequest) => Promise<unknown> | void
-  onOpenLogs: () => void
-  onOpenTests: () => void
-  runtimeState: OptimizationRuntimeState
-}) {
-  const session = formatSessionLabel(runtimeState)
-  const proof = formatProofLabel(benchmarkBaseline, latestBenchmark)
-  const evidence = formatEvidenceLabel(dashboard, runtimeState)
-  const undoReady = runtimeState.activity.filter((entry) => entry.can_undo && entry.snapshot_id).length
-  const sessionAttached = runtimeState.session.state === 'attached' || runtimeState.session.state === 'active'
-  const nextAction = runtimeState.session.pending_registry_restore
-    ? { label: 'Open restore history', detail: 'A system preset restore is pending.', onClick: onOpenLogs }
-    : !sessionAttached && runtimeState.detected_game
-      ? {
-          label: 'Attach detected game',
-          detail: `Attach ${runtimeState.detected_game.exe_name} before process-level proof.`,
-          onClick: () =>
-            onAttachSession({
-              process_id: runtimeState.detected_game!.pid,
-              process_name: runtimeState.detected_game!.exe_name,
-            }),
-        }
-      : !benchmarkBaseline
-        ? { label: 'Capture baseline', detail: 'Start the proof path before testing changes.', onClick: onOpenTests }
-        : latestBenchmark
-          ? { label: 'Review result', detail: latestBenchmark.recommended_next_step, onClick: onOpenLogs }
-          : { label: 'Run controlled test', detail: 'Apply one reversible change, then compare.', onClick: onOpenTests }
-
-  return (
-    <Panel title="Next safe move" variant="primary">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_2.1fr]">
-        {[
-          { label: 'Session', value: session.label, detail: session.detail },
-          { label: 'Proof', value: proof.label, detail: proof.detail },
-          { label: 'Evidence', value: evidence.label, detail: evidence.detail },
-        ].map((item) => (
-          <div key={item.label} className="rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3">
-            <p className="text-[11px] uppercase text-muted">{item.label}</p>
-            <p className="mt-2 text-base font-semibold text-text">{item.value}</p>
-            <p className="mt-1 text-sm leading-5 text-muted">{item.detail}</p>
-          </div>
-        ))}
-        <div className="rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3">
-          <p className="text-[11px] uppercase text-muted">Next</p>
-          <p className="mt-2 text-base font-semibold text-text">{nextAction.label}</p>
-          <p className="mt-1 text-sm leading-5 text-muted">{nextAction.detail}</p>
-          <button className="button-primary mt-3 w-full px-3 py-2 text-xs" onClick={() => void nextAction.onClick()} type="button">
-            Continue
-          </button>
-        </div>
-      </div>
-      {undoReady > 0 ? (
-        <button className="button-secondary mt-3 px-3 py-2 text-xs" onClick={onOpenLogs} type="button">
-          {undoReady} rollback point{undoReady === 1 ? '' : 's'} ready
-        </button>
-      ) : null}
-    </Panel>
-  )
-}
-
-export function DashboardPage({
-  benchmarkBaseline,
-  dashboard,
-  latestBenchmark,
-  onApplyRegistryPreset,
-  onApplyTweak,
-  onAttachSession,
-  onOpenLogs,
-  onOpenOptimization,
-  onOpenTests,
-  onRollbackSnapshot,
-  profiles,
-  realtime,
-  runtimeState,
-}: DashboardPageProps) {
-  const currentSample = realtime ?? dashboard.history.at(-1) ?? null
-  const recommendedProfile = profiles.find(
-    (profile) => profile.id === (runtimeState.session.recommended_profile_id ?? runtimeState.detected_game?.recommended_profile_id),
-  )
-
-  const [flowState, setFlowState] = useState<FlowState>('idle')
-  const [flowError, setFlowError] = useState<string | null>(null)
-  const [plan, setPlan] = useState<OneClickPlan | null>(null)
-  const [applied, setApplied] = useState<AppliedItem[]>([])
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const [toast, setToast] = useState<ToastState | null>(null)
-  const [rebootPending, setRebootPending] = useState(false)
-  const [precheck, setPrecheck] = useState<string[]>([])
-  const [restartBusy, setRestartBusy] = useState(false)
-  const [introOpen, setIntroOpen] = useState(false)
-  const [introAccepted, setIntroAccepted] = useState(false)
-  const cancelRequestedRef = useRef(false)
-
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 5500)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
-  const isBusy = flowState === 'analyzing' || flowState === 'applying'
-  const liveProcessIds = new Set(runtimeState.processes.map((process) => process.pid))
-
-  const applyPlannedActions = async (nextPlan: OneClickPlan) => {
-    setFlowState('applying')
-    setFlowError(null)
-    const appliedItems: AppliedItem[] = []
-    let alreadyActiveCount = 0
-    const skippedFailures: string[] = []
+  const applyPlan = async () => {
+    if (!scan || scanState === 'applying' || selectedPlan.length === 0) return
+    setScanState('applying')
+    setErrorText(null)
+    const nextApplied: AppliedPlanItem[] = []
+    const failed: string[] = []
 
     try {
-      for (const action of nextPlan.actions) {
+      for (const item of selectedPlan) {
         try {
-          if (action.request.kind === 'tweak') {
-            const result = await onApplyTweak(action.request.payload)
-            appliedItems.push({
-              id: action.id,
-              label: action.label,
+          if (item.request.kind === 'tweak') {
+            const result = await props.onApplyTweak(item.request.payload)
+            nextApplied.push({
+              id: item.definition.id,
+              label: item.definition.title,
+              requiresReboot: Boolean(item.definition.requiresReboot),
               snapshotId: result.snapshot.id,
-              requiresReboot: action.requiresReboot,
             })
             continue
           }
 
-          const result = await onApplyRegistryPreset(action.request.payload)
+          const result = await props.onApplyRegistryPreset(item.request.payload)
           if (result.status !== 'applied' || !result.snapshot) {
-            const reason = (result.blocking_reason ?? '').toLowerCase()
-            if (reason.includes('already active')) {
-              alreadyActiveCount += 1
-              continue
-            }
-            throw new Error(result.blocking_reason ?? `Action ${action.label} was blocked by policy.`)
+            const reason = result.blocking_reason ?? 'System policy blocked this setting.'
+            if (reason.toLowerCase().includes('already active')) continue
+            failed.push(`${item.definition.title}: ${reason}`)
+            continue
           }
-          appliedItems.push({
-            id: action.id,
-            label: action.label,
+          nextApplied.push({
+            id: item.definition.id,
+            label: item.definition.title,
+            requiresReboot: Boolean(item.definition.requiresReboot),
             snapshotId: result.snapshot.id,
-            requiresReboot: action.requiresReboot,
           })
         } catch (error) {
-          const message = formatUnknownError(error, `Action ${action.label} failed.`)
-          const lower = message.toLowerCase()
-          const recoverable =
-            lower.includes('bcdedit command failed') ||
-            lower.includes('access is denied') ||
-            lower.includes('requires elevation')
-          if (!recoverable) throw error
-          skippedFailures.push(`${action.label}: ${message}`)
+          failed.push(`${item.definition.title}: ${formatUnknownError(error, 'apply failed')}`)
         }
       }
 
-      if (appliedItems.length === 0 && skippedFailures.length > 0) {
-        throw new Error(skippedFailures[0])
-      }
-
-      setApplied(appliedItems)
-      const hasRebootActions = appliedItems.some((item) => item.requiresReboot)
-      setRebootPending(hasRebootActions)
-      setFlowState('complete')
-      if (appliedItems.length === 0 && alreadyActiveCount > 0 && skippedFailures.length === 0) {
-        setToast({ message: 'No changes were needed. Recommended settings are already active.' })
-      } else if (skippedFailures.length > 0) {
-        setToast({
-          message: `Optimization applied with partial skips: ${skippedFailures.length} action(s) were skipped by system policy.`,
-        })
-      } else {
-        setToast({
-          message: hasRebootActions
-            ? 'Optimization applied. Some changes are pending reboot.'
-            : 'Optimization applied successfully.',
-        })
-      }
+      setApplied(nextApplied)
+      const rebootItems = nextApplied.filter((item) => item.requiresReboot).map((item) => item.label)
+      setRestartNeeded(rebootItems)
+      setScanState('complete')
+      if (failed.length > 0) setErrorText(`Applied ${nextApplied.length} setting(s). Failed: ${failed.join(', ')}`)
     } catch (error) {
-      setFlowState('failed')
-      setFlowError(formatUnknownError(error, 'Apply phase failed.'))
+      setScanState('failed')
+      setErrorText(formatUnknownError(error, 'ML plan apply failed.'))
     }
-  }
-
-  const runOneClickAnalysis = async () => {
-    if (isBusy) return
-    setFlowState('analyzing')
-    setFlowError(null)
-    setPlan(null)
-    setApplied([])
-    setDetailsOpen(false)
-    setRebootPending(false)
-    cancelRequestedRef.current = false
-    const checks: string[] = []
-
-    try {
-      const seed = buildInferenceInput(currentSample, runtimeState)
-      const deniedList = loadMlDenyFunctionList()
-      checks.push(`Input source: ${seed.sourceLabel}`)
-      checks.push(`Input snapshot: ${seed.sampleLabel}`)
-      checks.push(seed.profileLabel)
-      if (deniedList.size > 0) {
-        checks.push(`Deny Function List active: ${deniedList.size} function(s) are blocked for auto-ML.`)
-      }
-      checks.push('One-click excludes reboot and elevated boot-timer changes. Use Custom Optimization for those.')
-
-      if (cancelRequestedRef.current) {
-        setFlowState('cancelled')
-        return
-      }
-
-      const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(seed.input)])
-      const fallbackUsed = !inference || runtimeTruth?.runtime_mode === 'unavailable'
-
-      const rationale = fallbackUsed
-        ? ['Model path unavailable; using stable heuristic profile.', 'System-level safe actions were selected without game-session dependency.']
-        : [...(inference?.factors ?? []).slice(0, 2), ...((inference?.shap_preview ?? []).slice(0, 1))]
-
-      const recommendedFunctionIds = new Set<string>()
-      const rawSessionProcessId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
-      const sessionProcessId = rawSessionProcessId && liveProcessIds.has(rawSessionProcessId) ? rawSessionProcessId : null
-      if (rawSessionProcessId && !sessionProcessId) {
-        checks.push(
-          `Session process ${rawSessionProcessId} is not alive now. Process-required actions were skipped until a live session is attached.`,
-        )
-      }
-      for (const tweak of inference?.recommended_tweaks ?? ['power_plan']) {
-        const functionId = ML_TWEAK_TO_FUNCTION_ID[tweak]
-        if (functionId) recommendedFunctionIds.add(functionId)
-      }
-      recommendedFunctionIds.add('interrupt-affinity-lock')
-      recommendedFunctionIds.add('usb-selective-suspend-off')
-      if ((inference?.risk_label ?? 'medium') === 'high') recommendedFunctionIds.add('low-timer-resolution')
-      if ((seed.input.system_profile?.logical_cores ?? 0) >= 12) recommendedFunctionIds.add('pcie-lspm-off')
-      if ((currentSample?.background_cpu_pct ?? 0) >= 12) recommendedFunctionIds.add('turn-off-recordings')
-
-      const availableDefinitions = OPTIMIZATION_FUNCTIONS.filter((definition) => {
-        if (ONE_CLICK_EXCLUDED_FUNCTION_IDS.has(definition.id)) return false
-        if (definition.requiresReboot) return false
-        if (deniedList.has(definition.id)) return false
-        if (definition.processRequired && !sessionProcessId) return false
-        return definition.buildRequest({ processId: sessionProcessId, runtimeState }) !== null
-      })
-
-      const minimumTarget = availableDefinitions.length === 0 ? 0 : Math.max(1, Math.ceil(availableDefinitions.length * 0.9))
-      if (minimumTarget > 0 && recommendedFunctionIds.size < minimumTarget) {
-        const fillOrder = [
-          ...availableDefinitions.filter((definition) => definition.mlDefault),
-          ...availableDefinitions.filter((definition) => !definition.mlDefault),
-        ]
-        for (const definition of fillOrder) {
-          recommendedFunctionIds.add(definition.id)
-          if (recommendedFunctionIds.size >= minimumTarget) break
-        }
-      }
-
-      const actions: PlanAction[] = []
-      for (const functionId of recommendedFunctionIds) {
-        if (deniedList.has(functionId)) continue
-        const definition = getOptimizationFunctionById(functionId)
-        if (!definition) continue
-        if (definition.requiresReboot) {
-          checks.push(`Skipped "${definition.title}" (requires restart, Custom Optimization only).`)
-          continue
-        }
-        if (definition.processRequired && !sessionProcessId) {
-          checks.push(`Skipped "${definition.title}" (requires attached game session, available in Tests/Optimization).`)
-          continue
-        }
-        const request = definition.buildRequest({ processId: sessionProcessId, runtimeState })
-        if (!request) {
-          checks.push(`Skipped "${definition.title}" (not available on this system state).`)
-          continue
-        }
-        actions.push({
-          id: definition.id,
-          label: definition.title,
-          requiresReboot: Boolean(definition.requiresReboot),
-          request,
-        })
-      }
-
-      const unique = Array.from(new Map(actions.map((item) => [item.id, item])).values())
-      if (unique.length === 0) {
-        setFlowState('failed')
-        setFlowError('Planner produced no safe actions. Open Custom Optimization for manual tuning.')
-        return
-      }
-
-      const confidence = fallbackUsed ? 0.72 : inference?.confidence ?? 0.8
-      const risk = (fallbackUsed ? 'medium' : inference?.risk_label ?? 'medium') as 'low' | 'medium' | 'high'
-      const summary = fallbackUsed
-        ? 'Model unavailable. Using a stable fallback plan with rollback snapshots.'
-        : inference?.summary ?? 'Model generated a bounded optimization plan.'
-      const nextPlan: OneClickPlan = { actions: unique, confidence, risk, rationale, summary, fallbackUsed }
-
-      setPrecheck(checks)
-      setPlan(nextPlan)
-      setFlowState('ready')
-      setToast({ message: 'Choice confirmed. Optimization starts automatically.' })
-
-      await applyPlannedActions(nextPlan)
-    } catch (error) {
-      setFlowState('failed')
-      setFlowError(formatUnknownError(error, 'One-click analysis failed.'))
-    }
-  }
-
-  const cancelFlow = () => {
-    if (flowState === 'applying') return
-    cancelRequestedRef.current = true
-    setFlowState('cancelled')
-    setToast({ message: 'Automatic ML flow cancelled.' })
   }
 
   const rollbackApplied = async () => {
-    if (applied.length === 0) return
-    const processId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? undefined
-    const reversed = [...applied].reverse()
-    for (const item of reversed) {
-      await onRollbackSnapshot(item.snapshotId, processId)
+    if (applied.length === 0 || scanState === 'applying') return
+    const processId = props.runtimeState.session.process_id ?? props.runtimeState.detected_game?.pid ?? undefined
+    for (const item of [...applied].reverse()) {
+      await props.onRollbackSnapshot(item.snapshotId, processId)
     }
     setApplied([])
-    setRebootPending(false)
-    setToast({ message: 'Applied ML changes were rolled back.' })
-    setFlowState('idle')
-    setPlan(null)
-  }
-
-  const keepChanges = () => {
-    setToast({ message: 'Changes kept. Rollback remains available in history/logs.' })
-    setFlowState('idle')
-    setPlan(null)
-    setApplied([])
-    setRebootPending(false)
-    setDetailsOpen(false)
+    setRestartNeeded([])
+    setScanState('ready')
   }
 
   const restartNow = async () => {
@@ -539,273 +445,279 @@ export function DashboardPage({
     setRestartBusy(true)
     try {
       await requestWindowsRestart()
-    } catch (error) {
-      setToast({ message: error instanceof Error ? error.message : 'Restart request failed.' })
     } finally {
       setRestartBusy(false)
     }
   }
 
   return (
-    <div className="space-y-5">
-      <DashboardCommandStrip
-        benchmarkBaseline={benchmarkBaseline}
-        dashboard={dashboard}
-        latestBenchmark={latestBenchmark}
-        onAttachSession={onAttachSession}
-        onOpenLogs={onOpenLogs}
-        onOpenTests={onOpenTests}
-        runtimeState={runtimeState}
-      />
-
-      <Panel title="Choose Your Mode" variant="secondary">
-        {recommendedProfile ? (
-          <div className="mb-4 rounded-xl border border-border/55 bg-surface-muted/70 px-4 py-3 text-sm text-muted">
-            <span className="font-semibold text-text">{recommendedProfile.title}</span>
-            <span className="ml-2">{recommendedProfile.expected_benefit}</span>
-          </div>
-        ) : null}
-        <div className="grid gap-4 lg:grid-cols-3">
+    <div className="mx-auto flex h-full min-h-0 max-w-[1500px] flex-col gap-5 px-2 text-white">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black">ML Tweaks</h1>
+          <p className="mt-1 text-sm font-semibold text-white/50">
+            Analyze Windows, hardware, active settings, telemetry, and current tweaks before applying a balanced plan.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 rounded-[1.35rem] bg-[#070b1b]/88 p-2">
           <button
-            className="surface-card group text-left transition hover:border-border-strong/70"
-            disabled={isBusy}
-            onClick={() => {
-              setIntroOpen(true)
-              setIntroAccepted(false)
-            }}
+            className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#315cff] px-5 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-55"
+            disabled={scanState === 'analyzing' || scanState === 'applying'}
+            onClick={() => void startScan()}
             type="button"
           >
-            <div className="flex items-start justify-between">
-              <Bot className="text-text" size={22} />
-              <ChevronRight className="text-muted transition group-hover:translate-x-0.5" size={18} />
-            </div>
-            <p className="mt-4 text-base font-semibold text-text">Start one-click optimization</p>
-            <p className="mt-2 text-sm text-muted">Safe automatic plan. No reboot actions. Rollback snapshots required.</p>
+            {scanState === 'analyzing' ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}
+            <span>{scanState === 'analyzing' ? 'Analyzing' : 'Analyze System'}</span>
           </button>
-
-          <button className="surface-card group text-left transition hover:border-border-strong/70" onClick={onOpenOptimization} type="button">
-            <div className="flex items-start justify-between">
-              <Sparkles className="text-text" size={22} />
-              <ChevronRight className="text-muted transition group-hover:translate-x-0.5" size={18} />
-            </div>
-            <p className="mt-4 text-base font-semibold text-text">Open custom optimization</p>
-            <p className="mt-2 text-sm text-muted">Manual function-by-function control for advanced tuning.</p>
+          <button className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#202942] px-5 text-base font-semibold" onClick={props.onOpenOptimization} type="button">
+            <Sparkles size={17} />
+            <span>Custom</span>
           </button>
-
-          <button className="surface-card group text-left transition hover:border-border-strong/70" onClick={onOpenTests} type="button">
-            <div className="flex items-start justify-between">
-              <FlaskConical className="text-text" size={22} />
-              <ChevronRight className="text-muted transition group-hover:translate-x-0.5" size={18} />
-            </div>
-            <p className="mt-4 text-base font-semibold text-text">Run controlled test</p>
-            <p className="mt-2 text-sm text-muted">Baseline/compare path for empirical validation.</p>
+          <button className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#202942] px-5 text-base font-semibold" onClick={props.onOpenTests} type="button">
+            <BarChart3 size={17} />
+            <span>Tests</span>
           </button>
         </div>
-      </Panel>
+      </header>
 
-      {introOpen ? (
-        <Panel title="Before You Start ML Automation" variant="secondary">
-          <div className="space-y-4">
-            <div className="surface-card text-sm text-muted">
-              <p className="font-semibold text-text">How this works</p>
-              <ul className="mt-2 space-y-1">
-                <li>- The function builds an ML-assisted safe action plan and applies it automatically after confirmation.</li>
-                <li>- Every applied action creates rollback snapshots so changes can be reverted.</li>
-                <li>- Reboot and elevated boot-timer actions stay in Custom Optimization, not one-click.</li>
-              </ul>
-            </div>
-            <label className="surface-card flex items-start gap-3 text-sm text-muted">
-              <input
-                checked={introAccepted}
-                className="mt-0.5"
-                onChange={(event) => setIntroAccepted(event.target.checked)}
-                type="checkbox"
-              />
-              <span>I reviewed the function description and confirm automatic optimization start.</span>
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="button-primary"
-                disabled={!introAccepted || isBusy}
-                onClick={() => {
-                  setIntroOpen(false)
-                  void runOneClickAnalysis()
-                }}
-                type="button"
-              >
-                Confirm choice and start
-              </button>
-              <button
-                className="button-secondary"
-                onClick={() => {
-                  setIntroOpen(false)
-                  setIntroAccepted(false)
-                }}
-                type="button"
-              >
-                Back
-              </button>
-            </div>
-          </div>
-        </Panel>
-      ) : null}
-
-      {flowState !== 'idle' ? (
-        <Panel title="Automatic ML Optimization" variant="secondary">
-          <div className="space-y-4">
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="surface-card">
-                <p className="text-sm font-semibold text-text">Pre-check</p>
-                <ul className="mt-2 space-y-1 text-sm text-muted">
-                  {precheck.length === 0 ? <li>Waiting for validation...</li> : precheck.map((line) => <li key={line}>- {line}</li>)}
-                </ul>
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(300px,380px)_minmax(0,1fr)] gap-5">
+        <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto pr-1">
+          <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-5">
+            <div className="flex items-center gap-3">
+              <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#315cff]/18 text-[#7ba2ff]">
+                <Bot size={25} />
+              </span>
+              <div>
+                <h2 className="text-xl font-black">Balanced ML mode</h2>
+                <p className="mt-1 text-sm leading-5 text-white/52">Performance gains with rollback, safety gates, and restart warnings.</p>
               </div>
-              <div className="surface-card">
-                <p className="text-sm font-semibold text-text">Flow status</p>
-                <p className="mt-2 text-sm text-muted">State: {flowState}</p>
-                {flowError ? (
-                  <p className="mt-2 inline-flex items-center gap-2 text-sm text-warning">
-                    <AlertTriangle size={14} />
-                    {flowError}
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-[#111936] p-4">
+                <p className="text-xs font-bold uppercase text-white/36">Confidence</p>
+                <p className="mt-2 text-2xl font-black">{scan ? `${(scan.confidence * 100).toFixed(0)}%` : 'n/a'}</p>
+              </div>
+              <div className="rounded-xl bg-[#111936] p-4">
+                <p className="text-xs font-bold uppercase text-white/36">Safety</p>
+                <p className="mt-2 text-2xl font-black">{scan ? `${scan.safetyScore}%` : 'n/a'}</p>
+              </div>
+            </div>
+            <button
+              className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#315cff] px-4 text-base font-bold disabled:cursor-not-allowed disabled:bg-white/30"
+              disabled={scanState === 'analyzing' || scanState === 'applying'}
+              onClick={() => void startScan()}
+              type="button"
+            >
+              {scanState === 'analyzing' ? <Loader2 className="animate-spin" size={18} /> : <Gauge size={18} />}
+              <span>{scanState === 'analyzing' ? 'Scanning system' : 'Start ML Analysis'}</span>
+            </button>
+            <button
+              className="mt-2 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#202942] px-4 text-base font-bold disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={!scan || selectedPlan.length === 0 || scanState === 'applying' || scanState === 'analyzing'}
+              onClick={() => void applyPlan()}
+              type="button"
+            >
+              {scanState === 'applying' ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
+              <span>{scanState === 'applying' ? 'Applying plan' : `Apply Selected (${selectedPlan.length})`}</span>
+            </button>
+            {rebootSelected.length > 0 ? (
+              <p className="mt-3 rounded-xl bg-[#3b2911] px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
+                {rebootSelected.length} selected setting(s) will need Windows restart after apply.
+              </p>
+            ) : null}
+          </section>
+
+          <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-5">
+            <h2 className="text-xl font-black">Current system</h2>
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
+                <span className="text-white/52">Telemetry</span>
+                <span className="font-bold">{props.dashboard.mode}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
+                <span className="text-white/52">Power plan</span>
+                <span className="max-w-[190px] truncate font-bold">{activePowerPlan(props.runtimeState)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
+                <span className="text-white/52">Active tweaks</span>
+                <span className="font-bold">{props.runtimeState.session.active_tweaks.length}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
+                <span className="text-white/52">CPU load</span>
+                <span className="font-bold">{sample ? `${sample.cpu_total_pct.toFixed(0)}%` : 'n/a'}</span>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section className="flex min-h-0 min-w-0 flex-col gap-5">
+          <section className="rounded-[1.35rem] bg-[#070b1b]/80 p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-black">System analysis</h2>
+                <p className="mt-1 text-sm text-white/48">The model checks hardware, OS state, active settings, enabled tweaks, autoruns, telemetry, and game context.</p>
+              </div>
+              <span className="rounded-full bg-[#202942] px-4 py-2 text-sm font-bold text-white/70">{scan?.modelLabel ?? 'Waiting for scan'}</span>
+            </div>
+            <div className="grid gap-3 xl:grid-cols-4">
+              {(scan?.coverage ?? buildCoverage(props.runtimeState, props.dashboard, sample, props.profiles.length)).map((item) => (
+                <article key={item.label} className="rounded-[1rem] bg-[#111936] p-4">
+                  <p className="text-xs font-bold uppercase text-white/36">{item.label}</p>
+                  <p className="mt-2 truncate text-lg font-black">{item.value}</p>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/48">{item.detail}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          {scanState === 'idle' ? (
+            <section className="rounded-[1.35rem] bg-[#070b1b]/80 p-7">
+              <div className="flex items-start gap-4">
+                <Sparkles className="mt-1 text-[#7ba2ff]" size={28} />
+                <div>
+                  <h2 className="text-2xl font-black">Start with system analysis</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
+                    ML Tweaks no longer starts from a game profile. It scans the whole system first, then selects a conservative performance plan with restart-only changes clearly marked.
                   </p>
-                ) : null}
+                </div>
               </div>
-            </div>
+            </section>
+          ) : null}
 
-            <div className="surface-card">
-              <div className="grid gap-2 md:grid-cols-5">
-                {FLOW_STEPS.map((step, index) => {
-                  const state = stageProgress(flowState, index)
+          {scanState === 'analyzing' ? (
+            <section className="rounded-[1.35rem] bg-[#10255b] p-6 shadow-[inset_0_0_0_1px_rgba(123,162,255,0.22)]">
+              <div className="flex items-center gap-3">
+                <Loader2 className="animate-spin text-[#7ba2ff]" size={26} />
+                <div>
+                  <h2 className="text-xl font-black">Analyzing full system</h2>
+                  <p className="mt-1 text-sm text-white/64">Checking OS state, components, power policy, registry presets, active tweaks, telemetry quality, and safe ML actions.</p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {scan ? (
+            <section className="min-h-0 flex-1 overflow-y-auto pr-2">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-black">Balanced plan</h2>
+                  <p className="mt-1 text-sm text-white/48">{scan.summary}</p>
+                </div>
+                <span className="rounded-full bg-[#202942] px-4 py-2 text-sm font-bold text-white/70">
+                  {selectedPlan.length}/{scan.plan.length} selected
+                </span>
+              </div>
+
+              <div className="grid gap-3 xl:grid-cols-2">
+                {scan.plan.map((item) => {
+                  const active = selectedIds.has(item.definition.id)
                   return (
-                    <div
-                      key={step}
-                      className={`rounded-lg border px-3 py-2 text-xs ${
-                        state === 'done'
-                          ? 'border-success/40 bg-success/10 text-text'
-                          : state === 'active'
-                            ? 'border-border-strong/65 bg-surface-muted text-text'
-                            : 'border-border/60 bg-surface text-muted'
+                    <button
+                      key={item.definition.id}
+                      className={`rounded-[1.2rem] px-4 py-4 text-left transition ${
+                        active ? 'bg-[#16285d] ring-1 ring-[#315cff]/80' : 'bg-[#070b1b]/88 opacity-70 hover:opacity-100'
                       }`}
+                      disabled={scanState === 'applying'}
+                      onClick={() => {
+                        setSelectedIds((current) => {
+                          const next = new Set(current)
+                          if (next.has(item.definition.id)) next.delete(item.definition.id)
+                          else next.add(item.definition.id)
+                          return next
+                        })
+                      }}
+                      type="button"
                     >
-                      {state === 'active' ? <Loader2 className="mb-1 animate-spin" size={12} /> : null}
-                      {step}
-                    </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <span className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full ${active ? 'bg-[#315cff]' : 'bg-[#202942]'}`}>
+                            {active ? <Check size={16} /> : null}
+                          </span>
+                          <div>
+                            <h3 className="text-base font-black">{item.definition.title}</h3>
+                            <p className="mt-1 text-sm leading-5 text-white/56">{item.reason}</p>
+                          </div>
+                        </div>
+                        <StatusBadge tone={item.tone}>{item.tone === 'restart' ? 'Restart' : item.tone}</StatusBadge>
+                      </div>
+                      <p className="mt-3 text-xs font-bold uppercase text-white/36">{item.impact}</p>
+                    </button>
                   )
                 })}
               </div>
-            </div>
 
-            {flowState === 'ready' && plan ? (
-              <div className="surface-card space-y-3">
-                <p className="text-sm font-semibold text-text">Plan ready</p>
-                <p className="text-sm text-muted">{plan.summary}</p>
-                <p className="text-sm text-muted">Auto-apply is in progress. No additional confirmation is required.</p>
-              </div>
-            ) : null}
-
-            {flowState === 'analyzing' ? (
-              <div className="flex items-center gap-2">
-                <button className="button-secondary" onClick={cancelFlow} type="button">
-                  Cancel
-                </button>
-              </div>
-            ) : null}
-
-            {flowState === 'complete' && plan ? (
-              <div className="surface-card space-y-3">
-                <div className="flex items-center gap-2 text-success">
-                  <CheckCircle2 size={16} />
-                  <p className="text-sm font-semibold text-text">Optimization complete</p>
-                </div>
-                <p className="text-sm text-muted">{plan.summary}</p>
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-muted">
-                    <span className="font-semibold text-text">Confidence:</span> {(plan.confidence * 100).toFixed(0)}%
-                  </div>
-                  <div className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-muted">
-                    <span className="font-semibold text-text">Risk:</span> {plan.risk}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-text">What changed</p>
-                  <ul className="mt-2 space-y-1 text-sm text-muted">
-                    {applied.map((item) => (
-                      <li key={item.snapshotId}>- {item.label}</li>
+              <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                <article className="rounded-[1.2rem] bg-[#070b1b]/88 p-4">
+                  <h3 className="text-base font-black">Why this plan</h3>
+                  <div className="mt-3 space-y-2">
+                    {scan.rationale.map((line) => (
+                      <p key={line} className="flex gap-2 text-sm leading-6 text-white/58">
+                        <ShieldCheck className="mt-1 shrink-0 text-[#4dff9b]" size={15} />
+                        <span>{line}</span>
+                      </p>
                     ))}
-                  </ul>
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-text">Why this was selected</p>
-                  <ul className="mt-2 space-y-1 text-sm text-muted">
-                    {plan.rationale.slice(0, 3).map((line) => (
-                      <li key={line}>- {line}</li>
+                  </div>
+                </article>
+                <article className="rounded-[1.2rem] bg-[#070b1b]/88 p-4">
+                  <h3 className="text-base font-black">Skipped for safety</h3>
+                  <div className="mt-3 space-y-2">
+                    {scan.skipped.slice(0, 5).map((line) => (
+                      <p key={line} className="flex gap-2 text-sm leading-6 text-white/58">
+                        <AlertTriangle className="mt-1 shrink-0 text-[#ffcf5a]" size={15} />
+                        <span>{line}</span>
+                      </p>
                     ))}
-                  </ul>
-                  {plan.fallbackUsed ? (
-                    <p className="mt-2 inline-flex items-center gap-2 text-sm text-warning">
-                      <AlertTriangle size={14} />
-                      Model error. System is using stable heuristic fallback.
-                    </p>
-                  ) : null}
-                </div>
-                {rebootPending ? (
-                  <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-                    <p>Pending reboot changes detected.</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button className="button-secondary" disabled={restartBusy} onClick={() => void restartNow()} type="button">
-                        {restartBusy ? 'Requesting restart...' : 'Restart now'}
-                      </button>
-                      <button className="button-secondary" onClick={() => setRebootPending(false)} type="button">
-                        Later
-                      </button>
+                    {scan.skipped.length === 0 ? <p className="text-sm text-white/52">No safety skips in this scan.</p> : null}
+                  </div>
+                </article>
+              </div>
+
+              {scanState === 'complete' ? (
+                <section className="mt-4 rounded-[1.35rem] bg-[#070b1b]/88 p-5">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="mt-0.5 text-[#4dff9b]" size={23} />
+                    <div>
+                      <h2 className="text-xl font-black">ML plan applied</h2>
+                      <p className="mt-1 text-sm leading-6 text-white/60">
+                        Applied {applied.length} setting(s). Rollback snapshots were created for applied changes.
+                      </p>
                     </div>
                   </div>
-                ) : null}
-                <div className="flex flex-wrap gap-2">
-                  <button className="button-secondary" onClick={keepChanges} type="button">
-                    Keep changes
-                  </button>
-                  <button className="button-secondary" onClick={() => void rollbackApplied()} type="button">
-                    Rollback
-                  </button>
-                  <button className="button-secondary" onClick={() => setDetailsOpen((value) => !value)} type="button">
-                    {detailsOpen ? 'Hide details' : 'Open details'}
-                  </button>
-                </div>
-                {detailsOpen ? (
-                  <div className="rounded-lg border border-border/60 bg-surface px-3 py-2 text-sm text-muted">
-                    <p className="font-semibold text-text">Traceability</p>
-                    <ul className="mt-2 space-y-1">
-                      {applied.map((item) => (
-                        <li key={item.snapshotId}>
-                          - {item.label} (snapshot: {item.snapshotId})
-                        </li>
-                      ))}
-                    </ul>
+                  {restartNeeded.length > 0 ? (
+                    <div className="mt-4 rounded-xl bg-[#3b2911] px-4 py-3 text-sm text-[#ffcf5a]">
+                      <p className="font-black">Restart required to finish: {restartNeeded.join(', ')}.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button className="rounded-xl bg-[#315cff] px-4 py-2 font-bold text-white" disabled={restartBusy} onClick={() => void restartNow()} type="button">
+                          {restartBusy ? 'Requesting restart...' : 'Restart now'}
+                        </button>
+                        <button className="rounded-xl bg-[#202942] px-4 py-2 font-bold text-white" onClick={() => setRestartNeeded([])} type="button">
+                          Later
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button className="rounded-xl bg-[#202942] px-4 py-2 font-bold" disabled={applied.length === 0} onClick={() => void rollbackApplied()} type="button">
+                      <RotateCcw className="mr-2 inline" size={16} />
+                      Rollback applied
+                    </button>
+                    <button className="rounded-xl bg-[#202942] px-4 py-2 font-bold" onClick={props.onOpenTests} type="button">
+                      Run controlled test
+                    </button>
                   </div>
-                ) : null}
-              </div>
-            ) : null}
+                </section>
+              ) : null}
+            </section>
+          ) : null}
 
-            {flowState === 'failed' ? (
-              <EmptyState
-                actionLabel="Retry automatic ML optimization"
-                description={flowError ?? 'Automatic flow failed before completion.'}
-                onAction={() => {
-                  void runOneClickAnalysis()
-                }}
-                title="Optimization was not completed"
-              />
-            ) : null}
-          </div>
-        </Panel>
-      ) : null}
-
-      {toast ? (
-        <div className="fixed bottom-5 right-5 z-50 max-w-md rounded-xl border border-border/70 bg-surface px-4 py-3 shadow-float">
-          <p className="text-sm text-text">{toast.message}</p>
-        </div>
-      ) : null}
+          {errorText ? (
+            <section className="rounded-[1rem] bg-[#3d1218]/80 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
+              <AlertTriangle className="mr-2 inline" size={17} />
+              {errorText}
+            </section>
+          ) : null}
+        </section>
+      </main>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, MoonStar, Square, SunMedium, X } from 'lucide-react'
+import { Minus, MoonStar, RefreshCw, Square, SunMedium, X } from 'lucide-react'
 
 import { ConsentModal } from './components/ConsentModal'
 import { Sidebar } from './components/Sidebar'
@@ -25,6 +25,7 @@ import {
   attachOptimizationSession,
   endOptimizationSession,
   inspectOptimization,
+  requestWindowsRestart,
   rollbackOptimizationTweak,
 } from './lib/sidecar'
 import { getInitialState, getStartupState } from './lib/startup'
@@ -56,6 +57,17 @@ import type {
 
 type PendingConsent = { description: string; key: keyof FeatureFlags; title: string }
 
+const REBOOT_TWEAK_LABELS: Record<string, string> = {
+  disable_dynamic_ticks: 'Dynamic Ticks',
+  disable_hpet: 'HPET boot flag',
+}
+
+const REBOOT_PRESET_LABELS: Record<string, string> = {
+  hags_on: 'HAGS',
+  memory_integrity_off: 'Memory Integrity',
+  mpo_off: 'Multi Plane Overlay',
+}
+
 export default function App() {
   const cache = useRef(readStartupCache()).current
   const retryTimer = useRef<number | null>(null)
@@ -84,6 +96,8 @@ export default function App() {
   const [benchmarkBusy, setBenchmarkBusy] = useState(false)
   const [systemTelemetry, setSystemTelemetry] = useState<SystemTelemetryPayload | null>(null)
   const [windowsUsername, setWindowsUsername] = useState('Player')
+  const [restartNotice, setRestartNotice] = useState<string[]>([])
+  const [restartBusy, setRestartBusy] = useState(false)
   const [loaded, setLoaded] = useState<LoadedState>({
     dashboard: Boolean(cache?.dashboard),
     logs: false,
@@ -320,10 +334,10 @@ export default function App() {
     await Promise.all([loadSettingsData(), loadOptimizationRuntime(selectedProcessId ?? undefined)])
   }
 
-  const captureBaseline = async () => {
+  const captureBaseline = async (sampleLimit = 60) => {
     setBenchmarkBusy(true)
     try {
-      const baseline = await api.captureBenchmarkBaseline(60)
+      const baseline = await api.captureBenchmarkBaseline(sampleLimit)
       setBenchmarkBaseline(baseline)
       if (bootstrapRef.current) {
         const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline }
@@ -335,10 +349,10 @@ export default function App() {
     }
   }
 
-  const runBenchmark = async (profileId?: string) => {
+  const runBenchmark = async (profileId?: string, sampleLimit = 60) => {
     setBenchmarkBusy(true)
     try {
-      const report = await api.runBenchmark(profileId, 60)
+      const report = await api.runBenchmark(profileId, sampleLimit)
       setLatestBenchmark(report)
       await loadOptimizationRuntime(selectedProcessId ?? undefined)
       if (bootstrapRef.current) {
@@ -360,11 +374,32 @@ export default function App() {
     return nextState
   }
 
+  const addRestartNotice = useCallback((label: string) => {
+    setRestartNotice((current) => {
+      if (current.includes(label)) return current
+      return [...current, label]
+    })
+  }, [])
+
+  const restartWindowsNow = async () => {
+    if (restartBusy) return
+    const confirmed = window.confirm('Windows will restart immediately. Continue?')
+    if (!confirmed) return
+    setRestartBusy(true)
+    try {
+      await requestWindowsRestart()
+    } finally {
+      setRestartBusy(false)
+    }
+  }
+
   const applySessionTweak = async (request: Parameters<typeof applyOptimizationTweak>[0]) => {
     const result = await applyOptimizationTweak(request)
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    const rebootLabel = REBOOT_TWEAK_LABELS[request.kind]
+    if (rebootLabel) addRestartNotice(rebootLabel)
     return result
   }
 
@@ -373,6 +408,8 @@ export default function App() {
     setOptimizationRuntime(result.state)
     setSession(result.state.session)
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
+    const rebootLabel = result.status === 'applied' ? REBOOT_PRESET_LABELS[request.preset_id] : null
+    if (rebootLabel) addRestartNotice(rebootLabel)
     return result
   }
 
@@ -569,6 +606,34 @@ export default function App() {
           }}
           title={pendingConsent.title}
         />
+      ) : null}
+      {restartNotice.length > 0 ? (
+        <div className="fixed bottom-5 right-5 z-50 w-[min(460px,calc(100vw-2.5rem))] rounded-[1.2rem] border border-[#ffcf5a]/30 bg-[#070b1b] p-4 text-white shadow-[0_22px_55px_rgba(0,0,0,0.35)]">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#3b2911] text-[#ffcf5a]">
+              <RefreshCw size={18} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-base font-black">Restart required</p>
+              <p className="mt-1 text-sm leading-6 text-white/62">
+                These changes will fully apply after Windows restart: {restartNotice.join(', ')}.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="rounded-xl bg-[#315cff] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={restartBusy}
+                  onClick={() => void restartWindowsNow()}
+                  type="button"
+                >
+                  {restartBusy ? 'Requesting restart...' : 'Restart now'}
+                </button>
+                <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold text-white" onClick={() => setRestartNotice([])} type="button">
+                  Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
     </main>
   )

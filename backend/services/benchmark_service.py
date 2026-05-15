@@ -12,90 +12,6 @@ from backend.services.runtime_state_service import get_session_state
 from backend.services.telemetry_service import list_recent
 
 
-def _fake_baseline_window() -> BenchmarkWindow:
-    return BenchmarkWindow(
-        captured_at="2026-04-06T20:14:21+00:00",
-        sample_count=60,
-        mode="live",
-        capture_source="counters-fallback",
-        game_name="cs2.exe",
-        process_id=21604,
-        session_id="session-demo-cs2",
-        fps_avg=190.0,
-        frametime_avg_ms=5.26,
-        frametime_p95_ms=13.02,
-        frame_drop_ratio=0.041,
-        cpu_process_pct=31.4,
-        cpu_total_pct=56.3,
-        gpu_usage_pct=78.6,
-        ram_working_set_mb=7120.0,
-        ping=22.0,
-        jitter=2.6,
-        packet_loss=0.0,
-        background_cpu_pct=14.8,
-        anomaly_score=0.23,
-        session_health="medium",
-    )
-
-
-def _fake_compare_report() -> BenchmarkReport:
-    baseline = _fake_baseline_window()
-    current = BenchmarkWindow(
-        captured_at="2026-04-06T20:16:08+00:00",
-        sample_count=60,
-        mode="live",
-        capture_source="counters-fallback",
-        game_name="cs2.exe",
-        process_id=21604,
-        session_id="session-demo-cs2",
-        fps_avg=280.0,
-        frametime_avg_ms=3.57,
-        frametime_p95_ms=9.85,
-        frame_drop_ratio=0.017,
-        cpu_process_pct=24.1,
-        cpu_total_pct=42.8,
-        gpu_usage_pct=71.2,
-        ram_working_set_mb=6450.0,
-        ping=17.8,
-        jitter=1.4,
-        packet_loss=0.0,
-        background_cpu_pct=8.6,
-        anomaly_score=0.11,
-        session_health="low",
-    )
-    delta = BenchmarkDelta(
-        fps_avg=90.0,
-        frametime_avg_ms=-1.69,
-        frametime_p95_ms=-3.17,
-        frame_drop_ratio=-0.024,
-        cpu_process_pct=-7.3,
-        cpu_total_pct=-13.5,
-        gpu_usage_pct=-7.4,
-        ram_working_set_mb=-670.0,
-        ping=-4.2,
-        jitter=-1.2,
-        packet_loss=0.0,
-        background_cpu_pct=-6.2,
-        anomaly_score=-0.12,
-    )
-    return BenchmarkReport(
-        id="benchmark-demo-compare-001",
-        created_at=current.captured_at,
-        profile_id="cs2-safe",
-        game_name="cs2.exe",
-        session_id="session-demo-cs2",
-        action_id="activity-demo-ml-pass",
-        snapshot_id="snapshot-demo-ml-pass",
-        evidence_quality="degraded",
-        baseline=baseline,
-        current=current,
-        delta=delta,
-        verdict="better",
-        summary="Frame delivery and load pressure improved across the full compare pass.",
-        recommended_next_step="Keep this set, then run one more compare to confirm stability.",
-    )
-
-
 def _window_from_rows(rows: list[dict[str, object]], session_id: str | None) -> BenchmarkWindow:
     if not rows:
         raise ValueError("No telemetry rows available for benchmark capture.")
@@ -147,17 +63,19 @@ def latest_baseline() -> BenchmarkWindow | None:
     payload = read_json(BENCHMARK_BASELINE_PATH, None)
     if isinstance(payload, dict):
         return BenchmarkWindow(**payload)
-    return _fake_baseline_window()
+    return None
 
 
 def latest_report() -> BenchmarkReport | None:
     payload = read_json(BENCHMARK_REPORTS_PATH, [])
     if not isinstance(payload, list) or not payload:
-        return _fake_compare_report()
+        return None
     return BenchmarkReport(**payload[0])
 
 
 def capture_baseline(sample_limit: int = 60) -> BenchmarkWindow:
+    if sample_limit < 1 or sample_limit > 300:
+        raise ValueError("Benchmark duration must be between 1 and 300 seconds.")
     rows = _recent_rows(limit=sample_limit)
     baseline = _window_from_rows(rows, get_session_state().session_id)
     write_json(BENCHMARK_BASELINE_PATH, baseline.model_dump())
@@ -209,6 +127,8 @@ def _verdict(delta: BenchmarkDelta) -> tuple[str, str, str]:
 
 
 def run_benchmark(sample_limit: int = 60, profile_id: str | None = None) -> BenchmarkReport:
+    if sample_limit < 1 or sample_limit > 300:
+        raise ValueError("Benchmark duration must be between 1 and 300 seconds.")
     baseline = latest_baseline()
     if not baseline:
         raise ValueError("Capture a baseline before running a comparison benchmark.")

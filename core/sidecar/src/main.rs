@@ -117,7 +117,7 @@ fn recommended_power_plan_guid(profile: &str) -> Result<Option<String>, String> 
 
 fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> {
     telemetry::sync_pending_restore_state();
-    let advanced_processes = processes::list_processes(24)?;
+    let advanced_processes = processes::list_processes(128)?;
     let selected_process = process_id
         .map(|pid| {
             let fallback = advanced_processes

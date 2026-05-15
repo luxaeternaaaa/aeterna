@@ -102,8 +102,8 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
       }
     case 'ml':
       return {
-        eyebrow: 'Aeterna AI',
-        title: 'ML Optimization',
+        eyebrow: 'ML Tweaks',
+        title: 'ML Tweaks',
         subtitle: 'One-click plan, rollback, proof.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },
@@ -112,8 +112,8 @@ export function getPageChrome(input: PageChromeInput): PageChrome {
       }
     case 'optimize':
       return {
-        eyebrow: 'Optimize',
-        title: 'Optimize',
+        eyebrow: 'Optimization',
+        title: 'Optimization',
         subtitle: 'Attach, baseline, one safe test.',
         primaryStatus: { label: 'Status', value: surfaceState.primaryStatus.label, detail: sessionStage.detail },
         primaryAction: { label: 'Next step', value: workflow.label, detail: workflow.detail },

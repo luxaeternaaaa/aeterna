@@ -6,9 +6,9 @@ import { getOptimizationLevelLabel } from '../lib/optimizationLevel'
 
 const items = [
   { id: 'home', label: 'Home', icon: Home },
-  { id: 'optimize', label: 'Tweaking', icon: Sparkles },
-  { id: 'tests', label: 'Tools', icon: FlaskConical },
-  { id: 'ml', label: 'Aeterna AI', icon: Bot },
+  { id: 'optimize', label: 'Optimization', icon: Sparkles },
+  { id: 'tests', label: 'Tests', icon: FlaskConical },
+  { id: 'ml', label: 'ML Tweaks', icon: Bot },
   { id: 'history', label: 'Backup', icon: CloudUpload },
   { id: 'safety', label: 'Security', icon: Shield },
   { id: 'settings', label: 'Settings', icon: SlidersHorizontal },

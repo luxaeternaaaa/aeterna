@@ -61,7 +61,12 @@ fn telemetry_enabled() -> bool {
 }
 
 fn recommended_profile(name: &str) -> Option<String> {
-    let value = name.to_ascii_lowercase();
+    let value = name
+        .to_ascii_lowercase()
+        .trim_end_matches(".exe")
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
     if value.contains("valorant") {
         return Some("valorant-safe".into());
     }
@@ -74,7 +79,7 @@ fn recommended_profile(name: &str) -> Option<String> {
     if value.contains("apex") {
         return Some("apex-balanced".into());
     }
-    if value.contains("cod") || value.contains("warzone") {
+    if value == "cod" || value.starts_with("cod2") || value.contains("callofduty") || value.contains("modernwarfare") || value.contains("warzone") {
         return Some("warzone-balanced".into());
     }
     None
@@ -288,9 +293,31 @@ fn restore_for_session_end(session: &mut SessionState, restore_process_state: bo
 
 fn ignored_process(name: &str) -> bool {
     let value = name.to_ascii_lowercase();
+    let normalized = value.trim_end_matches(".exe");
     matches!(
         value.as_str(),
-        "explorer.exe" | "applicationframehost.exe" | "searchhost.exe" | "shellexperiencehost.exe" | "aeterna.exe" | "aeterna-core.exe" | "aeterna-sidecar.exe"
+        "explorer.exe"
+            | "applicationframehost.exe"
+            | "searchhost.exe"
+            | "shellexperiencehost.exe"
+            | "aeterna.exe"
+            | "aeterna-core.exe"
+            | "aeterna-sidecar.exe"
+    ) || matches!(
+        normalized,
+        "codex"
+            | "cmd"
+            | "conhost"
+            | "cursor"
+            | "node"
+            | "npm"
+            | "powershell"
+            | "pwsh"
+            | "python"
+            | "pythonw"
+            | "tauri"
+            | "tsserver"
+            | "windows-terminal"
     )
 }
 
