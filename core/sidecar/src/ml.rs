@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fs};
 use crate::{
     models::{MlInferencePayload, MlInferenceRequest, MlModelMetadata, MlRuntimeTruth},
     paths::ml_metadata_path,
+    processes,
 };
 
 fn sigmoid(value: f64) -> f64 {
@@ -103,6 +104,20 @@ fn feature_value(payload: &MlInferenceRequest, key: &str) -> f64 {
     }
 }
 
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|item| item == value) {
+        values.push(value.into());
+    }
+}
+
+fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
+    payload
+        .game_context
+        .as_ref()
+        .map(|game| game.allowed_actions.is_empty() || game.allowed_actions.iter().any(|item| item == action))
+        .unwrap_or(false)
+}
+
 pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let metadata = load_metadata();
     let mode = runtime_mode(&metadata.model_source);
@@ -112,18 +127,21 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         .fold(metadata.intercept, |acc, (key, weight)| acc + feature_value(&payload, key) * weight);
     let mut spike_probability = sigmoid(score).clamp(0.02, 0.98);
     let mut recommended_tweaks = Vec::new();
+    let mut recommended_functions = Vec::new();
     let mut factors = Vec::new();
+    factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
     if let Some(profile) = payload.system_profile.as_ref() {
-        if let Some(cores) = profile.logical_cores {
-            if cores <= 8 {
-                spike_probability = (spike_probability + 0.04).min(0.98);
-                factors.push(format!("Detected {cores} logical cores. Scheduler pressure can rise faster under burst load."));
-            } else if cores >= 12 {
-                spike_probability = (spike_probability - 0.02).max(0.02);
-                factors.push(format!("Detected {cores} logical cores. Core headroom may absorb transient spikes better."));
-            }
+        let cores = profile
+            .logical_cores
+            .unwrap_or_else(|| processes::logical_processor_count() as u32);
+        if cores <= 8 {
+            spike_probability = (spike_probability + 0.04).min(0.98);
+            factors.push(format!("Detected {cores} logical cores. Scheduler pressure can rise faster under burst load."));
+        } else if cores >= 12 {
+            spike_probability = (spike_probability - 0.02).max(0.02);
+            factors.push(format!("Detected {cores} logical cores. Core headroom may absorb transient spikes better."));
         }
-        if let Some(memory_gb) = profile.memory_gb {
+        if let Some(memory_gb) = profile.memory_gb.or_else(processes::system_memory_total_gb) {
             if memory_gb <= 8.0 {
                 spike_probability = (spike_probability + 0.03).min(0.98);
                 factors.push(format!("Detected {memory_gb:.0} GB memory profile. Background pressure can impact frametime consistency."));
@@ -137,18 +155,107 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         if profile.discrete_gpu_available == Some(false) {
             factors.push("Discrete GPU signal is absent; avoid forcing GPU-only assumptions.".into());
         }
+        if !profile.active_tweaks.is_empty() || !profile.active_registry_presets.is_empty() {
+            factors.push(format!(
+                "Current state includes {} active session tweak(s) and {} active system preset(s).",
+                profile.active_tweaks.len(),
+                profile.active_registry_presets.len()
+            ));
+        }
+        if profile.running_process_count >= 80 {
+            push_unique(&mut recommended_functions, "content-delivery-off");
+            push_unique(&mut recommended_functions, "feedback-frequency-off");
+            factors.push(format!(
+                "{} running processes were observed. The plan favors background-noise reduction.",
+                profile.running_process_count
+            ));
+        }
+        if profile.autorun_count >= 8 {
+            factors.push(format!(
+                "{} autorun entries were observed. Startup noise can be cleaned manually from Autoruns.",
+                profile.autorun_count
+            ));
+        }
+        if !profile.active_power_plan.as_deref().unwrap_or_default().to_ascii_lowercase().contains("performance") {
+            push_unique(&mut recommended_functions, "ultimate-power");
+        }
+    } else {
+        let cores = processes::logical_processor_count() as u32;
+        factors.push(format!("Detected {cores} logical cores from sidecar system inspection."));
+        if let Some(memory_gb) = processes::system_memory_total_gb() {
+            factors.push(format!("Detected {memory_gb:.0} GB RAM from sidecar system inspection."));
+        }
+    }
+    if let Some(game) = payload.game_context.as_ref() {
+        let game_name = game
+            .profile_title
+            .as_deref()
+            .or(game.process_name.as_deref())
+            .unwrap_or("selected game");
+        factors.push(format!("Game-aware context selected: {game_name}."));
+        push_unique(&mut recommended_functions, "turn-off-recordings");
+        push_unique(&mut recommended_functions, "game-mode-on");
+        push_unique(&mut recommended_functions, "windowed-optimizations-on");
+        push_unique(&mut recommended_functions, "power-throttling-off");
+        push_unique(&mut recommended_functions, "usb-selective-suspend-off");
+        push_unique(&mut recommended_functions, "pcie-lspm-off");
+        push_unique(&mut recommended_functions, "reduce-input-lag");
+        if game_allows(&payload, "process_priority") || payload.cpu_process_pct > 45.0 || payload.background_process_count > 42 {
+            push_unique(&mut recommended_tweaks, "process_priority");
+            push_unique(&mut recommended_functions, "max-games");
+        }
+        if game_allows(&payload, "power_plan") || payload.gpu_usage_pct > 70.0 || payload.frametime_p95_ms > 16.0 {
+            push_unique(&mut recommended_tweaks, "power_plan");
+            push_unique(&mut recommended_functions, "ultimate-power");
+        }
+        if game_allows(&payload, "cpu_affinity") && (payload.cpu_process_pct > 55.0 || payload.frametime_p95_ms > 12.0) {
+            push_unique(&mut recommended_tweaks, "cpu_affinity");
+            push_unique(&mut recommended_functions, "keep-cores");
+        }
+        if payload.cpu_total_pct > 70.0 || payload.frametime_p95_ms > 18.0 {
+            push_unique(&mut recommended_functions, "process-qos-high");
+        }
+        if payload.frametime_p95_ms >= 18.0 || payload.frame_drop_ratio >= 0.08 || payload.anomaly_score >= 0.32 {
+            push_unique(&mut recommended_functions, "low-timer-resolution");
+        }
+        if payload.gpu_usage_pct >= 45.0 {
+            push_unique(&mut recommended_functions, "hags-on");
+        }
+        let profile_id = game.profile_id.as_deref().unwrap_or_default();
+        if profile_id.contains("valorant") {
+            recommended_functions.retain(|id| id != "keep-cores" && id != "low-timer-resolution");
+            factors.push("Valorant profile keeps the plan compatibility-first around anti-cheat-sensitive changes.".into());
+        } else if profile_id.contains("fortnite") || profile_id.contains("warzone") {
+            push_unique(&mut recommended_functions, "diagtrack-off");
+            push_unique(&mut recommended_functions, "maps-broker-off");
+            factors.push("Large streaming titles get additional background-service noise reduction.".into());
+        } else if profile_id.contains("cs2") {
+            push_unique(&mut recommended_functions, "win32-priority-separation");
+            factors.push("CS2 profile emphasizes scheduler responsiveness and input latency.".into());
+        }
     }
     if payload.cpu_process_pct > 82.0 || payload.background_process_count > 42 {
-        recommended_tweaks.push("process_priority".into());
+        push_unique(&mut recommended_tweaks, "process_priority");
+        push_unique(&mut recommended_functions, "max-games");
     }
-    if payload.cpu_process_pct > 76.0 && payload.frametime_p95_ms > 12.0 {
-        recommended_tweaks.push("cpu_affinity".into());
+    if payload.cpu_process_pct > 76.0 && payload.frametime_p95_ms > 12.0 && game_allows(&payload, "cpu_affinity") {
+        push_unique(&mut recommended_tweaks, "cpu_affinity");
+        push_unique(&mut recommended_functions, "keep-cores");
     }
     if payload.gpu_usage_pct > 92.0 || payload.frametime_p95_ms > 16.0 {
-        recommended_tweaks.push("power_plan".into());
+        push_unique(&mut recommended_tweaks, "power_plan");
+        push_unique(&mut recommended_functions, "ultimate-power");
     }
     if recommended_tweaks.is_empty() && spike_probability > 0.4 {
-        recommended_tweaks.push("process_priority".into());
+        push_unique(&mut recommended_tweaks, "process_priority");
+        if payload.game_context.is_some() {
+            push_unique(&mut recommended_functions, "max-games");
+        }
+    }
+    if payload.background_process_count > 70 || payload.cpu_total_pct > 65.0 {
+        push_unique(&mut recommended_functions, "diagtrack-off");
+        push_unique(&mut recommended_functions, "maps-broker-off");
+        push_unique(&mut recommended_functions, "app-launch-tracking-off");
     }
     let risk_label = if spike_probability > 0.78 { "high" } else if spike_probability > 0.48 { "medium" } else { "low" };
     for tweak in &recommended_tweaks {
@@ -157,15 +264,25 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         }
     }
     let confidence_bonus = if payload.system_profile.is_some() { 0.04 } else { 0.0 };
+    let signal_scope = if payload.game_context.is_some() {
+        "telemetry, system profile, and selected game signals"
+    } else if payload.system_profile.is_some() {
+        "telemetry and system profile signals"
+    } else {
+        "telemetry and sidecar system inspection"
+    };
+
     MlInferencePayload {
         spike_probability,
         risk_label: risk_label.into(),
         confidence: (0.58 + spike_probability * 0.28 + confidence_bonus).min(0.97),
         recommended_tweaks,
+        recommended_functions,
         summary: format!(
-            "Local model {} estimates a {} spike probability using telemetry and system profile signals.",
+            "Local model {} estimates a {} spike probability using {}.",
             metadata.version,
-            (spike_probability * 100.0).round()
+            (spike_probability * 100.0).round(),
+            signal_scope
         ),
         factors,
         model_version: Some(metadata.version),
@@ -193,8 +310,10 @@ mod tests {
             background_process_count: 64,
             anomaly_score: 0.88,
             system_profile: None,
+            game_context: None,
         });
         assert_eq!(result.risk_label, "high");
         assert!(!result.recommended_tweaks.is_empty());
+        assert!(!result.recommended_functions.is_empty());
     }
 }

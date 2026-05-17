@@ -487,6 +487,7 @@ export default function App() {
           onApplyTweak={applySessionTweak}
           onAttachSession={attachSession}
           onRefresh={() => loadOptimizationRuntime(selectedProcessId ?? undefined)}
+          onRequestRestart={restartWindowsNow}
           onRollbackSnapshot={rollbackSnapshot}
         />
       )

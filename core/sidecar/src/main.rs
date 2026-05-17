@@ -52,6 +52,8 @@ fn service_names_for_preset(preset_id: &str) -> Vec<&'static str> {
         "diagtrack_off" => vec!["DiagTrack"],
         "maps_broker_off" => vec!["MapsBroker"],
         "xbox_services_off" => vec!["XblAuthManager", "XblGameSave", "XboxNetApiSvc", "XboxGipSvc"],
+        "delivery_optimization_off" => vec!["DoSvc"],
+        "print_spooler_off" => vec!["Spooler"],
         _ => Vec::new(),
     }
 }

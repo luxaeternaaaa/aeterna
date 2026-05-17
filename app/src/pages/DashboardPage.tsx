@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   Gauge,
+  Gamepad2,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -14,7 +15,13 @@ import {
 } from 'lucide-react'
 
 import { getMlRuntimeTruth, requestWindowsRestart, runOptimizationInference } from '../lib/sidecar'
-import { loadMlDenyFunctionList, OPTIMIZATION_FUNCTIONS, type OptimizationFunctionDefinition } from '../lib/optimizationFunctions'
+import { gameCandidateProcesses, matchingGameProfile } from '../lib/gameDetection'
+import {
+  loadMlDenyFunctionList,
+  ML_TWEAK_TO_FUNCTION_ID,
+  OPTIMIZATION_FUNCTIONS,
+  type OptimizationFunctionDefinition,
+} from '../lib/optimizationFunctions'
 import type {
   ApplyRegistryPresetRequest,
   ApplyRegistryPresetResponse,
@@ -26,6 +33,7 @@ import type {
   DashboardPayload,
   GameProfile,
   OptimizationRuntimeState,
+  ProcessSummary,
   RollbackResponse,
   TelemetryPoint,
 } from '../types'
@@ -36,7 +44,7 @@ interface DashboardPageProps {
   latestBenchmark: BenchmarkReport | null
   onApplyRegistryPreset: (request: ApplyRegistryPresetRequest) => Promise<ApplyRegistryPresetResponse>
   onApplyTweak: (request: ApplyTweakRequest) => Promise<ApplyTweakResponse>
-  onAttachSession: (request: AttachSessionRequest) => Promise<unknown> | void
+  onAttachSession: (request: AttachSessionRequest) => Promise<OptimizationRuntimeState | unknown> | OptimizationRuntimeState | void
   onOpenLogs: () => void
   onOpenOptimization: () => void
   onOpenTests: () => void
@@ -81,7 +89,7 @@ interface ScanResult {
 
 type InferenceInput = Parameters<typeof runOptimizationInference>[0]
 
-const BASE_BALANCED_IDS = [
+const SAFE_FALLBACK_IDS = [
   'ultimate-power',
   'game-mode-on',
   'windowed-optimizations-on',
@@ -159,11 +167,24 @@ function activePowerPlan(runtimeState: OptimizationRuntimeState) {
   return runtimeState.power_plans.find((plan) => plan.active)?.name ?? 'Unknown'
 }
 
-function liveProcessId(runtimeState: OptimizationRuntimeState) {
-  const processId = runtimeState.session.process_id ?? runtimeState.detected_game?.pid ?? null
-  if (!processId) return null
-  const known = [...runtimeState.processes, ...runtimeState.advanced_processes].some((process) => process.pid === processId)
-  return known || runtimeState.session.process_id === processId ? processId : null
+function isRuntimeState(value: unknown): value is OptimizationRuntimeState {
+  return Boolean(value && typeof value === 'object' && Array.isArray((value as OptimizationRuntimeState).processes))
+}
+
+function activeFunctionIds(runtimeState: OptimizationRuntimeState) {
+  const active = new Set<string>()
+  const performancePlan = runtimeState.power_plans.find((plan) => plan.active && /ultimate|high performance/i.test(plan.name))
+  if (performancePlan) active.add('ultimate-power')
+  for (const tweak of runtimeState.session.active_tweaks) {
+    const mapped = ML_TWEAK_TO_FUNCTION_ID[tweak]
+    if (mapped) active.add(mapped)
+  }
+  for (const preset of runtimeState.registry_presets) {
+    if (!preset.blocking_reason?.toLowerCase().includes('already active')) continue
+    const mapped = ML_TWEAK_TO_FUNCTION_ID[`registry:${preset.id}`]
+    if (mapped) active.add(mapped)
+  }
+  return active
 }
 
 function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: TelemetryPoint | null): NonNullable<InferenceInput['system_profile']> {
@@ -174,10 +195,21 @@ function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: Telem
     discrete_gpu_available: sample?.gpu_usage_pct != null ? sample.gpu_usage_pct > 0 : null,
     active_power_plan: activePowerPlan(runtimeState),
     session_attached: runtimeState.session.state === 'attached' || runtimeState.session.state === 'active',
+    active_tweaks: runtimeState.session.active_tweaks,
+    active_registry_presets: runtimeState.registry_presets
+      .filter((preset) => preset.blocking_reason?.toLowerCase().includes('already active'))
+      .map((preset) => preset.id),
+    autorun_count: runtimeState.autoruns.length,
+    running_process_count: Math.max(runtimeState.processes.length, runtimeState.advanced_processes.length),
   }
 }
 
-function buildInferenceInput(sample: TelemetryPoint | null, runtimeState: OptimizationRuntimeState): InferenceInput {
+function buildInferenceInput(
+  sample: TelemetryPoint | null,
+  runtimeState: OptimizationRuntimeState,
+  selectedGame: ProcessSummary,
+  selectedProfile: GameProfile | null,
+): InferenceInput {
   return {
     fps_avg: sample?.fps_avg ?? 120,
     frametime_avg_ms: sample?.frametime_avg_ms ?? 8.3,
@@ -190,6 +222,13 @@ function buildInferenceInput(sample: TelemetryPoint | null, runtimeState: Optimi
     background_process_count: sample?.background_process_count ?? runtimeState.processes.length,
     anomaly_score: sample?.anomaly_score ?? 0.18,
     system_profile: readSystemProfile(runtimeState, sample),
+    game_context: {
+      process_id: selectedGame.pid,
+      process_name: selectedGame.name,
+      profile_id: selectedProfile?.id ?? null,
+      profile_title: selectedProfile?.title ?? null,
+      allowed_actions: selectedProfile?.allowed_actions ?? [],
+    },
   }
 }
 
@@ -220,7 +259,14 @@ function makePlanItem(id: string, processId: number | null, runtimeState: Optimi
   }
 }
 
-function buildCoverage(runtimeState: OptimizationRuntimeState, dashboard: DashboardPayload, sample: TelemetryPoint | null, profileCount: number) {
+function buildCoverage(
+  runtimeState: OptimizationRuntimeState,
+  dashboard: DashboardPayload,
+  sample: TelemetryPoint | null,
+  selectedGame: ProcessSummary | null,
+  selectedProfile: GameProfile | null,
+  profileCount: number,
+) {
   const nav = typeof navigator === 'undefined' ? null : (navigator as Navigator & { deviceMemory?: number })
   const osLabel = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows') ? 'Windows' : 'Desktop'
   const activeTweaks = runtimeState.session.active_tweaks.length
@@ -259,38 +305,50 @@ function buildCoverage(runtimeState: OptimizationRuntimeState, dashboard: Dashbo
     },
     {
       label: 'Game profile',
-      value: runtimeState.session.process_name ?? runtimeState.detected_game?.exe_name ?? 'System-wide',
-      detail: `${profileCount} supported game profile(s) loaded`,
+      value: selectedProfile?.game ?? selectedGame?.name ?? 'No game selected',
+      detail: selectedProfile ? selectedProfile.title : `${profileCount} supported game profile(s) loaded`,
     },
   ]
 }
 
-async function analyzeSystem(props: DashboardPageProps): Promise<ScanResult> {
+async function analyzeSystem(props: DashboardPageProps, selectedGame: ProcessSummary, runtimeState: OptimizationRuntimeState): Promise<ScanResult> {
   const sample = latestSample(props.dashboard, props.realtime)
-  const inferenceInput = buildInferenceInput(sample, props.runtimeState)
+  const selectedProfile = matchingGameProfile(selectedGame.name, props.profiles)
+  const inferenceInput = buildInferenceInput(sample, runtimeState, selectedGame, selectedProfile)
   const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(inferenceInput)])
   const denied = loadMlDenyFunctionList()
-  const processId = liveProcessId(props.runtimeState)
+  const processId = selectedGame.pid
+  const alreadyActive = activeFunctionIds(runtimeState)
   const selectedIds = new Set<string>()
   const skipped: string[] = []
 
-  for (const id of BASE_BALANCED_IDS) selectedIds.add(id)
+  const modelFunctionIds = inference?.recommended_functions ?? []
+  const useFallbackPlan = !inference || modelFunctionIds.length === 0 || runtimeTruth?.runtime_mode === 'unavailable'
+
+  for (const id of useFallbackPlan ? SAFE_FALLBACK_IDS : modelFunctionIds) selectedIds.add(id)
   if ((inference?.recommended_tweaks ?? []).includes('power_plan')) selectedIds.add('ultimate-power')
   if ((inference?.recommended_tweaks ?? []).includes('cpu_affinity')) selectedIds.add('keep-cores')
   if ((inference?.recommended_tweaks ?? []).includes('process_priority')) selectedIds.add('max-games')
-  if (processId) {
+
+  if (useFallbackPlan) {
     selectedIds.add('process-qos-high')
-    selectedIds.add('keep-cores')
     selectedIds.add('max-games')
   }
-  if ((sample?.background_cpu_pct ?? 0) >= 8 || (sample?.background_process_count ?? 0) >= 90) {
+  if (useFallbackPlan && (!selectedProfile || selectedProfile.allowed_actions.includes('cpu_affinity'))) {
+    selectedIds.add('keep-cores')
+  }
+  if (useFallbackPlan && ((sample?.background_cpu_pct ?? 0) >= 8 || (sample?.background_process_count ?? 0) >= 90)) {
     selectedIds.add('diagtrack-off')
     selectedIds.add('maps-broker-off')
+    selectedIds.add('background-apps-off')
+    selectedIds.add('store-auto-updates-off')
+    selectedIds.add('delivery-optimization-off')
+    selectedIds.add('edge-background-off')
   }
-  if ((sample?.frametime_p95_ms ?? 0) >= 18 || (sample?.frame_drop_ratio ?? 0) >= 0.08 || (sample?.anomaly_score ?? 0) >= 0.32) {
+  if (useFallbackPlan && ((sample?.frametime_p95_ms ?? 0) >= 18 || (sample?.frame_drop_ratio ?? 0) >= 0.08 || (sample?.anomaly_score ?? 0) >= 0.32)) {
     selectedIds.add('low-timer-resolution')
   }
-  if (sample?.gpu_usage_pct != null || inferenceInput.system_profile?.discrete_gpu_available) {
+  if (useFallbackPlan && (sample?.gpu_usage_pct != null || inferenceInput.system_profile?.discrete_gpu_available)) {
     selectedIds.add('hags-on')
   }
 
@@ -302,6 +360,11 @@ async function analyzeSystem(props: DashboardPageProps): Promise<ScanResult> {
 
   const plan: MlPlanItem[] = []
   for (const id of selectedIds) {
+    if (alreadyActive.has(id)) {
+      const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+      skipped.push(`${definition?.title ?? id}: already active on this system.`)
+      continue
+    }
     if (denied.has(id)) {
       const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
       skipped.push(`${definition?.title ?? id}: blocked by ML deny list.`)
@@ -312,7 +375,7 @@ async function analyzeSystem(props: DashboardPageProps): Promise<ScanResult> {
       skipped.push(`${definition.title}: waiting for a selected game session.`)
       continue
     }
-    const item = makePlanItem(id, processId, props.runtimeState)
+    const item = makePlanItem(id, processId, runtimeState)
     if (item) plan.push(item)
   }
 
@@ -321,16 +384,20 @@ async function analyzeSystem(props: DashboardPageProps): Promise<ScanResult> {
   const confidence = fallback ? 0.74 : inference.confidence
   const safetyScore = Math.max(70, Math.min(96, 94 - rebootCount * 7 - plan.filter((item) => item.tone === 'balanced').length * 2))
   const summary =
-    'ML selected a balanced plan that avoids high-risk boot and security downgrades, favors reversible system settings, and flags restart-only changes before they are trusted.'
+    useFallbackPlan
+      ? 'Runtime inference did not return a concrete function list, so Aeterna selected a conservative fallback plan from safe, reversible tuning rules.'
+      : 'ML selected a game-aware balanced plan that avoids high-risk boot and security downgrades, favors reversible system settings, and flags restart-only changes before they are trusted.'
   const rationale = [
     `Model path: ${runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'Runtime model')}.`,
-    `Telemetry source: ${sample ? `${sample.capture_source}, ${sample.session_state}` : 'no live sample, system profile only'}.`,
+    `Selected game: ${selectedProfile?.title ?? selectedGame.name} (PID ${selectedGame.pid}).`,
+    `Function source: ${useFallbackPlan ? 'safe fallback rules' : `${modelFunctionIds.length} model-ranked function(s)`}.`,
+    `Telemetry source: ${sample ? `${sample.capture_source}, ${sample.session_state}` : 'no live sample, system profile and process state only'}.`,
     `Balanced mode: ${plan.length} action(s), ${rebootCount} restart-required action(s), ${skipped.length} high-risk/blocked action(s) skipped.`,
   ]
 
   return {
     confidence,
-    coverage: buildCoverage(props.runtimeState, props.dashboard, sample, props.profiles.length),
+    coverage: buildCoverage(runtimeState, props.dashboard, sample, selectedGame, selectedProfile, props.profiles.length),
     modelLabel: runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'ML runtime'),
     plan,
     rationale,
@@ -346,6 +413,8 @@ function StatusBadge({ children, tone }: { children: string; tone: PlanTone }) {
 
 export function DashboardPage(props: DashboardPageProps) {
   const sample = latestSample(props.dashboard, props.realtime)
+  const gameProcesses = useMemo(() => gameCandidateProcesses(props.runtimeState, props.profiles), [props.profiles, props.runtimeState])
+  const [selectedGamePid, setSelectedGamePid] = useState<number | null>(gameProcesses[0]?.pid ?? null)
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -358,16 +427,35 @@ export function DashboardPage(props: DashboardPageProps) {
     () => scan?.plan.filter((item) => selectedIds.has(item.definition.id)) ?? [],
     [scan?.plan, selectedIds],
   )
+  const selectedGame = useMemo(
+    () => gameProcesses.find((process) => process.pid === selectedGamePid) ?? gameProcesses[0] ?? null,
+    [gameProcesses, selectedGamePid],
+  )
+  const selectedProfile = selectedGame ? matchingGameProfile(selectedGame.name, props.profiles) : null
   const rebootSelected = selectedPlan.filter((item) => item.definition.requiresReboot)
+
+  useEffect(() => {
+    if (selectedGamePid && gameProcesses.some((process) => process.pid === selectedGamePid)) return
+    setSelectedGamePid(gameProcesses[0]?.pid ?? null)
+  }, [gameProcesses, selectedGamePid])
 
   const startScan = async () => {
     if (scanState === 'analyzing' || scanState === 'applying') return
+    if (!selectedGame) {
+      setScanState('idle')
+      setErrorText('No running games found. Start a supported game, then refresh and run ML analysis again.')
+      setScan(null)
+      setSelectedIds(new Set())
+      return
+    }
     setScanState('analyzing')
     setErrorText(null)
     setApplied([])
     setRestartNeeded([])
     try {
-      const result = await analyzeSystem(props)
+      const attached = await props.onAttachSession({ process_id: selectedGame.pid, process_name: selectedGame.name })
+      const runtimeState = isRuntimeState(attached) ? attached : props.runtimeState
+      const result = await analyzeSystem(props, selectedGame, runtimeState)
       setScan(result)
       setSelectedIds(new Set(result.plan.map((item) => item.definition.id)))
       setScanState('ready')
@@ -456,13 +544,13 @@ export function DashboardPage(props: DashboardPageProps) {
         <div>
           <h1 className="text-2xl font-black">ML Tweaks</h1>
           <p className="mt-1 text-sm font-semibold text-white/50">
-            Analyze Windows, hardware, active settings, telemetry, and current tweaks before applying a balanced plan.
+            Select a running game, analyze Windows and hardware state, then let the local model pick the best safe tweaks.
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-[1.35rem] bg-[#070b1b]/88 p-2">
           <button
             className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#315cff] px-5 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-55"
-            disabled={scanState === 'analyzing' || scanState === 'applying'}
+            disabled={scanState === 'analyzing' || scanState === 'applying' || !selectedGame}
             onClick={() => void startScan()}
             type="button"
           >
@@ -485,6 +573,54 @@ export function DashboardPage(props: DashboardPageProps) {
           <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-5">
             <div className="flex items-center gap-3">
               <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#315cff]/18 text-[#7ba2ff]">
+                <Gamepad2 size={25} />
+              </span>
+              <div>
+                <h2 className="text-xl font-black">Running games</h2>
+                <p className="mt-1 text-sm leading-5 text-white/52">Only real detected game processes are listed here.</p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {gameProcesses.length > 0 ? (
+                gameProcesses.map((process) => {
+                  const active = selectedGame?.pid === process.pid
+                  const profile = matchingGameProfile(process.name, props.profiles)
+                  return (
+                    <button
+                      key={process.pid}
+                      className={`w-full rounded-xl px-4 py-3 text-left transition ${
+                        active ? 'bg-[#315cff] text-white' : 'bg-[#111936] text-white/86 hover:bg-[#172145]'
+                      }`}
+                      onClick={() => {
+                        setSelectedGamePid(process.pid)
+                        setScanState('idle')
+                        setScan(null)
+                        setSelectedIds(new Set())
+                        setApplied([])
+                        setRestartNeeded([])
+                        setErrorText(null)
+                      }}
+                      type="button"
+                    >
+                      <span className="block truncate text-base font-black">{process.name}</span>
+                      <span className={`mt-1 block text-xs font-semibold ${active ? 'text-white/72' : 'text-white/42'}`}>
+                        PID {process.pid}
+                        {profile ? ` | ${profile.title}` : ' | game signature'}
+                      </span>
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="rounded-xl bg-[#111936] px-4 py-4 text-sm font-semibold leading-6 text-white/54">
+                  No running games found. Start a game and return to ML Tweaks.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-5">
+            <div className="flex items-center gap-3">
+              <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#315cff]/18 text-[#7ba2ff]">
                 <Bot size={25} />
               </span>
               <div>
@@ -504,7 +640,7 @@ export function DashboardPage(props: DashboardPageProps) {
             </div>
             <button
               className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#315cff] px-4 text-base font-bold disabled:cursor-not-allowed disabled:bg-white/30"
-              disabled={scanState === 'analyzing' || scanState === 'applying'}
+              disabled={scanState === 'analyzing' || scanState === 'applying' || !selectedGame}
               onClick={() => void startScan()}
               type="button"
             >
@@ -530,6 +666,10 @@ export function DashboardPage(props: DashboardPageProps) {
           <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-5">
             <h2 className="text-xl font-black">Current system</h2>
             <div className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
+                <span className="text-white/52">Selected game</span>
+                <span className="max-w-[190px] truncate font-bold">{selectedGame?.name ?? 'None'}</span>
+              </div>
               <div className="flex items-center justify-between gap-3 rounded-xl bg-[#111936] px-4 py-3">
                 <span className="text-white/52">Telemetry</span>
                 <span className="font-bold">{props.dashboard.mode}</span>
@@ -560,7 +700,7 @@ export function DashboardPage(props: DashboardPageProps) {
               <span className="rounded-full bg-[#202942] px-4 py-2 text-sm font-bold text-white/70">{scan?.modelLabel ?? 'Waiting for scan'}</span>
             </div>
             <div className="grid gap-3 xl:grid-cols-4">
-              {(scan?.coverage ?? buildCoverage(props.runtimeState, props.dashboard, sample, props.profiles.length)).map((item) => (
+              {(scan?.coverage ?? buildCoverage(props.runtimeState, props.dashboard, sample, selectedGame, selectedProfile, props.profiles.length)).map((item) => (
                 <article key={item.label} className="rounded-[1rem] bg-[#111936] p-4">
                   <p className="text-xs font-bold uppercase text-white/36">{item.label}</p>
                   <p className="mt-2 truncate text-lg font-black">{item.value}</p>
@@ -577,7 +717,7 @@ export function DashboardPage(props: DashboardPageProps) {
                 <div>
                   <h2 className="text-2xl font-black">Start with system analysis</h2>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-                    ML Tweaks no longer starts from a game profile. It scans the whole system first, then selects a conservative performance plan with restart-only changes clearly marked.
+                    Pick a running game on the left. Aeterna will attach to that process, scan the OS, hardware, active presets, autoruns, telemetry, and current game profile, then select the safest useful plan.
                   </p>
                 </div>
               </div>
@@ -590,7 +730,9 @@ export function DashboardPage(props: DashboardPageProps) {
                 <Loader2 className="animate-spin text-[#7ba2ff]" size={26} />
                 <div>
                   <h2 className="text-xl font-black">Analyzing full system</h2>
-                  <p className="mt-1 text-sm text-white/64">Checking OS state, components, power policy, registry presets, active tweaks, telemetry quality, and safe ML actions.</p>
+                  <p className="mt-1 text-sm text-white/64">
+                    Checking OS state, components, power policy, registry presets, active tweaks, telemetry quality, and selected game profile.
+                  </p>
                 </div>
               </div>
             </section>

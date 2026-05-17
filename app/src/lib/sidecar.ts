@@ -119,6 +119,17 @@ export interface MlInferenceInput {
     discrete_gpu_available?: boolean | null
     active_power_plan?: string | null
     session_attached?: boolean | null
+    active_tweaks?: string[]
+    active_registry_presets?: string[]
+    autorun_count?: number
+    running_process_count?: number
+  }
+  game_context?: {
+    process_id?: number | null
+    process_name?: string | null
+    profile_id?: string | null
+    profile_title?: string | null
+    allowed_actions?: string[]
   }
 }
 
@@ -138,6 +149,7 @@ export async function runOptimizationInference(point: MlInferenceInput): Promise
         background_process_count: point.background_process_count,
         anomaly_score: point.anomaly_score,
         system_profile: point.system_profile ?? null,
+        game_context: point.game_context ?? null,
       },
     })
   } catch {

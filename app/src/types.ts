@@ -432,6 +432,7 @@ export interface MlInferencePayload {
   risk_label: string
   confidence: number
   recommended_tweaks: string[]
+  recommended_functions?: string[]
   summary: string
   factors: string[]
   model_version?: string

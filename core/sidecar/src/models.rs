@@ -248,6 +248,24 @@ pub struct MlSystemProfile {
     pub discrete_gpu_available: Option<bool>,
     pub active_power_plan: Option<String>,
     pub session_attached: Option<bool>,
+    #[serde(default)]
+    pub active_tweaks: Vec<String>,
+    #[serde(default)]
+    pub active_registry_presets: Vec<String>,
+    #[serde(default)]
+    pub autorun_count: u32,
+    #[serde(default)]
+    pub running_process_count: u32,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct MlGameContext {
+    pub process_id: Option<u32>,
+    pub process_name: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_title: Option<String>,
+    #[serde(default)]
+    pub allowed_actions: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -264,6 +282,8 @@ pub struct MlInferenceRequest {
     pub anomaly_score: f64,
     #[serde(default)]
     pub system_profile: Option<MlSystemProfile>,
+    #[serde(default)]
+    pub game_context: Option<MlGameContext>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -272,6 +292,7 @@ pub struct MlInferencePayload {
     pub risk_label: String,
     pub confidence: f64,
     pub recommended_tweaks: Vec<String>,
+    pub recommended_functions: Vec<String>,
     pub summary: String,
     pub factors: Vec<String>,
     pub model_version: Option<String>,

@@ -196,6 +196,15 @@ pub fn system_memory_pressure() -> Option<f64> {
     ok.then_some(status.dwMemoryLoad as f64)
 }
 
+pub fn system_memory_total_gb() -> Option<f64> {
+    let mut status = MEMORYSTATUSEX {
+        dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+        ..unsafe { zeroed() }
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) } != 0;
+    ok.then_some(status.ullTotalPhys as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
 pub fn system_cpu_times_100ns() -> Option<(u64, u64, u64)> {
     let mut idle: FILETIME = unsafe { zeroed() };
     let mut kernel: FILETIME = unsafe { zeroed() };
