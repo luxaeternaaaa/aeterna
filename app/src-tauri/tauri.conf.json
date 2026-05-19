@@ -31,7 +31,8 @@
     "targets": "all",
     "resources": [
       "../../ml/models/latency_model.metadata.json",
-      "../../ml/shap/latest.json"
+      "../../ml/shap/latest.json",
+      "../../presentmon/PresentMon.exe"
     ],
     "externalBin": [
       "binaries/aeterna-core",

@@ -228,8 +228,11 @@ function isMetricBetter(delta: BenchmarkDelta | null, key: keyof BenchmarkDelta,
 
 const DELTA_KEYS: Record<string, keyof BenchmarkDelta> = {
   'Average FPS': 'fps_avg',
+  '1% Low FPS': 'fps_p1_low',
+  '0.1% Low FPS': 'fps_p01_low',
   'Average frame time': 'frametime_avg_ms',
   'P95 frame time': 'frametime_p95_ms',
+  'P99 frame time': 'frametime_p99_ms',
   'Frame drops': 'frame_drop_ratio',
   'Game CPU': 'cpu_process_pct',
   'Total CPU': 'cpu_total_pct',
@@ -625,6 +628,19 @@ export function TestsPage({
                   </span>
                 </button>
               </section>
+
+              <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-4">
+                <p className="text-xs font-bold uppercase text-white/38">Capture engine</p>
+                <p className="mt-2 text-lg font-black text-white">
+                  {runtimeState.capture_status.source === 'presentmon' ? 'PresentMon' : 'Counters fallback'}
+                </p>
+                <p className={`mt-1 text-sm font-semibold ${runtimeState.capture_status.source === 'presentmon' ? 'text-[#7ba2ff]' : 'text-[#ffcf5a]'}`}>
+                  {runtimeState.capture_status.source === 'presentmon'
+                    ? 'Real FPS and frame-time capture'
+                    : 'Run Aeterna as administrator for real FPS capture'}
+                </p>
+                {runtimeState.capture_status.note ? <p className="mt-2 text-xs leading-5 text-white/48">{runtimeState.capture_status.note}</p> : null}
+              </section>
             </>
           ) : null}
 
@@ -822,6 +838,7 @@ export function TestsPage({
                     <p className="mt-2 text-2xl font-black text-white">{benchmarkBaseline.game_name}</p>
                     <p className="mt-1 text-sm text-white/50">
                       {benchmarkBaseline.sample_count} samples, {benchmarkBaseline.capture_source}
+                      {benchmarkBaseline.presentmon_frame_count ? `, ${benchmarkBaseline.presentmon_frame_count} frames` : ''}
                     </p>
                   </article>
                   <article className="rounded-[1.35rem] bg-[#070b1b]/88 px-5 py-4">
@@ -832,9 +849,16 @@ export function TestsPage({
                     </p>
                   </article>
                 </div>
+                {benchmarkBaseline.capture_source !== 'presentmon' ? (
+                  <div className="mb-4 rounded-[1.35rem] bg-[#3d2512]/80 px-5 py-3 text-sm font-semibold text-[#ffcf5a]">
+                    PresentMon is not active for this report. FPS values are degraded and should not be used as final CS2 proof.
+                  </div>
+                ) : null}
 
                 <div className="grid gap-3 xl:grid-cols-3">
                   <MetricCard baseline={benchmarkBaseline.fps_avg} current={currentWindow.fps_avg ?? realtime?.fps_avg} delta={delta} higherIsBetter icon={Gauge} label="Average FPS" />
+                  <MetricCard baseline={benchmarkBaseline.fps_p1_low} current={currentWindow.fps_p1_low ?? realtime?.fps_p1_low} delta={delta} higherIsBetter icon={Gauge} label="1% Low FPS" />
+                  <MetricCard baseline={benchmarkBaseline.fps_p01_low} current={currentWindow.fps_p01_low ?? realtime?.fps_p01_low} delta={delta} higherIsBetter icon={Gauge} label="0.1% Low FPS" />
                   <MetricCard
                     baseline={benchmarkBaseline.frametime_avg_ms}
                     current={currentWindow.frametime_avg_ms ?? realtime?.frametime_avg_ms}
@@ -851,6 +875,15 @@ export function TestsPage({
                     higherIsBetter={false}
                     icon={BarChart3}
                     label="P95 frame time"
+                    unit=" ms"
+                  />
+                  <MetricCard
+                    baseline={benchmarkBaseline.frametime_p99_ms}
+                    current={currentWindow.frametime_p99_ms ?? realtime?.frametime_p99_ms}
+                    delta={delta}
+                    higherIsBetter={false}
+                    icon={BarChart3}
+                    label="P99 frame time"
                     unit=" ms"
                   />
                   <MetricCard

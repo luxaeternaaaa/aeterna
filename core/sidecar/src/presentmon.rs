@@ -20,10 +20,14 @@ const NO_WINDOW_FLAG: u32 = 0x08000000;
 #[derive(Clone, Default)]
 pub struct PresentMonMetrics {
     pub fps_avg: f64,
+    pub fps_p1_low: f64,
+    pub fps_p01_low: f64,
     pub frametime_avg_ms: f64,
     pub frametime_p95_ms: f64,
+    pub frametime_p99_ms: f64,
     pub frame_drop_ratio: f64,
     pub gpu_usage_pct: Option<f64>,
+    pub frame_count: usize,
 }
 
 #[derive(Default)]
@@ -41,7 +45,17 @@ impl PresentMonSession {
     }
 
     pub fn helper_path(&self) -> Option<PathBuf> {
-        env::var_os("AETERNA_PRESENTMON_PATH").map(PathBuf::from).filter(|path| path.exists())
+        if let Some(path) = env::var_os("AETERNA_PRESENTMON_PATH").map(PathBuf::from).filter(|path| path.exists()) {
+            return Some(path);
+        }
+        let cwd = env::current_dir().ok()?;
+        [
+            cwd.join("presentmon").join("PresentMon.exe"),
+            cwd.join("..").join("presentmon").join("PresentMon.exe"),
+            cwd.join("..").join("..").join("presentmon").join("PresentMon.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.exists())
     }
 
     pub fn helper_available(&self) -> bool {
@@ -66,6 +80,7 @@ impl PresentMonSession {
             .arg("--stop_existing_session")
             .arg("--session_name")
             .arg(format!("Aeterna-{session_id}"))
+            .arg("--v1_metrics")
             .arg("--no_console_stats")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -95,12 +110,29 @@ impl PresentMonSession {
         let mut reader = csv::ReaderBuilder::new().flexible(true).from_reader(bytes.as_slice());
         let headers = reader.headers().ok()?.clone();
         let index = header_index(&headers);
-        let between_idx = *index.get("MsBetweenPresents")?;
-        let gpu_idx = index.get("MsGPUBusy").copied();
+        let between_idx = find_header(
+            &index,
+            &[
+                "MsBetweenPresents",
+                "MsBetweenDisplayChange",
+                "FrameTime",
+                "FrameTimeMs",
+                "msBetweenPresents",
+            ],
+        )?;
+        let gpu_idx = find_header(
+            &index,
+            &[
+                "MsGPUBusy",
+                "MsGPUActive",
+                "GpuBusyMs",
+                "msGPUActive",
+            ],
+        );
         let rows = reader.records().flatten().collect::<Vec<_>>();
         let mut frames = Vec::new();
         let mut gpu_values = Vec::new();
-        for row in rows.iter().rev().take(120) {
+        for row in rows.iter().rev().take(500) {
             let between = parse_float(row.get(between_idx));
             if !(between > 0.0) {
                 continue;
@@ -117,15 +149,25 @@ impl PresentMonSession {
             return None;
         }
         frames.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        let frame_count = frames.len();
         let frametime_avg_ms = frames.iter().sum::<f64>() / frames.len() as f64;
-        let p95_index = ((frames.len() as f64) * 0.95).floor() as usize;
-        let frametime_p95_ms = frames[p95_index.min(frames.len() - 1)];
+        let frametime_p95_ms = percentile(&frames, 0.95);
+        let frametime_p99_ms = percentile(&frames, 0.99);
+        let frametime_p999_ms = percentile(&frames, 0.999);
         Some(PresentMonMetrics {
             fps_avg: (1000.0 / frametime_avg_ms).clamp(1.0, 500.0),
+            fps_p1_low: (1000.0 / frametime_p99_ms).clamp(1.0, 500.0),
+            fps_p01_low: (1000.0 / frametime_p999_ms).clamp(1.0, 500.0),
             frametime_avg_ms,
             frametime_p95_ms,
-            frame_drop_ratio: frames.iter().filter(|value| **value > 25.0).count() as f64 / frames.len() as f64,
+            frametime_p99_ms,
+            frame_drop_ratio: frames
+                .iter()
+                .filter(|value| **value > (frametime_avg_ms * 2.0).max(33.3))
+                .count() as f64
+                / frames.len() as f64,
             gpu_usage_pct: (!gpu_values.is_empty()).then_some(gpu_values.iter().sum::<f64>() / gpu_values.len() as f64),
+            frame_count,
         })
     }
 
@@ -166,7 +208,33 @@ impl PresentMonSession {
 }
 
 fn header_index(headers: &StringRecord) -> HashMap<String, usize> {
-    headers.iter().enumerate().map(|(index, value)| (value.to_string(), index)).collect()
+    headers
+        .iter()
+        .enumerate()
+        .flat_map(|(index, value)| [(value.to_string(), index), (normalize_header(value), index)])
+        .collect()
+}
+
+fn normalize_header(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn find_header(index: &HashMap<String, usize>, names: &[&str]) -> Option<usize> {
+    names
+        .iter()
+        .find_map(|name| index.get(*name).copied().or_else(|| index.get(&normalize_header(name)).copied()))
+}
+
+fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let index = ((sorted.len().saturating_sub(1)) as f64 * fraction).ceil() as usize;
+    sorted[index.min(sorted.len() - 1)]
 }
 
 fn parse_float(value: Option<&str>) -> f64 {

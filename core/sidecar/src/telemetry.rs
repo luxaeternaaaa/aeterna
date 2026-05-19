@@ -14,6 +14,7 @@ use crate::{
     bootcfg,
     models::{CaptureStatus, DetectedGame, SessionState},
     paths::{feature_flags_path, live_telemetry_path, session_state_path, system_settings_path},
+    presentmon::PresentMonSession,
     power, registry,
     processes::{self, logical_processor_count},
     services,
@@ -133,8 +134,9 @@ fn session_identifier(pid: u32) -> String {
     format!("session-{}-{pid}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
 }
 
-pub fn attach_session(process_id: u32, process_name: String, _helper_available: bool) -> SessionState {
+pub fn attach_session(process_id: u32, process_name: String, helper_available: bool) -> SessionState {
     sync_pending_restore_state();
+    let _ = fs::remove_file(live_telemetry_path());
     let mut session = read_session_state();
     let attached_at = now();
     session.session_id = Some(session_identifier(process_id));
@@ -149,9 +151,13 @@ pub fn attach_session(process_id: u32, process_name: String, _helper_available: 
     session.detected_candidate_pid = Some(process_id);
     session.detected_candidate_name = Some(process_name.clone());
     session.recommended_profile_id = recommended_profile(&process_name);
-    session.capture_source = "counters-fallback".into();
-    session.capture_quality = "ready".into();
-    session.capture_reason = Some("Fallback-only telemetry mode is active.".into());
+    session.capture_source = if helper_available { "presentmon".into() } else { "counters-fallback".into() };
+    session.capture_quality = if helper_available { "ready".into() } else { "degraded".into() };
+    session.capture_reason = Some(if helper_available {
+        "PresentMon is ready. Keep the game active during the capture window.".into()
+    } else {
+        "PresentMon helper is missing, so only counters fallback is available.".into()
+    });
     write_session_state(&session);
     let _ = activity::append(snapshots::activity(
         "session",
@@ -204,7 +210,7 @@ pub fn untrack_snapshot(snapshot_id: &str) {
     write_session_state(&session);
 }
 
-pub fn detected_game(session: &SessionState, _helper_available: bool) -> Option<DetectedGame> {
+pub fn detected_game(session: &SessionState, helper_available: bool) -> Option<DetectedGame> {
     let pid = session.detected_candidate_pid?;
     let name = session.detected_candidate_name.clone()?;
     Some(DetectedGame {
@@ -213,16 +219,20 @@ pub fn detected_game(session: &SessionState, _helper_available: bool) -> Option<
         observed_for_ms: 3000,
         capture_available: true,
         recommended_profile_id: recommended_profile(&name),
-        reason: "Stable foreground candidate detected. Capture uses counters fallback.".into(),
+        reason: if helper_available {
+            "Stable foreground candidate detected. PresentMon capture is available.".into()
+        } else {
+            "Stable foreground candidate detected. PresentMon helper is missing; capture uses counters fallback.".into()
+        },
     })
 }
 
-pub fn capture_status(session: &SessionState, _helper_available: bool) -> CaptureStatus {
+pub fn capture_status(session: &SessionState, helper_available: bool) -> CaptureStatus {
     CaptureStatus {
         source: session.capture_source.clone(),
         available: true,
         quality: session.capture_quality.clone(),
-        helper_available: false,
+        helper_available,
         note: session.capture_reason.clone(),
     }
 }
@@ -382,6 +392,7 @@ pub fn spawn_collector() {
     thread::spawn(move || {
         let mut cpu_samples: HashMap<u32, (u64, Instant)> = HashMap::new();
         let mut system_sample: Option<(u64, u64, u64)> = None;
+        let mut presentmon = PresentMonSession::new();
         let mut detected_pid: Option<u32> = None;
         let mut stable_samples = 0u32;
         let mut focus_lost_at: Option<Instant> = None;
@@ -391,6 +402,7 @@ pub fn spawn_collector() {
             let mut session = read_session_state();
             session.telemetry_source = mode.clone();
             if !enabled || mode != "live" {
+                presentmon.stop();
                 write_session_state(&session);
                 thread::sleep(Duration::from_secs(1));
                 continue;
@@ -400,6 +412,7 @@ pub fn spawn_collector() {
             let foreground_name = foreground_pid.and_then(processes::process_name).filter(|name| !ignored_process(name));
 
             if session.process_id.is_none() {
+                presentmon.stop();
                 if let (Some(pid), Some(name)) = (foreground_pid, foreground_name.clone()) {
                     let current_cpu = processes::process_cpu_time_100ns(pid).unwrap_or_default();
                     let cpu_process_pct = process_cpu_percent(&mut cpu_samples, pid, current_cpu, observed_at);
@@ -414,10 +427,13 @@ pub fn spawn_collector() {
                         session.detected_candidate_pid = Some(pid);
                         session.detected_candidate_name = Some(name.clone());
                         session.recommended_profile_id = recommended_profile(&name);
-                        session.capture_source = "counters-fallback".into();
+                        session.capture_source = if presentmon.helper_available() { "presentmon".into() } else { "counters-fallback".into() };
                         session.capture_quality = "ready".into();
-                        session.capture_reason =
-                            Some("Game candidate is stable. Attach to start fallback-only live telemetry.".into());
+                        session.capture_reason = Some(if presentmon.helper_available() {
+                            "Game candidate is stable. Attach to start PresentMon frame capture.".into()
+                        } else {
+                            "Game candidate is stable. Attach to start counters fallback telemetry.".into()
+                        });
                         session.last_seen_at = Some(now());
                         write_session_state(&session);
                     }
@@ -435,6 +451,7 @@ pub fn spawn_collector() {
 
             let pid = session.process_id.unwrap_or_default();
             if !processes::process_exists(pid) {
+                presentmon.stop();
                 session.state = "ended".into();
                 session.ended_at = Some(now());
                 let _ = restore_for_session_end(&mut session, false);
@@ -468,12 +485,78 @@ pub fn spawn_collector() {
                 .unwrap_or(0);
             let disk_pressure_pct = ((background_cpu_pct * 0.55) + (memory_pressure_pct * 0.2) + (background_process_count as f64 * 0.35))
                 .clamp(0.0, 100.0);
-            let (fps_avg, frametime_avg_ms, frametime_p95_ms, frame_drop_ratio) =
-                fallback_frame_metrics(cpu_process_pct, memory_pressure_pct, background_process_count);
-            session.capture_reason = Some("Fallback-only telemetry mode is active.".into());
-            session.capture_source = "counters-fallback".into();
-            session.capture_quality = if is_foreground { "ready".into() } else { "degraded".into() };
-            let gpu_usage_pct: Option<f64> = None;
+            let mut presentmon_error: Option<String> = None;
+            let presentmon_metrics = if presentmon.helper_available() {
+                let session_id = session.session_id.as_deref().unwrap_or("live");
+                match presentmon.ensure_running(pid, session_id) {
+                    Ok(()) => presentmon.sample(),
+                    Err(error) => {
+                        presentmon_error = Some(error);
+                        None
+                    }
+                }
+            } else {
+                presentmon.stop();
+                None
+            };
+            let fallback_metrics = fallback_frame_metrics(cpu_process_pct, memory_pressure_pct, background_process_count);
+            let (
+                fps_avg,
+                fps_p1_low,
+                fps_p01_low,
+                frametime_avg_ms,
+                frametime_p95_ms,
+                frametime_p99_ms,
+                frame_drop_ratio,
+                gpu_usage_pct,
+                frame_count,
+                metrics_origin,
+            ) = if let Some(metrics) = presentmon_metrics {
+                (
+                    metrics.fps_avg,
+                    metrics.fps_p1_low,
+                    metrics.fps_p01_low,
+                    metrics.frametime_avg_ms,
+                    metrics.frametime_p95_ms,
+                    metrics.frametime_p99_ms,
+                    metrics.frame_drop_ratio,
+                    metrics.gpu_usage_pct,
+                    metrics.frame_count,
+                    "presentmon",
+                )
+            } else {
+                let (fps_avg, frametime_avg_ms, frametime_p95_ms, frame_drop_ratio) = fallback_metrics;
+                let frametime_p99_ms = frametime_p95_ms * 1.12;
+                (
+                    fps_avg,
+                    (1000.0 / frametime_p99_ms).clamp(1.0, 500.0),
+                    (1000.0 / (frametime_p99_ms * 1.18)).clamp(1.0, 500.0),
+                    frametime_avg_ms,
+                    frametime_p95_ms,
+                    frametime_p99_ms,
+                    frame_drop_ratio,
+                    None,
+                    0,
+                    "counters-derived",
+                )
+            };
+            session.capture_source = if metrics_origin == "presentmon" { "presentmon".into() } else { "counters-fallback".into() };
+            session.capture_quality = if metrics_origin == "presentmon" {
+                if is_foreground { "high".into() } else { "degraded".into() }
+            } else if is_foreground {
+                "degraded".into()
+            } else {
+                "degraded".into()
+            };
+            session.capture_reason = Some(if metrics_origin == "presentmon" {
+                format!("PresentMon frame capture active ({frame_count} recent frames).")
+            } else if let Some(error) = presentmon_error {
+                format!("PresentMon failed: {error}. Using counters fallback.")
+            } else if presentmon.helper_available() {
+                "Waiting for PresentMon frame rows. Keep the game in foreground during capture.".into()
+            } else {
+                "PresentMon helper is missing, so live capture uses counters fallback.".into()
+            });
             let anomaly_score = ((cpu_process_pct / 100.0) * 0.25
                 + (cpu_total_pct / 100.0) * 0.15
                 + (memory_pressure_pct / 100.0) * 0.15
@@ -493,8 +576,11 @@ pub fn spawn_collector() {
                 "process_id": pid,
                 "session_state": session.state,
                 "fps_avg": fps_avg,
+                "fps_p1_low": fps_p1_low,
+                "fps_p01_low": fps_p01_low,
                 "frametime_avg_ms": frametime_avg_ms,
                 "frametime_p95_ms": frametime_p95_ms,
+                "frametime_p99_ms": frametime_p99_ms,
                 "frame_drop_ratio": frame_drop_ratio,
                 "cpu_process_pct": cpu_process_pct,
                 "cpu_total_pct": cpu_total_pct,
@@ -510,6 +596,8 @@ pub fn spawn_collector() {
                 "packet_loss": 0.0,
                 "anomaly_score": anomaly_score,
                 "threat_level": threat_level(anomaly_score),
+                "metrics_origin": metrics_origin,
+                "presentmon_frame_count": frame_count,
             }));
             write_session_state(&session);
             thread::sleep(Duration::from_secs(1));

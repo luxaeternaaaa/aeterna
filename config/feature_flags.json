@@ -1,5 +1,5 @@
 {
-  "telemetry_collect": false,
+  "telemetry_collect": true,
   "network_optimizer": false,
   "anomaly_detection": false,
   "auto_security_scan": false,

@@ -52,8 +52,11 @@ def _normalize_demo(row: dict[str, object]) -> dict[str, object]:
         "process_id": None,
         "session_state": row.get("session_state", "active"),
         "fps_avg": fps_avg,
+        "fps_p1_low": float(row.get("fps_p1_low", fps_avg * 0.82)),
+        "fps_p01_low": float(row.get("fps_p01_low", fps_avg * 0.72)),
         "frametime_avg_ms": frametime_avg_ms,
         "frametime_p95_ms": frametime_p95_ms,
+        "frametime_p99_ms": float(row.get("frametime_p99_ms", frametime_p95_ms * 1.14)),
         "frame_drop_ratio": float(row.get("frame_drop_ratio", 0.06)),
         "cpu_process_pct": cpu_process,
         "cpu_total_pct": min(100.0, cpu_process + 8.0),
@@ -69,6 +72,8 @@ def _normalize_demo(row: dict[str, object]) -> dict[str, object]:
         "packet_loss": packet_loss,
         "anomaly_score": float(row.get("anomaly_score", 0)),
         "threat_level": row.get("threat_level", "low"),
+        "metrics_origin": "demo",
+        "presentmon_frame_count": 0,
     }
 
 
@@ -82,8 +87,11 @@ def _disabled_row() -> dict[str, object]:
         "process_id": None,
         "session_state": "idle",
         "fps_avg": 0,
+        "fps_p1_low": 0,
+        "fps_p01_low": 0,
         "frametime_avg_ms": 0,
         "frametime_p95_ms": 0,
+        "frametime_p99_ms": 0,
         "frame_drop_ratio": 0,
         "cpu_process_pct": 0,
         "cpu_total_pct": 0,
@@ -99,6 +107,8 @@ def _disabled_row() -> dict[str, object]:
         "packet_loss": 0,
         "anomaly_score": 0,
         "threat_level": "low",
+        "metrics_origin": "disabled",
+        "presentmon_frame_count": 0,
     }
 
 

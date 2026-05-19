@@ -13,8 +13,11 @@ export interface TelemetryPoint {
   process_id?: number | null
   session_state: 'idle' | 'detected' | 'attached' | 'active' | 'ended' | 'restored'
   fps_avg: number
+  fps_p1_low?: number
+  fps_p01_low?: number
   frametime_avg_ms: number
   frametime_p95_ms: number
+  frametime_p99_ms?: number
   frame_drop_ratio: number
   cpu_process_pct: number
   cpu_total_pct: number
@@ -30,6 +33,8 @@ export interface TelemetryPoint {
   packet_loss: number
   anomaly_score: number
   threat_level: 'low' | 'medium' | 'high'
+  metrics_origin?: string
+  presentmon_frame_count?: number
 }
 
 export interface StatCard {
@@ -85,8 +90,11 @@ export interface BenchmarkWindow {
   process_id?: number | null
   session_id?: string | null
   fps_avg: number
+  fps_p1_low: number
+  fps_p01_low: number
   frametime_avg_ms: number
   frametime_p95_ms: number
+  frametime_p99_ms: number
   frame_drop_ratio: number
   cpu_process_pct: number
   cpu_total_pct: number
@@ -98,12 +106,17 @@ export interface BenchmarkWindow {
   background_cpu_pct: number
   anomaly_score: number
   session_health: string
+  metrics_origin: string
+  presentmon_frame_count: number
 }
 
 export interface BenchmarkDelta {
   fps_avg: number
+  fps_p1_low: number
+  fps_p01_low: number
   frametime_avg_ms: number
   frametime_p95_ms: number
+  frametime_p99_ms: number
   frame_drop_ratio: number
   cpu_process_pct: number
   cpu_total_pct: number

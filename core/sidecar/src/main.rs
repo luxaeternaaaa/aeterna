@@ -94,7 +94,7 @@ fn error(message: String) -> IpcResponse {
 }
 
 fn helper_available() -> bool {
-    false
+    presentmon::PresentMonSession::new().helper_available()
 }
 
 fn recommended_power_plan_guid(profile: &str) -> Result<Option<String>, String> {

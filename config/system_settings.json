@@ -4,7 +4,7 @@
   "sampling_interval_seconds": 5,
   "active_profile": "balanced",
   "allow_outbound_sync": false,
-  "telemetry_mode": "demo",
+  "telemetry_mode": "live",
   "automation_mode": "manual",
   "automation_allowlist": [],
   "registry_presets_enabled": false,

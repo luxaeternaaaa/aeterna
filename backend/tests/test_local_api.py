@@ -47,9 +47,9 @@ def test_bootstrap_payload_is_minimal_and_contains_shell_state(tmp_path) -> None
         "session",
         "settings",
     ]
-    assert payload["settings"]["feature_flags"]["telemetry_collect"] is False
+    assert payload["settings"]["feature_flags"]["telemetry_collect"] is True
     assert payload["settings"]["system"]["privacy_mode"] == "local-only"
-    assert payload["settings"]["system"]["telemetry_mode"] == "demo"
+    assert payload["settings"]["system"]["telemetry_mode"] == "live"
     assert payload["settings"]["system"]["registry_presets_enabled"] is False
     assert payload["settings"]["system"]["show_advanced_registry_details"] is False
     assert isinstance(payload["models"], list)
@@ -62,6 +62,21 @@ def test_bootstrap_payload_is_minimal_and_contains_shell_state(tmp_path) -> None
 
 def test_benchmark_capture_and_run_create_local_proof(tmp_path) -> None:
     client = load_client(str(tmp_path / "runtime"))
+    client.put(
+        "/api/settings/system",
+        json={
+            "privacy_mode": "local-only",
+            "telemetry_retention_days": 14,
+            "sampling_interval_seconds": 5,
+            "active_profile": "balanced",
+            "allow_outbound_sync": False,
+            "telemetry_mode": "demo",
+            "automation_mode": "manual",
+            "automation_allowlist": [],
+            "registry_presets_enabled": False,
+            "show_advanced_registry_details": False,
+        },
+    )
 
     baseline = client.post("/api/benchmark/capture-baseline")
     report = client.post("/api/benchmark/run")
@@ -79,6 +94,21 @@ def test_benchmark_capture_and_run_create_local_proof(tmp_path) -> None:
 def test_benchmark_links_to_latest_runtime_action(tmp_path) -> None:
     runtime_root = tmp_path / "runtime"
     client = load_client(str(runtime_root))
+    client.put(
+        "/api/settings/system",
+        json={
+            "privacy_mode": "local-only",
+            "telemetry_retention_days": 14,
+            "sampling_interval_seconds": 5,
+            "active_profile": "balanced",
+            "allow_outbound_sync": False,
+            "telemetry_mode": "demo",
+            "automation_mode": "manual",
+            "automation_allowlist": [],
+            "registry_presets_enabled": False,
+            "show_advanced_registry_details": False,
+        },
+    )
     activity_path = runtime_root / "data" / "logs" / "tweak_activity.json"
     activity_path.write_text(
         json.dumps(
@@ -122,14 +152,16 @@ def test_feature_flags_start_disabled_and_create_snapshot_on_update(tmp_path) ->
 
     assert initial_flags.status_code == 200
     assert initial_snapshots.status_code == 200
-    assert all(value is False for value in initial_flags.json().values())
+    flags = initial_flags.json()
+    assert flags["telemetry_collect"] is True
+    assert all(value is False for key, value in flags.items() if key != "telemetry_collect")
 
-    payload = {**initial_flags.json(), "telemetry_collect": True}
+    payload = {**initial_flags.json(), "anomaly_detection": True}
     update = client.put("/api/settings/feature-flags", json=payload)
     next_snapshots = client.get("/api/snapshots")
 
     assert update.status_code == 200
-    assert update.json()["telemetry_collect"] is True
+    assert update.json()["anomaly_detection"] is True
     assert len(next_snapshots.json()) == len(initial_snapshots.json()) + 1
     assert next_snapshots.json()[0]["surface"] == "config"
 

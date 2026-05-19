@@ -492,7 +492,18 @@ export default function App() {
         />
       )
     }
-    if (activePage === 'safety') return <SecurityPage onClose={() => setActivePage('home')} onVerify={() => loadSecurity()} security={security} />
+    if (activePage === 'safety') {
+      return (
+        <SecurityPage
+          onClose={() => setActivePage('home')}
+          onOpenBackup={() => setActivePage('history')}
+          onOpenOptimization={() => setActivePage('optimize')}
+          onOpenSettings={() => setActivePage('settings')}
+          onVerify={() => loadSecurity()}
+          security={security}
+        />
+      )
+    }
     if (activePage === 'history') {
       return (
         <BackupPage

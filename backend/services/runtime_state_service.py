@@ -24,7 +24,7 @@ def get_session_state() -> SessionState:
             SESSION_STATE_PATH,
             {
                 "state": "idle",
-                "telemetry_source": "demo",
+                "telemetry_source": "live",
                 "capture_source": "counters-fallback",
                 "capture_quality": "idle",
             },

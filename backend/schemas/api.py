@@ -12,8 +12,11 @@ class TelemetryPoint(BaseModel):
     process_id: int | None = None
     session_state: Literal["idle", "detected", "attached", "active", "ended", "restored"]
     fps_avg: float
+    fps_p1_low: float = 0
+    fps_p01_low: float = 0
     frametime_avg_ms: float
     frametime_p95_ms: float
+    frametime_p99_ms: float = 0
     frame_drop_ratio: float
     cpu_process_pct: float
     cpu_total_pct: float
@@ -29,6 +32,8 @@ class TelemetryPoint(BaseModel):
     packet_loss: float = 0
     anomaly_score: float = 0
     threat_level: Literal["low", "medium", "high"]
+    metrics_origin: str = ""
+    presentmon_frame_count: int = 0
 
 
 class StatCard(BaseModel):
@@ -84,8 +89,11 @@ class BenchmarkWindow(BaseModel):
     process_id: int | None = None
     session_id: str | None = None
     fps_avg: float
+    fps_p1_low: float = 0
+    fps_p01_low: float = 0
     frametime_avg_ms: float
     frametime_p95_ms: float
+    frametime_p99_ms: float = 0
     frame_drop_ratio: float
     cpu_process_pct: float = 0
     cpu_total_pct: float
@@ -97,12 +105,17 @@ class BenchmarkWindow(BaseModel):
     background_cpu_pct: float
     anomaly_score: float
     session_health: str
+    metrics_origin: str = ""
+    presentmon_frame_count: int = 0
 
 
 class BenchmarkDelta(BaseModel):
     fps_avg: float
+    fps_p1_low: float = 0
+    fps_p01_low: float = 0
     frametime_avg_ms: float
     frametime_p95_ms: float
+    frametime_p99_ms: float = 0
     frame_drop_ratio: float
     cpu_process_pct: float = 0
     cpu_total_pct: float
@@ -133,7 +146,7 @@ class BenchmarkReport(BaseModel):
 
 
 class FeatureFlags(BaseModel):
-    telemetry_collect: bool = False
+    telemetry_collect: bool = True
     network_optimizer: bool = False
     anomaly_detection: bool = False
     auto_security_scan: bool = False
@@ -147,7 +160,7 @@ class SystemSettings(BaseModel):
     sampling_interval_seconds: int = 5
     active_profile: str = "balanced"
     allow_outbound_sync: bool = False
-    telemetry_mode: Literal["demo", "live", "disabled"] = "demo"
+    telemetry_mode: Literal["demo", "live", "disabled"] = "live"
     automation_mode: Literal["manual", "assisted", "trusted_profiles"] = "manual"
     automation_allowlist: list[Literal["process_priority", "cpu_affinity", "power_plan"]] = Field(default_factory=list)
     registry_presets_enabled: bool = False

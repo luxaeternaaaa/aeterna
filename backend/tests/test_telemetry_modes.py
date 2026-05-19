@@ -24,6 +24,21 @@ class TelemetryModeTests(unittest.TestCase):
         temp_dir.mkdir(parents=True, exist_ok=True)
         try:
             telemetry = reload_module(str(temp_dir))
+            settings_path = Path(temp_dir) / "config" / "system_settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "privacy_mode": "local-only",
+                        "telemetry_retention_days": 14,
+                        "sampling_interval_seconds": 5,
+                        "active_profile": "balanced",
+                        "allow_outbound_sync": False,
+                        "telemetry_mode": "demo",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            telemetry = reload_module(str(temp_dir))
             rows = telemetry.list_recent(limit=4)
             self.assertTrue(rows)
             self.assertEqual(rows[-1].mode, "demo")

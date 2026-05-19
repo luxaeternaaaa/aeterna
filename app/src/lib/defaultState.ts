@@ -10,7 +10,7 @@ import type {
 export type LoadedState = { dashboard: boolean; logs: boolean; optimizationRuntime: boolean; security: boolean; snapshots: boolean }
 
 export const initialFlags: FeatureFlags = {
-  telemetry_collect: false,
+  telemetry_collect: true,
   network_optimizer: false,
   anomaly_detection: false,
   auto_security_scan: false,
@@ -24,7 +24,7 @@ export const initialSystem: SystemSettings = {
   sampling_interval_seconds: 5,
   active_profile: 'balanced',
   allow_outbound_sync: false,
-  telemetry_mode: 'demo',
+  telemetry_mode: 'live',
   automation_mode: 'manual',
   automation_allowlist: ['process_priority', 'cpu_affinity', 'power_plan'],
   registry_presets_enabled: false,
