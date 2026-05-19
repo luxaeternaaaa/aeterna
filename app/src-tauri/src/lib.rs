@@ -89,6 +89,24 @@ fn restart_windows() -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn save_text_file(default_file_name: String, contents: String) -> Result<Option<String>, String> {
+    let file_name = if default_file_name.trim().is_empty() {
+        "aeterna-benchmark.csv".to_string()
+    } else {
+        default_file_name
+    };
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("CSV file", &["csv"])
+        .set_file_name(&file_name)
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    std::fs::write(&path, contents).map_err(|error| format!("Failed to save file: {error}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup = StartupState::default();
@@ -118,7 +136,8 @@ pub fn run() {
             toggle_maximize_main_window,
             close_main_window,
             is_main_window_maximized,
-            restart_windows
+            restart_windows,
+            save_text_file
         ])
         .setup(|app| {
             let handle = app.handle().clone();

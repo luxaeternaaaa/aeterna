@@ -46,8 +46,9 @@ SESSION_STATE_PATH = LIVE_DATA_DIR / "session_state.json"
 STARTUP_DIAGNOSTICS_PATH = LIVE_DATA_DIR / "startup_diagnostics.json"
 BENCHMARK_BASELINE_PATH = LIVE_DATA_DIR / "benchmark_baseline.json"
 BENCHMARK_REPORTS_PATH = LIVE_DATA_DIR / "benchmark_reports.json"
+BENCHMARK_CSV_DIR = LIVE_DATA_DIR / "benchmark_csv"
 
 
 def ensure_directories() -> None:
-    for path in (DATA_DIR, LOG_DIR, SNAPSHOT_DIR, GENERATED_DIR, CONFIG_DIR, LIVE_DATA_DIR):
+    for path in (DATA_DIR, LOG_DIR, SNAPSHOT_DIR, GENERATED_DIR, CONFIG_DIR, LIVE_DATA_DIR, BENCHMARK_CSV_DIR):
         path.mkdir(parents=True, exist_ok=True)

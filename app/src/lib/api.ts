@@ -24,13 +24,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
-  if (!response.ok) throw new Error(`Request failed for ${path}`)
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const payload = (await response.json()) as { detail?: unknown }
+      detail = typeof payload.detail === 'string' ? payload.detail : ''
+    } catch {
+      detail = await response.text().catch(() => '')
+    }
+    throw new Error(detail || `Request failed for ${path}`)
+  }
   return response.json() as Promise<T>
 }
 
 export const api = {
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
   benchmarkBaseline: () => request<BenchmarkWindow | null>('/api/benchmark/baseline'),
+  benchmarkCsvText: async (csvId: string) => {
+    await ensureBackendReady()
+    const response = await fetch(`${baseUrl}/api/benchmark/csv/${encodeURIComponent(csvId)}`)
+    if (!response.ok) throw new Error('Benchmark CSV was not found.')
+    return response.text()
+  },
   benchmarkLatest: () => request<BenchmarkReport | null>('/api/benchmark/latest'),
   captureBenchmarkBaseline: (sampleLimit = 60) =>
     request<BenchmarkWindow>(`/api/benchmark/capture-baseline?sample_limit=${sampleLimit}`, { method: 'POST' }),

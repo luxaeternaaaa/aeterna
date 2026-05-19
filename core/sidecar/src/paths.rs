@@ -38,10 +38,6 @@ pub fn live_telemetry_path() -> PathBuf {
     runtime_data_dir().join("telemetry_live.jsonl")
 }
 
-pub fn presentmon_capture_path() -> PathBuf {
-    runtime_data_dir().join("presentmon_capture.csv")
-}
-
 pub fn session_state_path() -> PathBuf {
     runtime_data_dir().join("session_state.json")
 }

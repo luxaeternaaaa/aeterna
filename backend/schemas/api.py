@@ -88,6 +88,8 @@ class BenchmarkWindow(BaseModel):
     game_name: str
     process_id: int | None = None
     session_id: str | None = None
+    csv_id: str | None = None
+    csv_path: str | None = None
     fps_avg: float
     fps_p1_low: float = 0
     fps_p01_low: float = 0
@@ -136,6 +138,8 @@ class BenchmarkReport(BaseModel):
     session_id: str | None = None
     action_id: str | None = None
     snapshot_id: str | None = None
+    csv_id: str | None = None
+    csv_path: str | None = None
     evidence_quality: Literal["live", "degraded", "demo", "disabled"] = "demo"
     baseline: BenchmarkWindow
     current: BenchmarkWindow

@@ -1,16 +1,83 @@
 from __future__ import annotations
 
+import csv
+import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from statistics import mean
 from uuid import uuid4
 
-from backend.core.paths import BENCHMARK_BASELINE_PATH, BENCHMARK_REPORTS_PATH
+from backend.core.paths import BENCHMARK_BASELINE_PATH, BENCHMARK_CSV_DIR, BENCHMARK_REPORTS_PATH
 from backend.schemas.api import BenchmarkDelta, BenchmarkReport, BenchmarkWindow
 from backend.services.activity_service import append_proof_event, latest_action, link_proof
 from backend.services.json_store import read_json, write_json
 from backend.services.profile_service import get_profile, match_profile
 from backend.services.runtime_state_service import get_session_state
 from backend.services.telemetry_service import current_mode, list_recent
+
+
+CSV_FIELDS = [
+    "timestamp",
+    "mode",
+    "capture_source",
+    "metrics_origin",
+    "game_name",
+    "process_id",
+    "session_state",
+    "fps_avg",
+    "fps_p1_low",
+    "fps_p01_low",
+    "frametime_avg_ms",
+    "frametime_p95_ms",
+    "frametime_p99_ms",
+    "frame_drop_ratio",
+    "cpu_process_pct",
+    "cpu_total_pct",
+    "gpu_usage_pct",
+    "gpu_temp_c",
+    "ram_working_set_mb",
+    "memory_pressure_pct",
+    "background_process_count",
+    "background_cpu_pct",
+    "disk_pressure_pct",
+    "ping",
+    "jitter",
+    "packet_loss",
+    "anomaly_score",
+    "threat_level",
+    "presentmon_frame_count",
+]
+
+
+def _safe_file_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-")
+    return cleaned[:42] or "game"
+
+
+def _write_metric_csv(rows: list[dict[str, object]], prefix: str) -> tuple[str, Path]:
+    if not rows:
+        raise ValueError("No telemetry rows available for CSV export.")
+    latest = rows[-1]
+    game_name = _safe_file_part(str(latest.get("game_name") or "game"))
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    csv_id = f"{prefix}-{game_name}-{timestamp}-{uuid4().hex[:8]}"
+    path = BENCHMARK_CSV_DIR / f"{csv_id}.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+    return csv_id, path
+
+
+def benchmark_csv_file(csv_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", csv_id):
+        raise ValueError("Invalid benchmark CSV id.")
+    path = (BENCHMARK_CSV_DIR / f"{csv_id}.csv").resolve()
+    root = BENCHMARK_CSV_DIR.resolve()
+    if path.parent != root:
+        raise ValueError("Invalid benchmark CSV path.")
+    return path
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -33,7 +100,7 @@ def _mean_field(rows: list[dict[str, object]], key: str, fallback_key: str | Non
     return 0.0
 
 
-def _window_from_rows(rows: list[dict[str, object]], session_id: str | None) -> BenchmarkWindow:
+def _window_from_rows(rows: list[dict[str, object]], session_id: str | None, csv_id: str | None = None, csv_path: str | None = None) -> BenchmarkWindow:
     if not rows:
         raise ValueError("No telemetry rows available for benchmark capture.")
     latest = rows[-1]
@@ -46,6 +113,8 @@ def _window_from_rows(rows: list[dict[str, object]], session_id: str | None) -> 
         game_name=str(latest["game_name"]),
         process_id=latest.get("process_id"),
         session_id=session_id,
+        csv_id=csv_id,
+        csv_path=csv_path,
         fps_avg=round(mean(float(row["fps_avg"]) for row in rows), 2),
         fps_p1_low=_mean_field(rows, "fps_p1_low", "fps_avg"),
         fps_p01_low=_mean_field(rows, "fps_p01_low", "fps_avg"),
@@ -89,8 +158,18 @@ def _recent_rows(limit: int = 60) -> list[dict[str, object]]:
     presentmon_rows = [row for row in live_rows if row["capture_source"] == "presentmon"]
     fallback_live_rows = [row for row in live_rows if row["capture_source"] == "counters-fallback"]
 
-    if len(presentmon_rows) >= max(3, min(limit, 5)):
+    minimum_presentmon_rows = max(3, min(limit, 5))
+    if len(presentmon_rows) >= minimum_presentmon_rows:
         return presentmon_rows[-limit:]
+
+    if current_mode() == "live" and session.process_id:
+        if presentmon_rows:
+            raise ValueError(
+                "PresentMon did not produce enough real frame rows for this capture. Keep the game active and rerun the test."
+            )
+        raise ValueError(
+            "No real PresentMon frame rows were captured for the selected game. Run Aeterna as administrator and keep the game in foreground."
+        )
 
     if fallback_live_rows and not presentmon_rows:
         return fallback_live_rows[-limit:]
@@ -107,7 +186,10 @@ def _recent_rows(limit: int = 60) -> list[dict[str, object]]:
 def latest_baseline() -> BenchmarkWindow | None:
     payload = read_json(BENCHMARK_BASELINE_PATH, None)
     if isinstance(payload, dict):
-        return BenchmarkWindow(**payload)
+        baseline = BenchmarkWindow(**payload)
+        if current_mode() == "live" and baseline.capture_source != "presentmon":
+            return None
+        return baseline
     return None
 
 
@@ -115,14 +197,22 @@ def latest_report() -> BenchmarkReport | None:
     payload = read_json(BENCHMARK_REPORTS_PATH, [])
     if not isinstance(payload, list) or not payload:
         return None
-    return BenchmarkReport(**payload[0])
+    report = BenchmarkReport(**payload[0])
+    if current_mode() == "live" and (report.baseline.capture_source != "presentmon" or report.current.capture_source != "presentmon"):
+        return None
+    return report
 
 
 def capture_baseline(sample_limit: int = 60) -> BenchmarkWindow:
     if sample_limit < 1 or sample_limit > 300:
         raise ValueError("Benchmark duration must be between 1 and 300 seconds.")
+    if current_mode() == "live":
+        for path in (BENCHMARK_BASELINE_PATH, BENCHMARK_REPORTS_PATH):
+            if path.exists():
+                path.unlink()
     rows = _recent_rows(limit=sample_limit)
-    baseline = _window_from_rows(rows, get_session_state().session_id)
+    csv_id, csv_path = _write_metric_csv(rows, "baseline")
+    baseline = _window_from_rows(rows, get_session_state().session_id, csv_id, str(csv_path))
     write_json(BENCHMARK_BASELINE_PATH, baseline.model_dump())
     return baseline
 
@@ -184,7 +274,9 @@ def run_benchmark(sample_limit: int = 60, profile_id: str | None = None) -> Benc
     if not baseline:
         raise ValueError("Capture a baseline before running a comparison benchmark.")
     session = get_session_state()
-    current = _window_from_rows(_recent_rows(limit=sample_limit), session.session_id)
+    rows = _recent_rows(limit=sample_limit)
+    csv_id, csv_path = _write_metric_csv(rows, "optimized")
+    current = _window_from_rows(rows, session.session_id, csv_id, str(csv_path))
     profile = get_profile(profile_id) or match_profile(current.game_name) or match_profile(baseline.game_name)
     linked_action = latest_action(session.session_id)
     delta = BenchmarkDelta(
@@ -224,6 +316,8 @@ def run_benchmark(sample_limit: int = 60, profile_id: str | None = None) -> Benc
         session_id=current.session_id,
         action_id=linked_action.id if linked_action else None,
         snapshot_id=linked_action.snapshot_id if linked_action else None,
+        csv_id=csv_id,
+        csv_path=str(csv_path),
         evidence_quality=evidence_quality,
         baseline=baseline,
         current=current,

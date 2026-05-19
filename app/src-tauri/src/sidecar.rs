@@ -134,9 +134,6 @@ fn spawn_sidecar_process(app: &AppHandle, process: &mut SidecarProcess) -> Resul
     if let Some(metadata_path) = bundled_resource(app, "ml/models/latency_model.metadata.json") {
         command.env("AETERNA_MODEL_METADATA", metadata_path);
     }
-    if let Some(presentmon_path) = bundled_resource(app, "presentmon/PresentMon.exe") {
-        command.env("AETERNA_PRESENTMON_PATH", presentmon_path);
-    }
     if let Some(started_at) = diagnostics.launch_started_at {
         command.env("AETERNA_LAUNCH_STARTED_AT", started_at);
     }

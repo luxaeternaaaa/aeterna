@@ -5,6 +5,7 @@ import {
   BarChart3,
   Check,
   Cpu,
+  Download,
   Gauge,
   Gamepad2,
   Layers,
@@ -18,6 +19,7 @@ import {
   Shield,
   Sparkles,
   Timer,
+  X,
   Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -45,6 +47,7 @@ import type {
 
 type TestMode = 'baseline' | 'optimized'
 type TestPhase = 'idle' | 'ready' | 'running' | 'baseline_ready' | 'completed' | 'failed'
+type SetupStep = 'game' | 'duration' | 'confirm'
 type DurationPreset = 15 | 30 | 45 | 60 | 'custom'
 
 interface TestsPageProps {
@@ -62,6 +65,7 @@ interface TestsPageProps {
   onRefresh: (processId?: number) => void
   onRollbackSnapshot: (snapshotId: string, processId?: number) => Promise<RollbackResponse>
   onRunBenchmark: (profileId?: string, sampleLimit?: number) => Promise<void>
+  onSaveBenchmarkCsv: (csvId: string, suggestedName: string) => Promise<string | null>
   onSelectProcess: (processId: number) => void
   profiles: GameProfile[]
   realtime?: TelemetryPoint | null
@@ -70,7 +74,9 @@ interface TestsPageProps {
 
 const DURATION_PRESETS: DurationPreset[] = [15, 30, 45, 60, 'custom']
 const MAX_DURATION_SECONDS = 300
-const TESTABLE_FUNCTIONS = OPTIMIZATION_FUNCTIONS.filter((item) => !item.requiresReboot)
+const OPTIMIZED_PRESENTMON_WARMUP_SECONDS = 5
+const TESTABLE_FUNCTIONS = OPTIMIZATION_FUNCTIONS.filter((item) => !item.requiresReboot && item.benchmarkSafe)
+const TESTABLE_FUNCTION_IDS = new Set(TESTABLE_FUNCTIONS.map((item) => item.id))
 const DEFAULT_FUNCTIONS = new Set(TESTABLE_FUNCTIONS.filter((item) => item.mlDefault).map((item) => item.id))
 
 const EXCLUDED_PROCESS_NAMES = new Set([
@@ -192,6 +198,12 @@ function waitForSeconds(seconds: number, onTick: (left: number) => void) {
       }
     }, 1000)
   })
+}
+
+async function minimizeAppWindow() {
+  if (typeof window === 'undefined' || !(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().minimize()
 }
 
 function resolveProfileId(profiles: GameProfile[], selectedGame: ProcessSummary | null, runtimeState: OptimizationRuntimeState) {
@@ -371,12 +383,40 @@ function ModeButton({
   )
 }
 
+function CsvDownloadLink({
+  csvId,
+  onSave,
+  label,
+  suggestedName,
+}: {
+  csvId?: string | null
+  label: string
+  onSave: (csvId: string, suggestedName: string) => void
+  suggestedName: string
+}) {
+  if (!csvId) return null
+  return (
+    <button
+      className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-[#202942] px-3 text-xs font-black text-[#8fb0ff] transition hover:bg-[#2b3658]"
+      onClick={() => onSave(csvId, suggestedName)}
+      type="button"
+    >
+      <Download size={15} />
+      <span>{label}</span>
+    </button>
+  )
+}
+
 function phaseLabel(phase: TestPhase, activeMode: TestMode | null) {
   if (phase === 'running') return activeMode === 'baseline' ? 'Baseline running' : 'Optimized running'
   if (phase === 'baseline_ready') return 'Baseline ready'
   if (phase === 'completed') return 'Comparison ready'
   if (phase === 'failed') return 'Failed'
   return activeMode ? 'Setup' : 'Choose test'
+}
+
+function isAlreadyActivePreset(reason?: string | null) {
+  return reason?.toLowerCase().includes('already active') ?? false
 }
 
 export function TestsPage({
@@ -394,6 +434,7 @@ export function TestsPage({
   onRefresh,
   onRollbackSnapshot,
   onRunBenchmark,
+  onSaveBenchmarkCsv,
   onSelectProcess,
   profiles,
   realtime,
@@ -401,6 +442,7 @@ export function TestsPage({
 }: TestsPageProps) {
   const gameProcesses = useMemo(() => gameCandidateProcesses(runtimeState, profiles), [profiles, runtimeState])
   const [activeMode, setActiveMode] = useState<TestMode | null>(null)
+  const [setupStep, setSetupStep] = useState<SetupStep | null>(null)
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [durationPreset, setDurationPreset] = useState<DurationPreset>(60)
   const [customDuration, setCustomDuration] = useState('60')
@@ -415,24 +457,42 @@ export function TestsPage({
   const durationSeconds = durationValue(durationPreset, customDuration)
   const profileId = resolveProfileId(profiles, selectedGame, runtimeState)
   const hasBaseline = baselineBelongsToGame(benchmarkBaseline, selectedGame)
+  const hasRealBaseline = hasBaseline && benchmarkBaseline?.capture_source === 'presentmon'
+  const reportBaseline = hasRealBaseline ? benchmarkBaseline : null
   const isRunning = phase === 'running' || benchmarkBusy
+  const canCaptureRealFps = runtimeState.capture_status.helper_available
+  const selectedBenchmarkTweakCount = useMemo(
+    () => Array.from(selectedTweaks).filter((id) => TESTABLE_FUNCTION_IDS.has(id)).length,
+    [selectedTweaks],
+  )
   const canStart =
     activeMode === 'baseline'
-      ? Boolean(selectedGame && !isRunning)
-      : Boolean(selectedGame && hasBaseline && selectedTweaks.size > 0 && !isRunning)
+      ? Boolean(selectedGame && canCaptureRealFps && !isRunning)
+      : Boolean(selectedGame && canCaptureRealFps && hasRealBaseline && selectedBenchmarkTweakCount > 0 && !isRunning)
   const latestForSelectedGame =
     selectedGame &&
     latestBenchmark &&
-    benchmarkBaseline &&
-    (latestBenchmark.baseline.captured_at === benchmarkBaseline.captured_at || latestBenchmark.baseline.process_id === benchmarkBaseline.process_id)
+    reportBaseline &&
+    (latestBenchmark.baseline.captured_at === reportBaseline.captured_at || latestBenchmark.baseline.process_id === reportBaseline.process_id)
       ? latestBenchmark
       : null
-  const currentWindow = latestForSelectedGame?.current ?? (benchmarkBaseline && hasBaseline ? benchmarkBaseline : null)
+  const currentWindow = latestForSelectedGame?.current ?? reportBaseline
   const delta = latestForSelectedGame?.delta ?? null
+
+  const saveCsv = async (csvId: string, suggestedName: string) => {
+    setErrorText(null)
+    try {
+      const savedPath = await onSaveBenchmarkCsv(csvId, suggestedName)
+      setStatus(savedPath ? `CSV saved: ${savedPath}` : 'CSV save was canceled.')
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : 'CSV save failed.')
+    }
+  }
 
   const chooseMode = (mode: TestMode) => {
     setActiveMode(mode)
     setPhase('ready')
+    setSetupStep('game')
     setStatus(null)
     setErrorText(null)
     onRefresh()
@@ -452,6 +512,7 @@ export function TestsPage({
       const game = await attachSelectedGame()
       setPhase('running')
       setStatus('Test started correctly. Minimize Aeterna and stay in the game until the timer ends.')
+      void minimizeAppWindow()
       await waitForSeconds(durationSeconds, setSecondsLeft)
       setStatus('Saving baseline metrics.')
       await onCaptureBaseline(durationSeconds)
@@ -465,6 +526,7 @@ export function TestsPage({
 
   const applySelectedTweaks = async (game: ProcessSummary) => {
     const snapshots: Array<{ id: string; title: string }> = []
+    let skippedAlreadyActive = 0
     for (const functionId of selectedTweaks) {
       const item = TESTABLE_FUNCTIONS.find((definition) => definition.id === functionId)
       if (!item) continue
@@ -476,13 +538,17 @@ export function TestsPage({
       } else {
         const result = await onApplyRegistryPreset(request.payload)
         if (result.status !== 'applied' || !result.snapshot) {
+          if (isAlreadyActivePreset(result.blocking_reason)) {
+            skippedAlreadyActive += 1
+            continue
+          }
           throw new Error(result.blocking_reason ?? `Failed to apply ${item.title}.`)
         }
         snapshots.push({ id: result.snapshot.id, title: item.title })
       }
     }
     setAppliedSnapshots((current) => [...current, ...snapshots])
-    return snapshots.length
+    return { applied: snapshots.length, skippedAlreadyActive }
   }
 
   const runOptimized = async () => {
@@ -490,9 +556,13 @@ export function TestsPage({
     setErrorText(null)
     try {
       const game = await attachSelectedGame()
-      const appliedCount = await applySelectedTweaks(game)
+      const tweakResult = await applySelectedTweaks(game)
       setPhase('running')
-      setStatus(`Applied ${appliedCount} tweak(s). Test started correctly. Minimize Aeterna and stay in the game until the timer ends.`)
+      const skippedText = tweakResult.skippedAlreadyActive > 0 ? ` ${tweakResult.skippedAlreadyActive} already active tweak(s) skipped.` : ''
+      setStatus(`Applied ${tweakResult.applied} benchmark-safe tweak(s).${skippedText} Minimize Aeterna and stay in the game while PresentMon warms up.`)
+      void minimizeAppWindow()
+      await waitForSeconds(OPTIMIZED_PRESENTMON_WARMUP_SECONDS, setSecondsLeft)
+      setStatus('Capturing optimized metrics. Stay in the same game scene until the timer ends.')
       await waitForSeconds(durationSeconds, setSecondsLeft)
       setStatus('Saving optimized metrics and comparison.')
       await onRunBenchmark(profileId, durationSeconds)
@@ -505,6 +575,7 @@ export function TestsPage({
   }
 
   const startSelectedMode = () => {
+    setSetupStep(null)
     if (activeMode === 'baseline') void runBaseline()
     if (activeMode === 'optimized') void runOptimized()
   }
@@ -532,6 +603,7 @@ export function TestsPage({
     onEndSession()
     onClearSessionSelection()
     setPhase(activeMode ? 'ready' : 'idle')
+    setSetupStep(null)
     setSecondsLeft(0)
     setStatus('Test session stopped.')
   }
@@ -558,6 +630,164 @@ export function TestsPage({
           </button>
         </div>
       </header>
+
+      {activeMode && setupStep ? (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-[#020617]/74 px-5 backdrop-blur-sm">
+          <section className="w-full max-w-[860px] rounded-[1.5rem] bg-[#070b1b] p-5 shadow-[0_28px_90px_rgba(0,0,0,0.55),inset_0_0_0_1px_rgba(123,162,255,0.12)]">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-[#7ba2ff]">
+                  {activeMode === 'baseline' ? 'Baseline test' : 'Optimized test'}
+                </p>
+                <h2 className="mt-2 text-2xl font-black">
+                  {setupStep === 'game' ? 'Select running game' : setupStep === 'duration' ? 'Select capture duration' : 'Confirm test start'}
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-white/54">
+                  {setupStep === 'game'
+                    ? 'Only real game processes are shown. Start CS2 or another game, then press Update if the list is empty.'
+                    : setupStep === 'duration'
+                      ? 'The default window is 60 seconds. Custom duration is capped at 300 seconds.'
+                      : 'After confirmation Aeterna will minimize. Stay in the selected in-game scene until the timer ends.'}
+                </p>
+              </div>
+              <button
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#202942] text-white/70 hover:bg-[#2b3658]"
+                onClick={() => setSetupStep(null)}
+                type="button"
+              >
+                <X size={19} />
+              </button>
+            </div>
+
+            {setupStep === 'game' ? (
+              <div className="space-y-3">
+                <div className="max-h-[390px] space-y-2 overflow-y-auto pr-1">
+                  {gameProcesses.length > 0 ? (
+                    gameProcesses.map((game) => (
+                      <button
+                        key={game.pid}
+                        className={`flex w-full items-center justify-between gap-3 rounded-[1rem] px-4 py-4 text-left transition ${
+                          selectedPid === game.pid ? 'bg-[#315cff]' : 'bg-[#111936] hover:bg-[#1a2550]'
+                        }`}
+                        disabled={isRunning}
+                        onClick={() => {
+                          setSelectedPid(game.pid)
+                          setSetupStep('duration')
+                        }}
+                        type="button"
+                      >
+                        <span>
+                          <span className="block text-lg font-black text-white">{game.name}</span>
+                          <span className="mt-1 block text-sm font-semibold text-white/50">PID {game.pid}</span>
+                        </span>
+                        {selectedPid === game.pid ? <Check size={20} /> : <Gamepad2 size={20} className="text-white/58" />}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-[1rem] bg-[#111936] px-5 py-7">
+                      <p className="text-lg font-black text-white">No real games are running right now.</p>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-white/56">Start CS2 or another supported game, wait for it to appear in Task Manager, then refresh this list.</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button className="min-h-11 rounded-xl bg-[#202942] px-5 text-sm font-black" onClick={() => onRefresh()} type="button">
+                    Update list
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {setupStep === 'duration' ? (
+              <div>
+                <div className="mb-4 rounded-[1rem] bg-[#111936] px-4 py-3">
+                  <p className="text-xs font-black uppercase text-white/38">Selected game</p>
+                  <p className="mt-1 text-xl font-black">{selectedGame?.name ?? 'Not selected'}</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-5">
+                  {DURATION_PRESETS.map((preset) => (
+                    <TogglePill key={preset} active={durationPreset === preset} onClick={() => setDurationPreset(preset)}>
+                      {preset === 'custom' ? 'Custom' : `${preset}s`}
+                    </TogglePill>
+                  ))}
+                </div>
+                {durationPreset === 'custom' ? (
+                  <label className="mt-4 block">
+                    <span className="text-xs font-bold uppercase text-white/38">Seconds, max 300</span>
+                    <input
+                      className="mt-2 h-12 w-full rounded-xl bg-[#202942] px-4 text-lg font-black text-white outline-none"
+                      max={MAX_DURATION_SECONDS}
+                      min={1}
+                      onChange={(event) => setCustomDuration(event.target.value.replace(/\D/g, '').slice(0, 3))}
+                      type="number"
+                      value={customDuration}
+                    />
+                  </label>
+                ) : null}
+                <div className="mt-5 flex justify-between gap-2">
+                  <button className="min-h-11 rounded-xl bg-[#202942] px-5 text-sm font-black" onClick={() => setSetupStep('game')} type="button">
+                    Back
+                  </button>
+                  <button
+                    className="min-h-11 rounded-xl bg-[#315cff] px-6 text-sm font-black disabled:cursor-not-allowed disabled:bg-white/25"
+                    disabled={!selectedGame}
+                    onClick={() => setSetupStep('confirm')}
+                    type="button"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {setupStep === 'confirm' ? (
+              <div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
+                    <p className="text-xs font-black uppercase text-white/38">Pass</p>
+                    <p className="mt-2 text-xl font-black">{activeMode === 'baseline' ? 'Baseline' : 'Optimized'}</p>
+                  </article>
+                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
+                    <p className="text-xs font-black uppercase text-white/38">Game</p>
+                    <p className="mt-2 truncate text-xl font-black">{selectedGame?.name ?? 'Not selected'}</p>
+                  </article>
+                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
+                    <p className="text-xs font-black uppercase text-white/38">Duration</p>
+                    <p className="mt-2 text-xl font-black">{durationSeconds}s</p>
+                  </article>
+                </div>
+                {activeMode === 'optimized' && !hasRealBaseline ? (
+                  <p className="mt-4 rounded-xl bg-[#3d1218]/70 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
+                    Capture a real PresentMon baseline for this exact game before running the optimized comparison.
+                  </p>
+                ) : null}
+                {!runtimeState.capture_status.helper_available ? (
+                  <p className="mt-4 rounded-xl bg-[#3d2512]/80 px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
+                    Real FPS capture requires Aeterna to run as administrator. Restart the app and accept UAC before starting the test.
+                  </p>
+                ) : runtimeState.capture_status.source !== 'presentmon' ? (
+                  <p className="mt-4 rounded-xl bg-[#3d2512]/80 px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
+                    PresentMon will start after confirmation. If capture fails, restart Aeterna as administrator.
+                  </p>
+                ) : null}
+                <div className="mt-5 flex justify-between gap-2">
+                  <button className="min-h-11 rounded-xl bg-[#202942] px-5 text-sm font-black" onClick={() => setSetupStep('duration')} type="button">
+                    Back
+                  </button>
+                  <button
+                    className="min-h-11 rounded-xl bg-[#315cff] px-6 text-sm font-black disabled:cursor-not-allowed disabled:bg-white/25"
+                    disabled={!canStart}
+                    onClick={startSelectedMode}
+                    type="button"
+                  >
+                    {activeMode === 'baseline' ? 'Start baseline test' : 'Run optimized test'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
       <main className="grid min-h-0 flex-1 grid-cols-[minmax(310px,370px)_minmax(0,1fr)] gap-5">
         <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto pr-1">
@@ -632,12 +862,14 @@ export function TestsPage({
               <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-4">
                 <p className="text-xs font-bold uppercase text-white/38">Capture engine</p>
                 <p className="mt-2 text-lg font-black text-white">
-                  {runtimeState.capture_status.source === 'presentmon' ? 'PresentMon' : 'Counters fallback'}
+                  {runtimeState.capture_status.source === 'presentmon' ? 'PresentMon' : 'Waiting for PresentMon'}
                 </p>
                 <p className={`mt-1 text-sm font-semibold ${runtimeState.capture_status.source === 'presentmon' ? 'text-[#7ba2ff]' : 'text-[#ffcf5a]'}`}>
                   {runtimeState.capture_status.source === 'presentmon'
                     ? 'Real FPS and frame-time capture'
-                    : 'Run Aeterna as administrator for real FPS capture'}
+                    : runtimeState.capture_status.helper_available
+                      ? 'Attach the game and keep it foreground until real frame rows appear'
+                      : 'Run Aeterna as administrator for real FPS capture'}
                 </p>
                 {runtimeState.capture_status.note ? <p className="mt-2 text-xs leading-5 text-white/48">{runtimeState.capture_status.note}</p> : null}
               </section>
@@ -668,16 +900,16 @@ export function TestsPage({
                 </label>
               ) : null}
 
-              {activeMode === 'optimized' && !hasBaseline ? (
+              {activeMode === 'optimized' && !hasRealBaseline ? (
                 <p className="mt-4 rounded-xl bg-[#3d1218]/70 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
-                  Capture a baseline for this game before running the optimized comparison.
+                  Capture a real PresentMon baseline for this game before running the optimized comparison.
                 </p>
               ) : null}
 
               <button
                 className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#315cff] px-4 text-base font-bold disabled:cursor-not-allowed disabled:bg-white/30"
                 disabled={!canStart}
-                onClick={startSelectedMode}
+                onClick={() => setSetupStep(selectedGame ? 'confirm' : 'game')}
                 type="button"
               >
                 {activeMode === 'baseline' ? <Timer size={19} /> : <Play size={19} />}
@@ -734,7 +966,9 @@ export function TestsPage({
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-black">Tweaks for optimized pass</h2>
-                  <p className="mt-1 text-sm text-white/48">Restart-required tweaks are hidden because this test compares one live session.</p>
+                  <p className="mt-1 text-sm text-white/48">
+                    Only benchmark-safe live tweaks are shown. Service, telemetry, and reboot-required tweaks are hidden so PresentMon stays stable.
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold" disabled={isRunning} onClick={selectRecommendedTweaks} type="button">
@@ -820,7 +1054,7 @@ export function TestsPage({
               </div>
             </div>
 
-            {!selectedGame || !benchmarkBaseline || !currentWindow ? (
+            {!selectedGame || !reportBaseline || !currentWindow ? (
               <div className="rounded-[1.35rem] bg-[#070b1b]/88 p-6 text-white/60">
                 {!activeMode
                   ? 'Choose a test type to begin.'
@@ -828,18 +1062,28 @@ export function TestsPage({
                     ? gameProcesses.length === 0
                       ? 'No real games are running right now.'
                       : 'Choose a running game.'
-                    : 'No report yet. Start the baseline capture for the selected game.'}
+                    : benchmarkBaseline && hasBaseline && !hasRealBaseline
+                      ? 'Old degraded fallback report was ignored. Run a new baseline with PresentMon active.'
+                      : 'No report yet. Start the baseline capture for the selected game.'}
               </div>
             ) : (
               <>
                 <div className="mb-4 grid gap-3 lg:grid-cols-2">
                   <article className="rounded-[1.35rem] bg-[#070b1b]/88 px-5 py-4">
                     <p className="text-sm font-bold uppercase text-white/38">Baseline</p>
-                    <p className="mt-2 text-2xl font-black text-white">{benchmarkBaseline.game_name}</p>
+                    <p className="mt-2 text-2xl font-black text-white">{reportBaseline.game_name}</p>
                     <p className="mt-1 text-sm text-white/50">
-                      {benchmarkBaseline.sample_count} samples, {benchmarkBaseline.capture_source}
-                      {benchmarkBaseline.presentmon_frame_count ? `, ${benchmarkBaseline.presentmon_frame_count} frames` : ''}
+                      {reportBaseline.sample_count} samples, {reportBaseline.capture_source}
+                      {reportBaseline.presentmon_frame_count ? `, ${reportBaseline.presentmon_frame_count} frames` : ''}
                     </p>
+                    <div className="mt-3">
+                      <CsvDownloadLink
+                        csvId={reportBaseline.csv_id}
+                        label="Download baseline CSV"
+                        onSave={(csvId, fileName) => void saveCsv(csvId, fileName)}
+                        suggestedName={`${reportBaseline.csv_id ?? 'baseline'}.csv`}
+                      />
+                    </div>
                   </article>
                   <article className="rounded-[1.35rem] bg-[#070b1b]/88 px-5 py-4">
                     <p className="text-sm font-bold uppercase text-white/38">Optimized</p>
@@ -847,20 +1091,23 @@ export function TestsPage({
                     <p className="mt-1 text-sm text-white/50">
                       {latestForSelectedGame?.summary ?? 'Run the optimized test after selecting tweaks.'}
                     </p>
+                    <div className="mt-3">
+                      <CsvDownloadLink
+                        csvId={latestForSelectedGame?.csv_id ?? latestForSelectedGame?.current.csv_id}
+                        label="Download optimized CSV"
+                        onSave={(csvId, fileName) => void saveCsv(csvId, fileName)}
+                        suggestedName={`${latestForSelectedGame?.csv_id ?? latestForSelectedGame?.current.csv_id ?? 'optimized'}.csv`}
+                      />
+                    </div>
                   </article>
                 </div>
-                {benchmarkBaseline.capture_source !== 'presentmon' ? (
-                  <div className="mb-4 rounded-[1.35rem] bg-[#3d2512]/80 px-5 py-3 text-sm font-semibold text-[#ffcf5a]">
-                    PresentMon is not active for this report. FPS values are degraded and should not be used as final CS2 proof.
-                  </div>
-                ) : null}
 
                 <div className="grid gap-3 xl:grid-cols-3">
-                  <MetricCard baseline={benchmarkBaseline.fps_avg} current={currentWindow.fps_avg ?? realtime?.fps_avg} delta={delta} higherIsBetter icon={Gauge} label="Average FPS" />
-                  <MetricCard baseline={benchmarkBaseline.fps_p1_low} current={currentWindow.fps_p1_low ?? realtime?.fps_p1_low} delta={delta} higherIsBetter icon={Gauge} label="1% Low FPS" />
-                  <MetricCard baseline={benchmarkBaseline.fps_p01_low} current={currentWindow.fps_p01_low ?? realtime?.fps_p01_low} delta={delta} higherIsBetter icon={Gauge} label="0.1% Low FPS" />
+                  <MetricCard baseline={reportBaseline.fps_avg} current={currentWindow.fps_avg ?? realtime?.fps_avg} delta={delta} higherIsBetter icon={Gauge} label="Average FPS" />
+                  <MetricCard baseline={reportBaseline.fps_p1_low} current={currentWindow.fps_p1_low ?? realtime?.fps_p1_low} delta={delta} higherIsBetter icon={Gauge} label="1% Low FPS" />
+                  <MetricCard baseline={reportBaseline.fps_p01_low} current={currentWindow.fps_p01_low ?? realtime?.fps_p01_low} delta={delta} higherIsBetter icon={Gauge} label="0.1% Low FPS" />
                   <MetricCard
-                    baseline={benchmarkBaseline.frametime_avg_ms}
+                    baseline={reportBaseline.frametime_avg_ms}
                     current={currentWindow.frametime_avg_ms ?? realtime?.frametime_avg_ms}
                     delta={delta}
                     higherIsBetter={false}
@@ -869,7 +1116,7 @@ export function TestsPage({
                     unit=" ms"
                   />
                   <MetricCard
-                    baseline={benchmarkBaseline.frametime_p95_ms}
+                    baseline={reportBaseline.frametime_p95_ms}
                     current={currentWindow.frametime_p95_ms ?? realtime?.frametime_p95_ms}
                     delta={delta}
                     higherIsBetter={false}
@@ -878,7 +1125,7 @@ export function TestsPage({
                     unit=" ms"
                   />
                   <MetricCard
-                    baseline={benchmarkBaseline.frametime_p99_ms}
+                    baseline={reportBaseline.frametime_p99_ms}
                     current={currentWindow.frametime_p99_ms ?? realtime?.frametime_p99_ms}
                     delta={delta}
                     higherIsBetter={false}
@@ -887,7 +1134,7 @@ export function TestsPage({
                     unit=" ms"
                   />
                   <MetricCard
-                    baseline={benchmarkBaseline.frame_drop_ratio}
+                    baseline={reportBaseline.frame_drop_ratio}
                     current={currentWindow.frame_drop_ratio ?? realtime?.frame_drop_ratio}
                     delta={delta}
                     higherIsBetter={false}
@@ -897,14 +1144,14 @@ export function TestsPage({
                     digits={2}
                     multiplier={100}
                   />
-                  <MetricCard baseline={benchmarkBaseline.cpu_process_pct} current={currentWindow.cpu_process_pct ?? realtime?.cpu_process_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Game CPU" unit="%" />
-                  <MetricCard baseline={benchmarkBaseline.cpu_total_pct} current={currentWindow.cpu_total_pct ?? realtime?.cpu_total_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Total CPU" unit="%" />
-                  <MetricCard baseline={benchmarkBaseline.gpu_usage_pct} current={currentWindow.gpu_usage_pct ?? realtime?.gpu_usage_pct} delta={delta} higherIsBetter={false} icon={Gauge} label="GPU load" unit="%" />
-                  <MetricCard baseline={benchmarkBaseline.ram_working_set_mb} current={currentWindow.ram_working_set_mb ?? realtime?.ram_working_set_mb} delta={delta} higherIsBetter={false} icon={MemoryStick} label="RAM working set" unit=" MB" digits={0} />
-                  <MetricCard baseline={benchmarkBaseline.ping} current={currentWindow.ping ?? realtime?.ping} delta={delta} higherIsBetter={false} icon={Network} label="Latency" unit=" ms" />
-                  <MetricCard baseline={benchmarkBaseline.jitter} current={currentWindow.jitter ?? realtime?.jitter} delta={delta} higherIsBetter={false} icon={Network} label="Jitter" unit=" ms" />
-                  <MetricCard baseline={benchmarkBaseline.packet_loss} current={currentWindow.packet_loss ?? realtime?.packet_loss} delta={delta} higherIsBetter={false} icon={Network} label="Packet loss" unit="%" digits={2} />
-                  <MetricCard baseline={benchmarkBaseline.background_cpu_pct} current={currentWindow.background_cpu_pct ?? realtime?.background_cpu_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Background CPU" unit="%" />
+                  <MetricCard baseline={reportBaseline.cpu_process_pct} current={currentWindow.cpu_process_pct ?? realtime?.cpu_process_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Game CPU" unit="%" />
+                  <MetricCard baseline={reportBaseline.cpu_total_pct} current={currentWindow.cpu_total_pct ?? realtime?.cpu_total_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Total CPU" unit="%" />
+                  <MetricCard baseline={reportBaseline.gpu_usage_pct} current={currentWindow.gpu_usage_pct ?? realtime?.gpu_usage_pct} delta={delta} higherIsBetter={false} icon={Gauge} label="GPU load" unit="%" />
+                  <MetricCard baseline={reportBaseline.ram_working_set_mb} current={currentWindow.ram_working_set_mb ?? realtime?.ram_working_set_mb} delta={delta} higherIsBetter={false} icon={MemoryStick} label="RAM working set" unit=" MB" digits={0} />
+                  <MetricCard baseline={reportBaseline.ping} current={currentWindow.ping ?? realtime?.ping} delta={delta} higherIsBetter={false} icon={Network} label="Latency" unit=" ms" />
+                  <MetricCard baseline={reportBaseline.jitter} current={currentWindow.jitter ?? realtime?.jitter} delta={delta} higherIsBetter={false} icon={Network} label="Jitter" unit=" ms" />
+                  <MetricCard baseline={reportBaseline.packet_loss} current={currentWindow.packet_loss ?? realtime?.packet_loss} delta={delta} higherIsBetter={false} icon={Network} label="Packet loss" unit="%" digits={2} />
+                  <MetricCard baseline={reportBaseline.background_cpu_pct} current={currentWindow.background_cpu_pct ?? realtime?.background_cpu_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Background CPU" unit="%" />
                 </div>
 
                 <article className="mt-4 rounded-[1.35rem] bg-[#070b1b]/88 px-5 py-4">

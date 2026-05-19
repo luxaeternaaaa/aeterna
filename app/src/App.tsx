@@ -29,7 +29,7 @@ import {
   rollbackOptimizationTweak,
 } from './lib/sidecar'
 import { getInitialState, getStartupState } from './lib/startup'
-import { getWindowsUsername } from './lib/system'
+import { getWindowsUsername, saveTextFile } from './lib/system'
 import { DashboardPage } from './pages/DashboardPage'
 import { HomePage } from './pages/HomePage'
 import { BackupPage } from './pages/BackupPage'
@@ -72,6 +72,7 @@ export default function App() {
   const cache = useRef(readStartupCache()).current
   const retryTimer = useRef<number | null>(null)
   const bootStarted = useRef(false)
+  const benchmarkLoaded = useRef(false)
   const bootstrapRef = useRef<BootstrapPayload | null>(cache?.bootstrap ?? null)
   const dashboardRef = useRef<DashboardPayload | null>(cache?.dashboard ?? null)
   const { setTheme, theme } = useThemeMode()
@@ -175,6 +176,7 @@ export default function App() {
   }, [])
 
   const loadBenchmarkState = useCallback(async () => {
+    benchmarkLoaded.current = true
     const [baseline, latest] = await Promise.all([api.benchmarkBaseline(), api.benchmarkLatest()])
     setBenchmarkBaseline(baseline)
     setLatestBenchmark(latest)
@@ -278,7 +280,7 @@ export default function App() {
       !loaded.optimizationRuntime
     )
       void loadOptimizationRuntime(selectedProcessId ?? undefined)
-    if ((activePage === 'home' || activePage === 'ml' || activePage === 'optimize' || activePage === 'tests') && !benchmarkBaseline && !latestBenchmark)
+    if ((activePage === 'home' || activePage === 'ml' || activePage === 'optimize' || activePage === 'tests') && !benchmarkLoaded.current)
       void loadBenchmarkState()
     if (activePage === 'safety' && !loaded.security) void loadSecurity()
     if ((activePage === 'history' || activePage === 'settings') && !loaded.snapshots) void loadSettingsData()
@@ -336,6 +338,13 @@ export default function App() {
 
   const captureBaseline = async (sampleLimit = 60) => {
     setBenchmarkBusy(true)
+    setBenchmarkBaseline(null)
+    setLatestBenchmark(null)
+    if (bootstrapRef.current) {
+      const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: null, latest_benchmark: null }
+      bootstrapRef.current = nextBootstrap
+      writeStartupCache(nextBootstrap, dashboardRef.current)
+    }
     try {
       const baseline = await api.captureBenchmarkBaseline(sampleLimit)
       setBenchmarkBaseline(baseline)
@@ -372,6 +381,11 @@ export default function App() {
     setSelectedProcessId(request.process_id)
     setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     return nextState
+  }
+
+  const saveBenchmarkCsv = async (csvId: string, suggestedName: string) => {
+    const contents = await api.benchmarkCsvText(csvId)
+    return saveTextFile(suggestedName, contents)
   }
 
   const addRestartNotice = useCallback((label: string) => {
@@ -448,6 +462,7 @@ export default function App() {
           benchmarkBaseline={benchmarkBaseline}
           benchmarkBusy={benchmarkBusy}
           latestBenchmark={latestBenchmark}
+          onSaveBenchmarkCsv={saveBenchmarkCsv}
           onApplyRegistryPreset={applySystemPreset}
           onApplyTweak={applySessionTweak}
           onAttachSession={attachSession}
@@ -465,7 +480,9 @@ export default function App() {
           }
           onOpenLogs={() => setActivePage('history')}
           onOpenSettings={() => setActivePage('settings')}
-          onRefresh={(processId) => void loadOptimizationRuntime(processId)}
+          onRefresh={(processId) => {
+            void Promise.all([loadOptimizationRuntime(processId), loadBenchmarkState()])
+          }}
           onRollbackSnapshot={rollbackSnapshot}
           onRunBenchmark={runBenchmark}
           onSelectProcess={(processId) => {

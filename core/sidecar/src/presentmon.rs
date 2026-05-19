@@ -1,21 +1,31 @@
 use std::{
-    collections::HashMap,
-    env, fs,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
+    collections::{HashMap, VecDeque},
+    fs,
+    io::{BufRead, BufReader},
+    path::{Path, PathBuf},
+    process::{Child, ChildStdout, Command, Stdio},
+    sync::{Arc, Mutex},
+    thread::{self, JoinHandle},
+    time::Instant,
 };
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use csv::StringRecord;
-
-use crate::{
-    models::CaptureStatus,
-    paths::{ensure_runtime_dirs, presentmon_capture_path},
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::CloseHandle,
+    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
+use csv::StringRecord;
+
+use crate::{models::CaptureStatus, paths::ensure_runtime_dirs};
+
 const NO_WINDOW_FLAG: u32 = 0x08000000;
+const PRESENTMON_SESSION_NAME: &str = "Aeterna-Capture";
+const INTEL_PRESENTMON_ROOT: &str = r"C:\Program Files\Intel\PresentMon";
 
 #[derive(Clone, Default)]
 pub struct PresentMonMetrics {
@@ -31,64 +41,92 @@ pub struct PresentMonMetrics {
 }
 
 #[derive(Default)]
+struct FrameSample {
+    between_ms: f64,
+    gpu_pct: Option<f64>,
+}
+
 pub struct PresentMonSession {
     child: Option<Child>,
     process_id: Option<u32>,
-    csv_path: PathBuf,
+    session_id: Option<String>,
+    started_at: Option<Instant>,
+    frames: Arc<Mutex<VecDeque<FrameSample>>>,
+    reader_note: Arc<Mutex<Option<String>>>,
+    reader: Option<JoinHandle<()>>,
     note: Option<String>,
+}
+
+impl Default for PresentMonSession {
+    fn default() -> Self {
+        Self {
+            child: None,
+            process_id: None,
+            session_id: None,
+            started_at: None,
+            frames: Arc::new(Mutex::new(VecDeque::with_capacity(2400))),
+            reader_note: Arc::new(Mutex::new(None)),
+            reader: None,
+            note: None,
+        }
+    }
 }
 
 impl PresentMonSession {
     pub fn new() -> Self {
         let _ = ensure_runtime_dirs();
-        Self { csv_path: presentmon_capture_path(), ..Self::default() }
+        Self::default()
     }
 
     pub fn helper_path(&self) -> Option<PathBuf> {
-        if let Some(path) = env::var_os("AETERNA_PRESENTMON_PATH").map(PathBuf::from).filter(|path| path.exists()) {
-            return Some(path);
-        }
-        let cwd = env::current_dir().ok()?;
-        [
-            cwd.join("presentmon").join("PresentMon.exe"),
-            cwd.join("..").join("presentmon").join("PresentMon.exe"),
-            cwd.join("..").join("..").join("presentmon").join("PresentMon.exe"),
-        ]
-        .into_iter()
-        .find(|path| path.exists())
+        find_intel_presentmon_cli()
     }
 
     pub fn helper_available(&self) -> bool {
-        self.helper_path().is_some()
+        self.helper_path().is_some() && presentmon_privilege_available()
     }
 
     pub fn ensure_running(&mut self, process_id: u32, session_id: &str) -> Result<(), String> {
-        if self.process_id == Some(process_id) && self.child_running() {
+        if self.process_id == Some(process_id)
+            && self.session_id.as_deref() == Some(session_id)
+            && self.child_running()
+            && !self.capture_stalled()
+        {
             return Ok(());
         }
         self.stop();
-        let helper = self.helper_path().ok_or("Bundled PresentMon helper is unavailable.")?;
-        let _ = fs::remove_file(&self.csv_path);
+        let helper = self.helper_path().ok_or("Official Intel PresentMon CLI is unavailable. Install Intel PresentMon.")?;
+        if let Ok(mut frames) = self.frames.lock() {
+            frames.clear();
+        }
+        if let Ok(mut note) = self.reader_note.lock() {
+            *note = None;
+        }
+        terminate_existing_session(&helper, &format!("Aeterna-{session_id}"));
+        terminate_existing_session(&helper, PRESENTMON_SESSION_NAME);
         let mut command = Command::new(helper);
         command
             .arg("--process_id")
             .arg(process_id.to_string())
-            .arg("--output_file")
-            .arg(&self.csv_path)
+            .arg("--output_stdout")
             .arg("--qpc_time_ms")
             .arg("--terminate_on_proc_exit")
             .arg("--stop_existing_session")
             .arg("--session_name")
-            .arg(format!("Aeterna-{session_id}"))
+            .arg(PRESENTMON_SESSION_NAME)
             .arg("--v1_metrics")
             .arg("--no_console_stats")
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
         #[cfg(windows)]
         command.creation_flags(NO_WINDOW_FLAG);
-        let child = command.spawn().map_err(|error| format!("Unable to launch PresentMon: {error}"))?;
+        let mut child = command.spawn().map_err(|error| format!("Unable to launch PresentMon: {error}"))?;
+        let stdout = child.stdout.take().ok_or("Unable to read PresentMon stdout.")?;
+        self.reader = Some(spawn_stdout_reader(stdout, Arc::clone(&self.frames), Arc::clone(&self.reader_note)));
         self.child = Some(child);
         self.process_id = Some(process_id);
+        self.session_id = Some(session_id.to_string());
+        self.started_at = Some(Instant::now());
         self.note = None;
         Ok(())
     }
@@ -99,52 +137,28 @@ impl PresentMonSession {
         }
         self.child = None;
         self.process_id = None;
-        let _ = fs::remove_file(&self.csv_path);
+        self.session_id = None;
+        self.started_at = None;
+        self.reader = None;
+        if let Ok(mut frames) = self.frames.lock() {
+            frames.clear();
+        }
+        if let Ok(mut note) = self.reader_note.lock() {
+            *note = None;
+        }
     }
 
     pub fn sample(&mut self) -> Option<PresentMonMetrics> {
-        let bytes = fs::read(&self.csv_path).ok()?;
-        if bytes.is_empty() {
-            return None;
-        }
-        let mut reader = csv::ReaderBuilder::new().flexible(true).from_reader(bytes.as_slice());
-        let headers = reader.headers().ok()?.clone();
-        let index = header_index(&headers);
-        let between_idx = find_header(
-            &index,
-            &[
-                "MsBetweenPresents",
-                "MsBetweenDisplayChange",
-                "FrameTime",
-                "FrameTimeMs",
-                "msBetweenPresents",
-            ],
-        )?;
-        let gpu_idx = find_header(
-            &index,
-            &[
-                "MsGPUBusy",
-                "MsGPUActive",
-                "GpuBusyMs",
-                "msGPUActive",
-            ],
-        );
-        let rows = reader.records().flatten().collect::<Vec<_>>();
+        let samples = self.frames.lock().ok()?;
         let mut frames = Vec::new();
         let mut gpu_values = Vec::new();
-        for row in rows.iter().rev().take(500) {
-            let between = parse_float(row.get(between_idx));
-            if !(between > 0.0) {
-                continue;
-            }
-            frames.push(between);
-            if let Some(idx) = gpu_idx {
-                let gpu_busy = parse_float(row.get(idx));
-                if gpu_busy >= 0.0 {
-                    gpu_values.push((gpu_busy / between * 100.0).clamp(0.0, 100.0));
-                }
+        for sample in samples.iter().rev().take(500) {
+            frames.push(sample.between_ms);
+            if let Some(gpu_pct) = sample.gpu_pct {
+                gpu_values.push(gpu_pct);
             }
         }
+        drop(samples);
         if frames.len() < 4 {
             return None;
         }
@@ -179,7 +193,7 @@ impl PresentMonSession {
                 available: true,
                 quality: "degraded".into(),
                 helper_available: false,
-                note: Some("Bundled PresentMon helper is missing, so live capture uses safe counters fallback.".into()),
+                note: Some("Official Intel PresentMon requires Aeterna to run as administrator for real FPS capture.".into()),
             };
         }
         let running = self.child_running();
@@ -188,8 +202,12 @@ impl PresentMonSession {
             available: true,
             quality: if running { "high".into() } else { "degraded".into() },
             helper_available: true,
-            note: self.note.clone(),
+            note: self.note(),
         }
+    }
+
+    pub fn note(&self) -> Option<String> {
+        self.reader_note.lock().ok().and_then(|note| note.clone()).or_else(|| self.note.clone())
     }
 
     fn child_running(&mut self) -> bool {
@@ -201,8 +219,163 @@ impl PresentMonSession {
             _ => {
                 self.child = None;
                 self.process_id = None;
+                self.session_id = None;
+                self.started_at = None;
                 false
             }
+        }
+    }
+
+    fn capture_stalled(&self) -> bool {
+        self.reader.as_ref().is_some_and(|reader| reader.is_finished())
+    }
+}
+
+fn find_intel_presentmon_cli() -> Option<PathBuf> {
+    let root = PathBuf::from(INTEL_PRESENTMON_ROOT);
+    find_presentmon_cli_in(&root.join("PresentMonConsoleApplication"))
+}
+
+fn find_presentmon_cli_in(dir: &Path) -> Option<PathBuf> {
+    let exact = dir.join("PresentMon-2.4.1-x64.exe");
+    if exact.exists() {
+        return Some(exact);
+    }
+    let mut candidates = fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| {
+                    let lowered = name.to_ascii_lowercase();
+                    lowered.starts_with("presentmon-") && lowered.ends_with("-x64.exe")
+                })
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop()
+}
+
+#[cfg(windows)]
+fn presentmon_privilege_available() -> bool {
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation: TOKEN_ELEVATION = std::mem::zeroed();
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            &mut elevation as *mut TOKEN_ELEVATION as *mut _,
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        ) != 0;
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn presentmon_privilege_available() -> bool {
+    true
+}
+
+fn spawn_stdout_reader(
+    stdout: ChildStdout,
+    frames: Arc<Mutex<VecDeque<FrameSample>>>,
+    reader_note: Arc<Mutex<Option<String>>>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        let mut columns: Option<(usize, Option<usize>)> = None;
+        for line in reader.lines().map_while(Result::ok) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some(record) = parse_csv_line(trimmed) else {
+                capture_presentmon_note(&reader_note, trimmed);
+                continue;
+            };
+            let (between_idx, gpu_idx) = match columns {
+                Some(columns) => columns,
+                None => {
+                    let index = header_index(&record);
+                    let Some(between_idx) = find_header(
+                        &index,
+                        &[
+                            "MsBetweenPresents",
+                            "MsBetweenDisplayChange",
+                            "FrameTime",
+                            "FrameTimeMs",
+                            "msBetweenPresents",
+                            "msBetweenDisplayChange",
+                        ],
+                    ) else {
+                        capture_presentmon_note(&reader_note, trimmed);
+                        continue;
+                    };
+                    let gpu_idx = find_header(&index, &["MsGPUBusy", "MsGPUActive", "GpuBusyMs", "msGPUActive"]);
+                    columns = Some((between_idx, gpu_idx));
+                    continue;
+                }
+            };
+            let between = parse_float(record.get(between_idx));
+            if !between.is_finite() || between <= 0.0 {
+                continue;
+            }
+            let gpu_pct = gpu_idx.and_then(|idx| {
+                let gpu_busy = parse_float(record.get(idx));
+                (gpu_busy.is_finite() && gpu_busy >= 0.0).then_some((gpu_busy / between * 100.0).clamp(0.0, 100.0))
+            });
+            if let Ok(mut samples) = frames.lock() {
+                if samples.len() >= 2400 {
+                    samples.pop_front();
+                }
+                samples.push_back(FrameSample { between_ms: between, gpu_pct });
+            }
+        }
+    })
+}
+
+fn terminate_existing_session(helper: &Path, session_name: &str) {
+    let mut command = Command::new(helper);
+    command
+        .arg("--terminate_existing_session")
+        .arg("--session_name")
+        .arg(session_name)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(NO_WINDOW_FLAG);
+    let _ = command.status();
+}
+
+fn parse_csv_line(line: &str) -> Option<StringRecord> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(line.as_bytes());
+    reader.records().flatten().next()
+}
+
+fn capture_presentmon_note(reader_note: &Arc<Mutex<Option<String>>>, line: &str) {
+    let lowered = line.to_ascii_lowercase();
+    let is_diagnostic = ["warning", "error", "failed", "denied", "elevat", "privilege", "access"]
+        .iter()
+        .any(|needle| lowered.contains(needle));
+    if !is_diagnostic {
+        return;
+    }
+    if let Ok(mut note) = reader_note.lock() {
+        if note.is_none() {
+            *note = Some(line.chars().take(240).collect());
         }
     }
 }

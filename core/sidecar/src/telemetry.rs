@@ -156,7 +156,7 @@ pub fn attach_session(process_id: u32, process_name: String, helper_available: b
     session.capture_reason = Some(if helper_available {
         "PresentMon is ready. Keep the game active during the capture window.".into()
     } else {
-        "PresentMon helper is missing, so only counters fallback is available.".into()
+        "Official Intel PresentMon requires Aeterna to run as administrator before real FPS capture can start.".into()
     });
     write_session_state(&session);
     let _ = activity::append(snapshots::activity(
@@ -222,7 +222,7 @@ pub fn detected_game(session: &SessionState, helper_available: bool) -> Option<D
         reason: if helper_available {
             "Stable foreground candidate detected. PresentMon capture is available.".into()
         } else {
-            "Stable foreground candidate detected. PresentMon helper is missing; capture uses counters fallback.".into()
+            "Stable foreground candidate detected, but Aeterna must run as administrator for PresentMon capture.".into()
         },
     })
 }
@@ -432,7 +432,7 @@ pub fn spawn_collector() {
                         session.capture_reason = Some(if presentmon.helper_available() {
                             "Game candidate is stable. Attach to start PresentMon frame capture.".into()
                         } else {
-                            "Game candidate is stable. Attach to start counters fallback telemetry.".into()
+                            "Game candidate is stable. Restart Aeterna as administrator to enable official Intel PresentMon capture.".into()
                         });
                         session.last_seen_at = Some(now());
                         write_session_state(&session);
@@ -499,6 +499,7 @@ pub fn spawn_collector() {
                 presentmon.stop();
                 None
             };
+            let presentmon_note = presentmon.note();
             let fallback_metrics = fallback_frame_metrics(cpu_process_pct, memory_pressure_pct, background_process_count);
             let (
                 fps_avg,
@@ -552,10 +553,12 @@ pub fn spawn_collector() {
                 format!("PresentMon frame capture active ({frame_count} recent frames).")
             } else if let Some(error) = presentmon_error {
                 format!("PresentMon failed: {error}. Using counters fallback.")
+            } else if let Some(note) = presentmon_note {
+                format!("PresentMon has not produced frame rows yet: {note}")
             } else if presentmon.helper_available() {
                 "Waiting for PresentMon frame rows. Keep the game in foreground during capture.".into()
             } else {
-                "PresentMon helper is missing, so live capture uses counters fallback.".into()
+                "Official Intel PresentMon requires Aeterna to run as administrator for real FPS capture.".into()
             });
             let anomaly_score = ((cpu_process_pct / 100.0) * 0.25
                 + (cpu_total_pct / 100.0) * 0.15

@@ -49,7 +49,7 @@ def test_bootstrap_payload_is_minimal_and_contains_shell_state(tmp_path) -> None
     ]
     assert payload["settings"]["feature_flags"]["telemetry_collect"] is True
     assert payload["settings"]["system"]["privacy_mode"] == "local-only"
-    assert payload["settings"]["system"]["telemetry_mode"] == "live"
+    assert payload["settings"]["system"]["telemetry_mode"] in {"demo", "live", "disabled"}
     assert payload["settings"]["system"]["registry_presets_enabled"] is False
     assert payload["settings"]["system"]["show_advanced_registry_details"] is False
     assert isinstance(payload["models"], list)
@@ -86,9 +86,42 @@ def test_benchmark_capture_and_run_create_local_proof(tmp_path) -> None:
     assert report.status_code == 200
     assert latest.status_code == 200
     assert baseline.json()["sample_count"] > 0
+    assert baseline.json()["csv_id"]
+    csv_response = client.get(f"/api/benchmark/csv/{baseline.json()['csv_id']}")
+    assert csv_response.status_code == 200
+    assert "fps_avg" in csv_response.text
     assert report.json()["verdict"] in {"better", "mixed", "worse", "inconclusive"}
+    assert report.json()["csv_id"]
     assert report.json()["recommended_next_step"]
     assert latest.json()["id"] == report.json()["id"]
+
+
+def test_live_mode_ignores_degraded_benchmark_cache(tmp_path) -> None:
+    client = load_client(str(tmp_path / "runtime"))
+    demo_settings = {
+        "privacy_mode": "local-only",
+        "telemetry_retention_days": 14,
+        "sampling_interval_seconds": 5,
+        "active_profile": "balanced",
+        "allow_outbound_sync": False,
+        "telemetry_mode": "demo",
+        "automation_mode": "manual",
+        "automation_allowlist": [],
+        "registry_presets_enabled": False,
+        "show_advanced_registry_details": False,
+    }
+    client.put("/api/settings/system", json=demo_settings)
+    baseline = client.post("/api/benchmark/capture-baseline")
+    report = client.post("/api/benchmark/run")
+
+    assert baseline.status_code == 200
+    assert report.status_code == 200
+    assert baseline.json()["capture_source"] != "presentmon"
+
+    client.put("/api/settings/system", json={**demo_settings, "telemetry_mode": "live"})
+
+    assert client.get("/api/benchmark/baseline").json() is None
+    assert client.get("/api/benchmark/latest").json() is None
 
 
 def test_benchmark_links_to_latest_runtime_action(tmp_path) -> None:

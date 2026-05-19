@@ -89,6 +89,8 @@ export interface BenchmarkWindow {
   game_name: string
   process_id?: number | null
   session_id?: string | null
+  csv_id?: string | null
+  csv_path?: string | null
   fps_avg: number
   fps_p1_low: number
   fps_p01_low: number
@@ -137,6 +139,8 @@ export interface BenchmarkReport {
   session_id?: string | null
   action_id?: string | null
   snapshot_id?: string | null
+  csv_id?: string | null
+  csv_path?: string | null
   evidence_quality: 'live' | 'degraded' | 'demo' | 'disabled'
   baseline: BenchmarkWindow
   current: BenchmarkWindow

@@ -19,6 +19,7 @@ export interface OptimizationFunctionDefinition {
   description: string
   requiresReboot?: boolean
   processRequired?: boolean
+  benchmarkSafe?: boolean
   mlDefault?: boolean
   buildRequest: (context: OptimizationFunctionContext) => OptimizationFunctionRequest | null
 }
@@ -36,6 +37,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'reduce-input-lag',
     title: 'Reduce input lag',
     description: 'Disable Windows mouse acceleration (Enhance Pointer Precision).',
+    benchmarkSafe: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'mouse_precision_off', process_id: processId ?? undefined } }),
   },
   {
@@ -66,6 +68,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'keep-cores',
     title: 'Keep all cores active',
     description: 'Set game CPU affinity to all logical threads.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) =>
       processId ? { kind: 'tweak', payload: { kind: 'cpu_affinity', process_id: processId, affinity_preset: 'all_threads' } } : null,
@@ -74,6 +77,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'max-games',
     title: 'Maximum performance for games',
     description: 'Raise selected game process priority to High.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) =>
       processId ? { kind: 'tweak', payload: { kind: 'process_priority', process_id: processId, priority: 'high' } } : null,
@@ -82,6 +86,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'ultimate-power',
     title: 'Ultimate performance mode',
     description: 'Switch active power plan to Ultimate/High Performance.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: ({ runtimeState }) => {
       const powerPlanGuid = highestPerformancePlanGuid(runtimeState)
@@ -92,6 +97,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'process-qos-high',
     title: 'Per-process QoS',
     description: 'Remove process power-throttling for the selected game process.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) => (processId ? { kind: 'tweak', payload: { kind: 'process_qos', process_id: processId } } : null),
   },
@@ -99,6 +105,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'process-isolation',
     title: 'Process isolation',
     description: 'Pin game threads to one thread per core.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) => (processId ? { kind: 'tweak', payload: { kind: 'process_isolation', process_id: processId } } : null),
   },
@@ -106,6 +113,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'turn-off-recordings',
     title: 'Turn off Game Bar recordings',
     description: 'Disable Game DVR background capture flags.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'game_capture_overhead_off', process_id: processId ?? undefined } }),
   },
@@ -113,6 +121,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'game-mode-on',
     title: 'Force Game Mode on',
     description: 'Force Windows Game Mode enabled for current user.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'game_mode_on', process_id: processId ?? undefined } }),
   },
@@ -120,6 +129,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'windowed-optimizations-on',
     title: 'Windowed optimizations',
     description: 'Enable borderless/windowed DirectX optimization path.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'windowed_optimizations_on', process_id: processId ?? undefined } }),
   },
@@ -127,6 +137,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'fullscreen-optimizations-off',
     title: 'Disable fullscreen optimizations',
     description: 'Write per-app compatibility flag to bypass fullscreen optimization layer.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) =>
       processId ? { kind: 'preset', payload: { preset_id: 'fullscreen_optimizations_off', process_id: processId } } : null,
@@ -135,6 +146,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'gpu-preference-high',
     title: 'Per-app GPU preference',
     description: 'Set selected executable to High Performance GPU preference.',
+    benchmarkSafe: true,
     processRequired: true,
     buildRequest: ({ processId }) => (processId ? { kind: 'preset', payload: { preset_id: 'gpu_preference_high', process_id: processId } } : null),
   },
@@ -142,6 +154,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'power-throttling-off',
     title: 'Turn off power throttling',
     description: 'Disable machine-level power throttling policy in registry.',
+    benchmarkSafe: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'power_throttling_off', process_id: processId ?? undefined } }),
   },
   {
@@ -167,6 +180,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'interrupt-affinity-lock',
     title: 'Interrupt affinity lock',
     description: 'Lock interrupt steering mode for the active power scheme.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: () => ({ kind: 'tweak', payload: { kind: 'interrupt_affinity_lock' } }),
   },
@@ -188,6 +202,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'low-timer-resolution',
     title: 'Lower timer resolution',
     description: 'Request minimum system timer resolution.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: () => ({ kind: 'tweak', payload: { kind: 'low_timer_resolution' } }),
   },
@@ -202,6 +217,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'usb-selective-suspend-off',
     title: 'Disable USB selective suspend',
     description: 'Set USB selective suspend AC/DC indexes to Disabled.',
+    benchmarkSafe: true,
     mlDefault: true,
     buildRequest: () => ({ kind: 'tweak', payload: { kind: 'usb_selective_suspend_off' } }),
   },
@@ -209,6 +225,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'pcie-lspm-off',
     title: 'Disable PCIe LSPM',
     description: 'Set PCIe Link State Power Management AC/DC to Off.',
+    benchmarkSafe: true,
     buildRequest: () => ({ kind: 'tweak', payload: { kind: 'pcie_lspm_off' } }),
   },
   {
@@ -324,6 +341,7 @@ export const OPTIMIZATION_FUNCTIONS: OptimizationFunctionDefinition[] = [
     id: 'win32-priority-separation',
     title: 'Win32 priority separation',
     description: 'Set foreground scheduler quantum separation to the gaming-oriented 0x2a value.',
+    benchmarkSafe: true,
     buildRequest: ({ processId }) => ({ kind: 'preset', payload: { preset_id: 'win32_priority_separation_2a', process_id: processId ?? undefined } }),
   },
   {
