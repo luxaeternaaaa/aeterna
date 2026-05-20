@@ -1,0 +1,855 @@
+{
+  "version": "aeterna-fps-v1",
+  "updated_at": "2026-05-20T09:21:58.403544+00:00",
+  "model_source": "onnx",
+  "metrics": {
+    "mean_fps_mae": 21.7462,
+    "mean_fps_mape": 21.8603,
+    "mean_fps_r2": 0.683,
+    "fps_1pct_mae": 17.6117,
+    "fps_1pct_mape": 22.4985,
+    "fps_1pct_r2": 0.6782
+  },
+  "weights": {
+    "game_id_valorant": 0.082765,
+    "cpu_model_Intel Core i5-9400F": 0.050537,
+    "game_id_warzone": 0.049182,
+    "cpu_model_Intel Core i7-13700K": 0.041252,
+    "gpu_model_NVIDIA GTX 1060 6GB": 0.039351,
+    "resolution_1280x720": 0.039127,
+    "resolution_3840x2160": 0.031836,
+    "cpu_model_AMD Ryzen 7 5800X3D": 0.031542,
+    "cpu_model_AMD Ryzen 5 5600X": 0.030995,
+    "cpu_model_AMD Ryzen 5 3600": 0.028317,
+    "vsync_off": 0.027454,
+    "vsync_on": 0.027453,
+    "npc_count": 0.026911,
+    "game_id_fortnite": 0.024116,
+    "gpu_util": 0.023091,
+    "resolution_2560x1440": 0.022553,
+    "gpu_model_AMD RX 7800 XT": 0.022089,
+    "player_actions": 0.021071,
+    "cpu_model_AMD Ryzen 7 7840HS": 0.021014,
+    "game_id_cyberpunk_2077": 0.020494,
+    "gpu_model_NVIDIA RTX 3060 Laptop": 0.019084,
+    "gpu_model_NVIDIA RTX 4070": 0.018324,
+    "antialiasing_off": 0.017346,
+    "drive_type_NVMe": 0.016963,
+    "gpu_model_AMD RX 6600": 0.01642,
+    "resolution_1920x1080": 0.015189,
+    "background_process_count": 0.01401,
+    "cpu_model_Intel Core i7-12700H": 0.01171,
+    "laptop": 0.011662,
+    "antialiasing_taa": 0.0109,
+    "gpu_model_NVIDIA GTX 1660 Super": 0.010846,
+    "drive_type_SSD": 0.010343,
+    "label_target_quality": 0.010328,
+    "antialiasing_msaa_2x": 0.009878,
+    "gpu_model_NVIDIA RTX 4060": 0.009739,
+    "antialiasing_fxaa": 0.009022,
+    "label_target_max_fps": 0.008874,
+    "graphics_preset_low": 0.007724,
+    "texture_quality_low": 0.007312,
+    "drive_type_HDD": 0.006613,
+    "game_id_cs2": 0.006543,
+    "vram_util": 0.006476,
+    "graphics_preset_medium": 0.006451,
+    "tweak_power_plan": 0.005954,
+    "antialiasing_msaa_4x": 0.005605,
+    "special_effects_medium": 0.005513,
+    "texture_quality_high": 0.004787,
+    "game_id_apex_legends": 0.004545,
+    "tweak_priority": 0.004521,
+    "tweak_registry_preset": 0.004356,
+    "cpu_model_Intel Core i5-12400F": 0.004199,
+    "tweak_recording_off": 0.004168,
+    "special_effects_high": 0.003798,
+    "graphics_preset_ultra": 0.003693,
+    "tweak_affinity": 0.003126,
+    "tweak_game_mode": 0.002792,
+    "tweak_service": 0.002553,
+    "gpu_model_NVIDIA RTX 2060": 0.002528,
+    "graphics_preset_high": 0.00241,
+    "temperature": 0.002336,
+    "tweak_low_timer_resolution": 0.001793,
+    "texture_quality_ultra": 0.001673,
+    "tweak_hags": 0.001555,
+    "label_target_balanced": 0.001487,
+    "special_effects_low": 0.001113,
+    "texture_quality_medium": 0.000782,
+    "special_effects_ultra": 0.000736,
+    "cpu_util": 0.000537,
+    "ram_gb": 0.000532
+  },
+  "intercept": 0.0,
+  "shap_preview": [
+    "game_id_valorant is a top FPS feature.",
+    "cpu_model_Intel Core i5-9400F is a top FPS feature.",
+    "game_id_warzone is a top FPS feature.",
+    "cpu_model_Intel Core i7-13700K is a top FPS feature."
+  ],
+  "recommendation_map": {
+    "tweak_priority": [
+      "Foreground scheduling pressure is likely limiting frame delivery."
+    ],
+    "tweak_affinity": [
+      "CPU contention pattern suggests affinity can improve frame pacing."
+    ],
+    "tweak_power_plan": [
+      "Sustained clocks are likely to improve average and 1pct FPS."
+    ],
+    "tweak_registry_preset": [
+      "Safe gaming registry preset can reduce scheduling and background noise."
+    ],
+    "tweak_service": [
+      "Background service pressure is high enough to justify safe service reduction."
+    ],
+    "tweak_hags": [
+      "GPU-bound modern hardware is likely to benefit from HAGS."
+    ],
+    "tweak_game_mode": [
+      "Windows game scheduling signals are favorable for Game Mode."
+    ],
+    "tweak_recording_off": [
+      "Capture/recording overhead is likely to reduce GPU headroom."
+    ],
+    "tweak_low_timer_resolution": [
+      "Frame pacing pressure is high enough for a timer-resolution tweak."
+    ]
+  },
+  "targets": [
+    "mean_fps",
+    "fps_1pct"
+  ],
+  "regressor_family": "ridge",
+  "feature_names": [
+    "game_id_apex_legends",
+    "game_id_cs2",
+    "game_id_cyberpunk_2077",
+    "game_id_fortnite",
+    "game_id_valorant",
+    "game_id_warzone",
+    "cpu_model_AMD Ryzen 5 3600",
+    "cpu_model_AMD Ryzen 5 5600X",
+    "cpu_model_AMD Ryzen 7 5800X3D",
+    "cpu_model_AMD Ryzen 7 7840HS",
+    "cpu_model_Intel Core i5-12400F",
+    "cpu_model_Intel Core i5-9400F",
+    "cpu_model_Intel Core i7-12700H",
+    "cpu_model_Intel Core i7-13700K",
+    "gpu_model_AMD RX 6600",
+    "gpu_model_AMD RX 7800 XT",
+    "gpu_model_NVIDIA GTX 1060 6GB",
+    "gpu_model_NVIDIA GTX 1660 Super",
+    "gpu_model_NVIDIA RTX 2060",
+    "gpu_model_NVIDIA RTX 3060 Laptop",
+    "gpu_model_NVIDIA RTX 4060",
+    "gpu_model_NVIDIA RTX 4070",
+    "drive_type_HDD",
+    "drive_type_NVMe",
+    "drive_type_SSD",
+    "resolution_1280x720",
+    "resolution_1920x1080",
+    "resolution_2560x1440",
+    "resolution_3840x2160",
+    "graphics_preset_high",
+    "graphics_preset_low",
+    "graphics_preset_medium",
+    "graphics_preset_ultra",
+    "vsync_off",
+    "vsync_on",
+    "antialiasing_fxaa",
+    "antialiasing_msaa_2x",
+    "antialiasing_msaa_4x",
+    "antialiasing_off",
+    "antialiasing_taa",
+    "texture_quality_high",
+    "texture_quality_low",
+    "texture_quality_medium",
+    "texture_quality_ultra",
+    "special_effects_high",
+    "special_effects_low",
+    "special_effects_medium",
+    "special_effects_ultra",
+    "label_target_balanced",
+    "label_target_max_fps",
+    "label_target_quality",
+    "ram_gb",
+    "laptop",
+    "npc_count",
+    "player_actions",
+    "cpu_util",
+    "gpu_util",
+    "vram_util",
+    "temperature",
+    "background_process_count",
+    "tweak_affinity",
+    "tweak_game_mode",
+    "tweak_hags",
+    "tweak_low_timer_resolution",
+    "tweak_power_plan",
+    "tweak_priority",
+    "tweak_recording_off",
+    "tweak_registry_preset",
+    "tweak_service"
+  ],
+  "tweak_columns": [
+    "tweak_affinity",
+    "tweak_game_mode",
+    "tweak_hags",
+    "tweak_low_timer_resolution",
+    "tweak_power_plan",
+    "tweak_priority",
+    "tweak_recording_off",
+    "tweak_registry_preset",
+    "tweak_service"
+  ],
+  "tweak_gain_priors": {
+    "tweak_affinity": 0.03825294333673391,
+    "tweak_game_mode": 0.023900196473132164,
+    "tweak_hags": 0.03416829640777837,
+    "tweak_low_timer_resolution": 0.007396537488642144,
+    "tweak_power_plan": 0.05868612155613568,
+    "tweak_priority": 0.044232444882533146,
+    "tweak_recording_off": 0.033908451020436284,
+    "tweak_registry_preset": 0.0334610722891701,
+    "tweak_service": 0.034214960138506334
+  },
+  "tweak_metrics": {
+    "tweak_affinity": {
+      "accuracy": 0.9761,
+      "f1": 0.3288,
+      "roc_auc": 0.9617,
+      "positive_rate": 0.0298
+    },
+    "tweak_game_mode": {
+      "accuracy": 1.0,
+      "f1": 0.0,
+      "roc_auc": 0.5,
+      "positive_rate": 0.0
+    },
+    "tweak_hags": {
+      "accuracy": 0.979,
+      "f1": 0.1224,
+      "roc_auc": 0.9855,
+      "positive_rate": 0.022
+    },
+    "tweak_low_timer_resolution": {
+      "accuracy": 1.0,
+      "f1": 0.0,
+      "roc_auc": 0.5,
+      "positive_rate": 0.0
+    },
+    "tweak_power_plan": {
+      "accuracy": 0.9761,
+      "f1": 0.3797,
+      "roc_auc": 0.9742,
+      "positive_rate": 0.0312
+    },
+    "tweak_priority": {
+      "accuracy": 0.9814,
+      "f1": 0.7031,
+      "roc_auc": 0.9681,
+      "positive_rate": 0.0405
+    },
+    "tweak_recording_off": {
+      "accuracy": 0.9824,
+      "f1": 0.6727,
+      "roc_auc": 0.981,
+      "positive_rate": 0.0347
+    },
+    "tweak_registry_preset": {
+      "accuracy": 1.0,
+      "f1": 0.0,
+      "roc_auc": 0.5,
+      "positive_rate": 0.0
+    },
+    "tweak_service": {
+      "accuracy": 0.9893,
+      "f1": 0.0,
+      "roc_auc": 0.7589,
+      "positive_rate": 0.0107
+    }
+  },
+  "tweak_reliability": {
+    "tweak_affinity": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 2019,
+        "mean_probability": 0.0198,
+        "positive_rate": 0.0173,
+        "accuracy_at_threshold": 0.9827
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.55,
+        "count": 10,
+        "mean_probability": 0.4668,
+        "positive_rate": 0.8,
+        "accuracy_at_threshold": 0.2
+      },
+      {
+        "lower": 0.55,
+        "upper": 0.62,
+        "count": 7,
+        "mean_probability": 0.5953,
+        "positive_rate": 0.8571,
+        "accuracy_at_threshold": 0.1429
+      },
+      {
+        "lower": 0.62,
+        "upper": 0.75,
+        "count": 8,
+        "mean_probability": 0.6645,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.75,
+        "upper": 0.9,
+        "count": 3,
+        "mean_probability": 0.8503,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.9,
+        "upper": 1.0,
+        "count": 1,
+        "mean_probability": 0.9127,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      }
+    ],
+    "tweak_game_mode": [],
+    "tweak_hags": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 2029,
+        "mean_probability": 0.0156,
+        "positive_rate": 0.0153,
+        "accuracy_at_threshold": 0.9847
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.55,
+        "count": 13,
+        "mean_probability": 0.45,
+        "positive_rate": 0.7692,
+        "accuracy_at_threshold": 0.2308
+      },
+      {
+        "lower": 0.55,
+        "upper": 0.62,
+        "count": 2,
+        "mean_probability": 0.5897,
+        "positive_rate": 0.5,
+        "accuracy_at_threshold": 0.5
+      },
+      {
+        "lower": 0.62,
+        "upper": 0.75,
+        "count": 2,
+        "mean_probability": 0.6733,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.75,
+        "upper": 0.9,
+        "count": 2,
+        "mean_probability": 0.7986,
+        "positive_rate": 0.5,
+        "accuracy_at_threshold": 0.5
+      }
+    ],
+    "tweak_low_timer_resolution": [],
+    "tweak_power_plan": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 2011,
+        "mean_probability": 0.0175,
+        "positive_rate": 0.0139,
+        "accuracy_at_threshold": 0.9861
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.55,
+        "count": 16,
+        "mean_probability": 0.4798,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 0.0
+      },
+      {
+        "lower": 0.55,
+        "upper": 0.62,
+        "count": 6,
+        "mean_probability": 0.5867,
+        "positive_rate": 0.8333,
+        "accuracy_at_threshold": 0.1667
+      },
+      {
+        "lower": 0.62,
+        "upper": 0.75,
+        "count": 5,
+        "mean_probability": 0.6677,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.75,
+        "upper": 0.9,
+        "count": 10,
+        "mean_probability": 0.815,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      }
+    ],
+    "tweak_priority": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 1984,
+        "mean_probability": 0.018,
+        "positive_rate": 0.0106,
+        "accuracy_at_threshold": 0.9894
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.55,
+        "count": 10,
+        "mean_probability": 0.4808,
+        "positive_rate": 0.8,
+        "accuracy_at_threshold": 0.2
+      },
+      {
+        "lower": 0.55,
+        "upper": 0.62,
+        "count": 9,
+        "mean_probability": 0.5853,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 0.0
+      },
+      {
+        "lower": 0.62,
+        "upper": 0.75,
+        "count": 14,
+        "mean_probability": 0.6909,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.75,
+        "upper": 0.9,
+        "count": 26,
+        "mean_probability": 0.8255,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      },
+      {
+        "lower": 0.9,
+        "upper": 1.0,
+        "count": 5,
+        "mean_probability": 0.9108,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      }
+    ],
+    "tweak_recording_off": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 1990,
+        "mean_probability": 0.0126,
+        "positive_rate": 0.0101,
+        "accuracy_at_threshold": 0.9899
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.55,
+        "count": 13,
+        "mean_probability": 0.4781,
+        "positive_rate": 0.6154,
+        "accuracy_at_threshold": 0.3846
+      },
+      {
+        "lower": 0.55,
+        "upper": 0.62,
+        "count": 6,
+        "mean_probability": 0.5892,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 0.0
+      },
+      {
+        "lower": 0.62,
+        "upper": 0.75,
+        "count": 13,
+        "mean_probability": 0.6903,
+        "positive_rate": 0.9231,
+        "accuracy_at_threshold": 0.9231
+      },
+      {
+        "lower": 0.75,
+        "upper": 0.9,
+        "count": 17,
+        "mean_probability": 0.8287,
+        "positive_rate": 0.9412,
+        "accuracy_at_threshold": 0.9412
+      },
+      {
+        "lower": 0.9,
+        "upper": 1.0,
+        "count": 9,
+        "mean_probability": 0.9378,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 1.0
+      }
+    ],
+    "tweak_registry_preset": [],
+    "tweak_service": [
+      {
+        "lower": 0.0,
+        "upper": 0.4,
+        "count": 2048,
+        "mean_probability": 0.0106,
+        "positive_rate": 0.0107,
+        "accuracy_at_threshold": 0.9893
+      }
+    ]
+  },
+  "detailed_metrics": {
+    "mean_fps": {
+      "mae": 21.7462,
+      "mape": 21.8603,
+      "r2": 0.683
+    },
+    "fps_1pct": {
+      "mae": 17.6117,
+      "mape": 22.4985,
+      "r2": 0.6782
+    }
+  },
+  "confidence_threshold": 0.62,
+  "artifacts": {
+    "onnx_path": "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\models\\aeterna_fps_model.onnx",
+    "joblib_path": "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\models\\aeterna_fps_model.joblib",
+    "onnx_exported": true,
+    "onnx_error": null
+  },
+  "fallback": {
+    "type": "logistic_regression_per_tweak",
+    "available": true,
+    "reason": "Used when ONNX runtime is absent or recommendation confidence is below threshold."
+  },
+  "incremental_learning": {
+    "strategy": "warm_start_when_supported_else_bounded_refit",
+    "entrypoint": "AeternaModel.fit_incremental"
+  },
+  "examples": [
+    {
+      "game_id": "cs2",
+      "resolution": "1920x1080",
+      "graphics_preset": "medium",
+      "tweak_priority": 0,
+      "tweak_power_plan": 0
+    }
+  ],
+  "baseline_metrics": {
+    "dummy_mean": {
+      "mean_fps": {
+        "mae": 39.5507,
+        "mape": 38.8471,
+        "r2": -0.0137
+      },
+      "fps_1pct": {
+        "mae": 31.6646,
+        "mape": 39.8803,
+        "r2": -0.0124
+      }
+    },
+    "ridge": {
+      "mean_fps": {
+        "mae": 21.7462,
+        "mape": 21.8603,
+        "r2": 0.683
+      },
+      "fps_1pct": {
+        "mae": 17.6117,
+        "mape": 22.4985,
+        "r2": 0.6782
+      }
+    },
+    "random_forest": {
+      "mean_fps": {
+        "mae": 30.2059,
+        "mape": 26.6618,
+        "r2": 0.3796
+      },
+      "fps_1pct": {
+        "mae": 24.0826,
+        "mape": 27.2799,
+        "r2": 0.3793
+      }
+    },
+    "lightgbm": {
+      "mean_fps": {
+        "mae": 28.1062,
+        "mape": 25.3186,
+        "r2": 0.4642
+      },
+      "fps_1pct": {
+        "mae": 21.2921,
+        "mape": 24.6628,
+        "r2": 0.511
+      }
+    }
+  },
+  "ablation_summary": {
+    "tweak_power_plan": {
+      "mean_gain_pct": 0.473,
+      "positive_mean_gain_pct": 5.869,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0312
+    },
+    "tweak_priority": {
+      "mean_gain_pct": 0.371,
+      "positive_mean_gain_pct": 4.423,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0405
+    },
+    "tweak_affinity": {
+      "mean_gain_pct": 0.245,
+      "positive_mean_gain_pct": 3.825,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0298
+    },
+    "tweak_service": {
+      "mean_gain_pct": 0.282,
+      "positive_mean_gain_pct": 3.421,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0107
+    },
+    "tweak_hags": {
+      "mean_gain_pct": 0.192,
+      "positive_mean_gain_pct": 3.417,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.022
+    },
+    "tweak_recording_off": {
+      "mean_gain_pct": 0.272,
+      "positive_mean_gain_pct": 3.391,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0347
+    },
+    "tweak_registry_preset": {
+      "mean_gain_pct": 0.283,
+      "positive_mean_gain_pct": 3.346,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0
+    },
+    "tweak_game_mode": {
+      "mean_gain_pct": 0.189,
+      "positive_mean_gain_pct": 2.39,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0
+    },
+    "tweak_low_timer_resolution": {
+      "mean_gain_pct": 0.061,
+      "positive_mean_gain_pct": 0.74,
+      "p75_gain_pct": 0.0,
+      "useful_rate": 0.0
+    }
+  },
+  "validation_metrics": {},
+  "demo_predictions": [
+    {
+      "input": {
+        "game_id": "warzone",
+        "cpu_model": "AMD Ryzen 7 5800X3D",
+        "gpu_model": "NVIDIA RTX 4060",
+        "resolution": "2560x1440",
+        "graphics_preset": "low"
+      },
+      "fps_prediction": {
+        "mean_fps": 102.7,
+        "fps_1pct": 74.67,
+        "confidence": 0.778,
+        "model_version": "aeterna-fps-v1",
+        "model_source": "ridge"
+      },
+      "tweak_recommendation": {
+        "recommendations": [
+          {
+            "tweak": "tweak_priority",
+            "confidence": 0.924,
+            "expected_gain_pct": 4.42,
+            "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+          },
+          {
+            "tweak": "tweak_affinity",
+            "confidence": 0.864,
+            "expected_gain_pct": 3.83,
+            "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+          }
+        ],
+        "confidence": 0.924,
+        "threshold": 0.62,
+        "abstained": false,
+        "model_version": "aeterna-fps-v1"
+      }
+    },
+    {
+      "input": {
+        "game_id": "cyberpunk_2077",
+        "cpu_model": "Intel Core i5-12400F",
+        "gpu_model": "NVIDIA RTX 4060",
+        "resolution": "1920x1080",
+        "graphics_preset": "high"
+      },
+      "fps_prediction": {
+        "mean_fps": 115.37,
+        "fps_1pct": 82.65,
+        "confidence": 0.778,
+        "model_version": "aeterna-fps-v1",
+        "model_source": "ridge"
+      },
+      "tweak_recommendation": {
+        "recommendations": [
+          {
+            "tweak": "tweak_recording_off",
+            "confidence": 0.97,
+            "expected_gain_pct": 3.39,
+            "reason": "Capture/recording overhead is likely to reduce GPU headroom."
+          },
+          {
+            "tweak": "tweak_hags",
+            "confidence": 0.946,
+            "expected_gain_pct": 3.42,
+            "reason": "GPU-bound modern hardware is likely to benefit from HAGS."
+          }
+        ],
+        "confidence": 0.97,
+        "threshold": 0.62,
+        "abstained": false,
+        "model_version": "aeterna-fps-v1"
+      }
+    },
+    {
+      "input": {
+        "game_id": "valorant",
+        "cpu_model": "AMD Ryzen 5 3600",
+        "gpu_model": "NVIDIA GTX 1660 Super",
+        "resolution": "1920x1080",
+        "graphics_preset": "medium"
+      },
+      "fps_prediction": {
+        "mean_fps": 154.95,
+        "fps_1pct": 110.94,
+        "confidence": 0.778,
+        "model_version": "aeterna-fps-v1",
+        "model_source": "ridge"
+      },
+      "tweak_recommendation": {
+        "recommendations": [],
+        "confidence": 0.292,
+        "threshold": 0.62,
+        "abstained": true,
+        "model_version": "aeterna-fps-v1"
+      }
+    },
+    {
+      "input": {
+        "game_id": "cs2",
+        "cpu_model": "AMD Ryzen 5 3600",
+        "gpu_model": "NVIDIA RTX 4060",
+        "resolution": "1920x1080",
+        "graphics_preset": "low"
+      },
+      "fps_prediction": {
+        "mean_fps": 163.38,
+        "fps_1pct": 126.27,
+        "confidence": 0.778,
+        "model_version": "aeterna-fps-v1",
+        "model_source": "ridge"
+      },
+      "tweak_recommendation": {
+        "recommendations": [
+          {
+            "tweak": "tweak_power_plan",
+            "confidence": 0.97,
+            "expected_gain_pct": 5.87,
+            "reason": "Sustained clocks are likely to improve average and 1pct FPS."
+          },
+          {
+            "tweak": "tweak_priority",
+            "confidence": 0.944,
+            "expected_gain_pct": 4.42,
+            "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+          },
+          {
+            "tweak": "tweak_affinity",
+            "confidence": 0.924,
+            "expected_gain_pct": 3.83,
+            "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+          }
+        ],
+        "confidence": 0.97,
+        "threshold": 0.62,
+        "abstained": false,
+        "model_version": "aeterna-fps-v1"
+      }
+    },
+    {
+      "input": {
+        "game_id": "fortnite",
+        "cpu_model": "AMD Ryzen 7 5800X3D",
+        "gpu_model": "AMD RX 7800 XT",
+        "resolution": "1920x1080",
+        "graphics_preset": "low"
+      },
+      "fps_prediction": {
+        "mean_fps": 167.4,
+        "fps_1pct": 126.33,
+        "confidence": 0.778,
+        "model_version": "aeterna-fps-v1",
+        "model_source": "ridge"
+      },
+      "tweak_recommendation": {
+        "recommendations": [
+          {
+            "tweak": "tweak_power_plan",
+            "confidence": 0.97,
+            "expected_gain_pct": 5.87,
+            "reason": "Sustained clocks are likely to improve average and 1pct FPS."
+          },
+          {
+            "tweak": "tweak_affinity",
+            "confidence": 0.97,
+            "expected_gain_pct": 3.83,
+            "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+          },
+          {
+            "tweak": "tweak_priority",
+            "confidence": 0.967,
+            "expected_gain_pct": 4.42,
+            "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+          }
+        ],
+        "confidence": 0.97,
+        "threshold": 0.62,
+        "abstained": false,
+        "model_version": "aeterna-fps-v1"
+      }
+    }
+  ],
+  "evaluation_protocol": {
+    "cv": 5,
+    "split": "GroupKFold by session_config_id when available; KFold fallback otherwise.",
+    "positive_tweak_label": "paired mean_fps gain >= 5.00%",
+    "selected_regressor": "ridge",
+    "regressor_selection": "lowest mean target MAPE in benchmark table"
+  }
+}

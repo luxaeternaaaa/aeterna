@@ -159,6 +159,24 @@ cd C:\Users\foxal.DESKTOP-N1GCIEU\Desktop\aeterna
 python -m ml.train_latency
 ```
 
+Train the FPS and safe-tweak recommendation model:
+
+```powershell
+cd C:\Users\foxal.DESKTOP-N1GCIEU\Desktop\aeterna
+python -m pip install -r ml\requirements-ml.txt
+python train.py
+```
+
+Pass a real gameplay CSV when available:
+
+```powershell
+python train.py data\game_sessions.csv
+```
+
+Diploma defense checklist:
+
+- [ML_DIPLOMA_READINESS.md](/C:/Users/foxal.DESKTOP-N1GCIEU/Desktop/aeterna/docs/ML_DIPLOMA_READINESS.md)
+
 ## Verification run in this workspace
 
 These checks passed during the current refactor:

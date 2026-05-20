@@ -1,0 +1,181 @@
+[
+  {
+    "input": {
+      "game_id": "warzone",
+      "cpu_model": "AMD Ryzen 7 5800X3D",
+      "gpu_model": "NVIDIA RTX 4060",
+      "resolution": "2560x1440",
+      "graphics_preset": "low"
+    },
+    "fps_prediction": {
+      "mean_fps": 102.7,
+      "fps_1pct": 74.67,
+      "confidence": 0.778,
+      "model_version": "aeterna-fps-v1",
+      "model_source": "ridge"
+    },
+    "tweak_recommendation": {
+      "recommendations": [
+        {
+          "tweak": "tweak_priority",
+          "confidence": 0.924,
+          "expected_gain_pct": 4.42,
+          "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+        },
+        {
+          "tweak": "tweak_affinity",
+          "confidence": 0.864,
+          "expected_gain_pct": 3.83,
+          "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+        }
+      ],
+      "confidence": 0.924,
+      "threshold": 0.62,
+      "abstained": false,
+      "model_version": "aeterna-fps-v1"
+    }
+  },
+  {
+    "input": {
+      "game_id": "cyberpunk_2077",
+      "cpu_model": "Intel Core i5-12400F",
+      "gpu_model": "NVIDIA RTX 4060",
+      "resolution": "1920x1080",
+      "graphics_preset": "high"
+    },
+    "fps_prediction": {
+      "mean_fps": 115.37,
+      "fps_1pct": 82.65,
+      "confidence": 0.778,
+      "model_version": "aeterna-fps-v1",
+      "model_source": "ridge"
+    },
+    "tweak_recommendation": {
+      "recommendations": [
+        {
+          "tweak": "tweak_recording_off",
+          "confidence": 0.97,
+          "expected_gain_pct": 3.39,
+          "reason": "Capture/recording overhead is likely to reduce GPU headroom."
+        },
+        {
+          "tweak": "tweak_hags",
+          "confidence": 0.946,
+          "expected_gain_pct": 3.42,
+          "reason": "GPU-bound modern hardware is likely to benefit from HAGS."
+        }
+      ],
+      "confidence": 0.97,
+      "threshold": 0.62,
+      "abstained": false,
+      "model_version": "aeterna-fps-v1"
+    }
+  },
+  {
+    "input": {
+      "game_id": "valorant",
+      "cpu_model": "AMD Ryzen 5 3600",
+      "gpu_model": "NVIDIA GTX 1660 Super",
+      "resolution": "1920x1080",
+      "graphics_preset": "medium"
+    },
+    "fps_prediction": {
+      "mean_fps": 154.95,
+      "fps_1pct": 110.94,
+      "confidence": 0.778,
+      "model_version": "aeterna-fps-v1",
+      "model_source": "ridge"
+    },
+    "tweak_recommendation": {
+      "recommendations": [],
+      "confidence": 0.292,
+      "threshold": 0.62,
+      "abstained": true,
+      "model_version": "aeterna-fps-v1"
+    }
+  },
+  {
+    "input": {
+      "game_id": "cs2",
+      "cpu_model": "AMD Ryzen 5 3600",
+      "gpu_model": "NVIDIA RTX 4060",
+      "resolution": "1920x1080",
+      "graphics_preset": "low"
+    },
+    "fps_prediction": {
+      "mean_fps": 163.38,
+      "fps_1pct": 126.27,
+      "confidence": 0.778,
+      "model_version": "aeterna-fps-v1",
+      "model_source": "ridge"
+    },
+    "tweak_recommendation": {
+      "recommendations": [
+        {
+          "tweak": "tweak_power_plan",
+          "confidence": 0.97,
+          "expected_gain_pct": 5.87,
+          "reason": "Sustained clocks are likely to improve average and 1pct FPS."
+        },
+        {
+          "tweak": "tweak_priority",
+          "confidence": 0.944,
+          "expected_gain_pct": 4.42,
+          "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+        },
+        {
+          "tweak": "tweak_affinity",
+          "confidence": 0.924,
+          "expected_gain_pct": 3.83,
+          "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+        }
+      ],
+      "confidence": 0.97,
+      "threshold": 0.62,
+      "abstained": false,
+      "model_version": "aeterna-fps-v1"
+    }
+  },
+  {
+    "input": {
+      "game_id": "fortnite",
+      "cpu_model": "AMD Ryzen 7 5800X3D",
+      "gpu_model": "AMD RX 7800 XT",
+      "resolution": "1920x1080",
+      "graphics_preset": "low"
+    },
+    "fps_prediction": {
+      "mean_fps": 167.4,
+      "fps_1pct": 126.33,
+      "confidence": 0.778,
+      "model_version": "aeterna-fps-v1",
+      "model_source": "ridge"
+    },
+    "tweak_recommendation": {
+      "recommendations": [
+        {
+          "tweak": "tweak_power_plan",
+          "confidence": 0.97,
+          "expected_gain_pct": 5.87,
+          "reason": "Sustained clocks are likely to improve average and 1pct FPS."
+        },
+        {
+          "tweak": "tweak_affinity",
+          "confidence": 0.97,
+          "expected_gain_pct": 3.83,
+          "reason": "CPU contention pattern suggests affinity can improve frame pacing."
+        },
+        {
+          "tweak": "tweak_priority",
+          "confidence": 0.967,
+          "expected_gain_pct": 4.42,
+          "reason": "Foreground scheduling pressure is likely limiting frame delivery."
+        }
+      ],
+      "confidence": 0.97,
+      "threshold": 0.62,
+      "abstained": false,
+      "model_version": "aeterna-fps-v1"
+    }
+  }
+]

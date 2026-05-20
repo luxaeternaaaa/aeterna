@@ -1,0 +1,18 @@
+{
+  "plots":[
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\mean_fps_distribution.png",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\fps_1pct_distribution.png",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\fps_by_preset.png",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\correlation_heatmap.png"
+  ],
+  "tables":[
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\fps_by_game_preset.csv",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\fps_by_hardware.csv",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\correlation.csv",
+    "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\outliers.csv"
+  ],
+  "outlier_count":138,
+  "rows":2048,
+  "mean_fps_mean":122.6902783203,
+  "fps_1pct_mean":96.2242529297
+}
