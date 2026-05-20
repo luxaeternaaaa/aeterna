@@ -268,4 +268,14 @@ pub struct MlRuntimeTruth {
     pub model_version: Option<String>,
     pub active_label: String,
     pub summary: String,
+    #[serde(default)]
+    pub fps_model_available: bool,
+    #[serde(default)]
+    pub fps_model_loadable: bool,
+    #[serde(default)]
+    pub fps_model_source: Option<String>,
+    #[serde(default)]
+    pub fps_model_version: Option<String>,
+    #[serde(default)]
+    pub fps_model_path: Option<String>,
 }

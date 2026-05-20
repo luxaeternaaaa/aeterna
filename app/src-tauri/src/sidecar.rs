@@ -134,6 +134,12 @@ fn spawn_sidecar_process(app: &AppHandle, process: &mut SidecarProcess) -> Resul
     if let Some(metadata_path) = bundled_resource(app, "ml/models/latency_model.metadata.json") {
         command.env("AETERNA_MODEL_METADATA", metadata_path);
     }
+    if let Some(fps_onnx_path) = bundled_resource(app, "ml/models/aeterna_fps_model.onnx") {
+        command.env("AETERNA_FPS_MODEL_ONNX", fps_onnx_path);
+    }
+    if let Some(fps_metadata_path) = bundled_resource(app, "ml/models/aeterna_fps_model.metadata.json") {
+        command.env("AETERNA_FPS_MODEL_METADATA", fps_metadata_path);
+    }
     if let Some(started_at) = diagnostics.launch_started_at {
         command.env("AETERNA_LAUNCH_STARTED_AT", started_at);
     }

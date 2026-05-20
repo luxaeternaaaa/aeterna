@@ -463,6 +463,11 @@ export interface MlRuntimeTruth {
   model_version?: string | null
   active_label: string
   summary: string
+  fps_model_available?: boolean
+  fps_model_loadable?: boolean
+  fps_model_source?: string | null
+  fps_model_version?: string | null
+  fps_model_path?: string | null
 }
 
 export interface TrustStatusPresentation {

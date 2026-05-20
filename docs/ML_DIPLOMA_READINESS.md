@@ -23,6 +23,12 @@ Expected artifacts:
 - `ml/artifacts/demo_predictions.json`
 - `ml/artifacts/eda/*`
 
+Sidecar integration:
+
+- `ml_runtime_truth` detects `ml/models/aeterna_fps_model.onnx`.
+- The Rust sidecar validates that the ONNX artifact is loadable through `tract-onnx`.
+- The live `ml_inference` endpoint keeps the existing telemetry-pressure fallback active until the sidecar can construct the full FPS feature vector from game, hardware, graphics settings, and tweak state.
+
 ## Required Defense Evidence
 
 - Dataset description: synthetic paired sessions plus optional real validation sessions.
@@ -64,3 +70,4 @@ Use this wording:
 - The real validation set should be expanded after the diploma prototype.
 - Per-game safety blocklists should be maintained in the sidecar before trusted automation is enabled.
 - Confidence calibration must be rechecked when the hardware or game distribution changes.
+- Full Rust-side FPS prediction requires sidecar preprocessing parity with `DatasetLoader` or exporting preprocessing into the ONNX graph.

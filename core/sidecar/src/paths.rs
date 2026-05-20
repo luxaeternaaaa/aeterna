@@ -60,6 +60,26 @@ pub fn ml_metadata_path() -> PathBuf {
         .join("latency_model.metadata.json")
 }
 
+pub fn ml_fps_model_path() -> PathBuf {
+    if let Some(path) = env::var_os("AETERNA_FPS_MODEL_ONNX") {
+        return PathBuf::from(path);
+    }
+    runtime_root()
+        .join("ml")
+        .join("models")
+        .join("aeterna_fps_model.onnx")
+}
+
+pub fn ml_fps_metadata_path() -> PathBuf {
+    if let Some(path) = env::var_os("AETERNA_FPS_MODEL_METADATA") {
+        return PathBuf::from(path);
+    }
+    runtime_root()
+        .join("ml")
+        .join("models")
+        .join("aeterna_fps_model.metadata.json")
+}
+
 pub fn feature_flags_path() -> PathBuf {
     config_dir().join("feature_flags.json")
 }

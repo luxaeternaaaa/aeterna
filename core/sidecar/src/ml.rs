@@ -1,10 +1,21 @@
-use std::{collections::BTreeMap, fs};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::{
     models::{MlInferencePayload, MlInferenceRequest, MlModelMetadata, MlRuntimeTruth},
-    paths::ml_metadata_path,
+    paths::{ml_fps_metadata_path, ml_fps_model_path, ml_metadata_path},
     processes,
 };
+use tract_onnx::prelude::Framework;
+
+#[derive(Default)]
+struct FpsModelStatus {
+    available: bool,
+    loadable: bool,
+    model_source: Option<String>,
+    version: Option<String>,
+    model_path: Option<String>,
+    error: Option<String>,
+}
 
 fn sigmoid(value: f64) -> f64 {
     1.0 / (1.0 + (-value).exp())
@@ -51,6 +62,43 @@ fn load_metadata() -> MlModelMetadata {
         .unwrap_or_else(default_metadata)
 }
 
+fn load_fps_metadata_value() -> Option<serde_json::Value> {
+    fs::read(ml_fps_metadata_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+fn metadata_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value.get(key).and_then(|item| item.as_str()).map(str::to_owned)
+}
+
+fn validate_onnx_artifact(path: &Path) -> Result<(), String> {
+    tract_onnx::onnx()
+        .model_for_path(path)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn fps_model_status() -> FpsModelStatus {
+    let model_path = ml_fps_model_path();
+    let metadata = load_fps_metadata_value();
+    let mut status = FpsModelStatus {
+        available: model_path.exists(),
+        model_path: Some(model_path.display().to_string()),
+        model_source: metadata.as_ref().and_then(|value| metadata_string(value, "model_source")),
+        version: metadata.as_ref().and_then(|value| metadata_string(value, "version")),
+        ..FpsModelStatus::default()
+    };
+
+    if status.available {
+        match validate_onnx_artifact(&model_path) {
+            Ok(()) => status.loadable = true,
+            Err(error) => status.error = Some(error),
+        }
+    }
+    status
+}
+
 fn runtime_mode(source: &str) -> &'static str {
     if source.contains("onnx") {
         "onnx"
@@ -64,12 +112,24 @@ fn runtime_mode(source: &str) -> &'static str {
 pub fn runtime_truth() -> MlRuntimeTruth {
     let metadata = load_metadata();
     let mode = runtime_mode(&metadata.model_source);
-    let active_label = match mode {
-        "onnx" => format!("ONNX runtime {}", metadata.version),
-        "fallback" => "Fallback runtime available".into(),
-        _ => "No runtime recommendation path".into(),
+    let fps_status = fps_model_status();
+    let active_label = if fps_status.loadable {
+        format!(
+            "FPS ONNX ready; {}",
+            match mode {
+                "onnx" => format!("runtime {}", metadata.version),
+                "fallback" => "fallback pressure model active".into(),
+                _ => "pressure model unavailable".into(),
+            }
+        )
+    } else {
+        match mode {
+            "onnx" => format!("ONNX runtime {}", metadata.version),
+            "fallback" => "Fallback runtime available".into(),
+            _ => "No runtime recommendation path".into(),
+        }
     };
-    let summary = match mode {
+    let mut summary = match mode {
         "onnx" => format!(
             "Local runtime-backed inference is available via {}. Treat compare results as proof, and ML as advisory ranking.",
             metadata.version
@@ -80,12 +140,33 @@ pub fn runtime_truth() -> MlRuntimeTruth {
         ),
         _ => "No runtime recommendation path is currently available.".into(),
     };
+    if fps_status.loadable {
+        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present and loadable; the current optimization endpoint still uses telemetry-pressure fallback until full game/hardware feature-vector preprocessing is available in the sidecar.");
+    } else if fps_status.available {
+        let error = fps_status.error.as_deref().unwrap_or("unknown ONNX load error");
+        summary.push_str(&format!(
+            " FPS prediction artifact is present but could not be loaded by the sidecar ONNX runtime: {error}."
+        ));
+    }
     MlRuntimeTruth {
         runtime_mode: mode.into(),
-        model_source: metadata.model_source,
+        model_source: if fps_status.available {
+            format!(
+                "{}+fps-{}",
+                metadata.model_source,
+                fps_status.model_source.as_deref().unwrap_or("artifact")
+            )
+        } else {
+            metadata.model_source
+        },
         model_version: Some(metadata.version),
         active_label,
         summary,
+        fps_model_available: fps_status.available,
+        fps_model_loadable: fps_status.loadable,
+        fps_model_source: fps_status.model_source,
+        fps_model_version: fps_status.version,
+        fps_model_path: fps_status.model_path,
     }
 }
 
@@ -121,6 +202,7 @@ fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
 pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let metadata = load_metadata();
     let mode = runtime_mode(&metadata.model_source);
+    let fps_status = fps_model_status();
     let score = metadata
         .weights
         .iter()
@@ -130,6 +212,11 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let mut recommended_functions = Vec::new();
     let mut factors = Vec::new();
     factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
+    if fps_status.loadable {
+        factors.push("FPS ONNX artifact is loadable; this endpoint keeps using pressure-model recommendations until sidecar preprocessing can supply the full FPS feature vector.".into());
+    } else if fps_status.available {
+        factors.push("FPS model artifact was found, but telemetry fallback remains active for this inference call.".into());
+    }
     if let Some(profile) = payload.system_profile.as_ref() {
         let cores = profile
             .logical_cores

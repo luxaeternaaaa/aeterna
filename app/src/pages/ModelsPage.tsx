@@ -41,6 +41,11 @@ export function ModelsPage({ inference, models, onActivate, onRollback, runtimeT
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Active path</p>
               <p className="mt-2 text-lg font-semibold tracking-tight text-text">{runtimeTruth?.active_label ?? activeModel?.name ?? 'No active path'}</p>
               <p className="mt-2 text-sm leading-6 text-muted">{runtimeTruth?.summary ?? posture.detail}</p>
+              {runtimeTruth?.fps_model_available ? (
+                <p className="mt-2 text-xs leading-5 text-muted">
+                  FPS model: {runtimeTruth.fps_model_loadable ? 'ONNX artifact verified' : 'artifact found, runtime fallback active'}.
+                </p>
+              ) : null}
             </div>
             <div className="surface-card">
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Latest hint</p>
