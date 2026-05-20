@@ -56,15 +56,15 @@ Selected regressor: ridge
 
 | Tweak | Accuracy | F1 | ROC AUC | Positive rate |
 | --- | ---: | ---: | ---: | ---: |
-| tweak_affinity | 0.9761 | 0.3288 | 0.9617 | 0.0298 |
+| tweak_affinity | 0.9746 | 0.2571 | 0.9731 | 0.0298 |
 | tweak_game_mode | 1.0000 | 0.0000 | 0.5000 | 0.0000 |
-| tweak_hags | 0.9790 | 0.1224 | 0.9855 | 0.0220 |
+| tweak_hags | 0.9785 | 0.0435 | 0.9891 | 0.0220 |
 | tweak_low_timer_resolution | 1.0000 | 0.0000 | 0.5000 | 0.0000 |
-| tweak_power_plan | 0.9761 | 0.3797 | 0.9742 | 0.0312 |
-| tweak_priority | 0.9814 | 0.7031 | 0.9681 | 0.0405 |
-| tweak_recording_off | 0.9824 | 0.6727 | 0.9810 | 0.0347 |
+| tweak_power_plan | 0.9731 | 0.2466 | 0.9736 | 0.0312 |
+| tweak_priority | 0.9766 | 0.5932 | 0.9667 | 0.0405 |
+| tweak_recording_off | 0.9722 | 0.3294 | 0.9758 | 0.0347 |
 | tweak_registry_preset | 1.0000 | 0.0000 | 0.5000 | 0.0000 |
-| tweak_service | 0.9893 | 0.0000 | 0.7589 | 0.0107 |
+| tweak_service | 0.9893 | 0.0000 | 0.8857 | 0.0107 |
 
 ## Tweak Ablation
 
@@ -84,35 +84,28 @@ Selected regressor: ridge
 
 | Tweak | Bucket | Count | Mean probability | Positive rate | Accuracy at threshold |
 | --- | --- | ---: | ---: | ---: | ---: |
-| tweak_affinity | 0.00-0.40 | 2019 | 0.0198 | 0.0173 | 0.9827 |
-| tweak_affinity | 0.40-0.55 | 10 | 0.4668 | 0.8000 | 0.2000 |
-| tweak_affinity | 0.55-0.62 | 7 | 0.5953 | 0.8571 | 0.1429 |
-| tweak_affinity | 0.62-0.75 | 8 | 0.6645 | 1.0000 | 1.0000 |
-| tweak_affinity | 0.75-0.90 | 3 | 0.8503 | 1.0000 | 1.0000 |
-| tweak_affinity | 0.90-1.00 | 1 | 0.9127 | 1.0000 | 1.0000 |
-| tweak_hags | 0.00-0.40 | 2029 | 0.0156 | 0.0153 | 0.9847 |
-| tweak_hags | 0.40-0.55 | 13 | 0.4500 | 0.7692 | 0.2308 |
-| tweak_hags | 0.55-0.62 | 2 | 0.5897 | 0.5000 | 0.5000 |
-| tweak_hags | 0.62-0.75 | 2 | 0.6733 | 1.0000 | 1.0000 |
-| tweak_hags | 0.75-0.90 | 2 | 0.7986 | 0.5000 | 0.5000 |
-| tweak_power_plan | 0.00-0.40 | 2011 | 0.0175 | 0.0139 | 0.9861 |
-| tweak_power_plan | 0.40-0.55 | 16 | 0.4798 | 1.0000 | 0.0000 |
-| tweak_power_plan | 0.55-0.62 | 6 | 0.5867 | 0.8333 | 0.1667 |
-| tweak_power_plan | 0.62-0.75 | 5 | 0.6677 | 1.0000 | 1.0000 |
-| tweak_power_plan | 0.75-0.90 | 10 | 0.8150 | 1.0000 | 1.0000 |
-| tweak_priority | 0.00-0.40 | 1984 | 0.0180 | 0.0106 | 0.9894 |
-| tweak_priority | 0.40-0.55 | 10 | 0.4808 | 0.8000 | 0.2000 |
-| tweak_priority | 0.55-0.62 | 9 | 0.5853 | 1.0000 | 0.0000 |
-| tweak_priority | 0.62-0.75 | 14 | 0.6909 | 1.0000 | 1.0000 |
-| tweak_priority | 0.75-0.90 | 26 | 0.8255 | 1.0000 | 1.0000 |
-| tweak_priority | 0.90-1.00 | 5 | 0.9108 | 1.0000 | 1.0000 |
-| tweak_recording_off | 0.00-0.40 | 1990 | 0.0126 | 0.0101 | 0.9899 |
-| tweak_recording_off | 0.40-0.55 | 13 | 0.4781 | 0.6154 | 0.3846 |
-| tweak_recording_off | 0.55-0.62 | 6 | 0.5892 | 1.0000 | 0.0000 |
-| tweak_recording_off | 0.62-0.75 | 13 | 0.6903 | 0.9231 | 0.9231 |
-| tweak_recording_off | 0.75-0.90 | 17 | 0.8287 | 0.9412 | 0.9412 |
-| tweak_recording_off | 0.90-1.00 | 9 | 0.9378 | 1.0000 | 1.0000 |
-| tweak_service | 0.00-0.40 | 2048 | 0.0106 | 0.0107 | 0.9893 |
+| tweak_affinity | 0.00-0.40 | 1996 | 0.0653 | 0.0090 | 0.9910 |
+| tweak_affinity | 0.40-0.55 | 36 | 0.4823 | 0.7500 | 0.2500 |
+| tweak_affinity | 0.55-0.62 | 7 | 0.5817 | 1.0000 | 0.0000 |
+| tweak_affinity | 0.62-0.75 | 9 | 0.6496 | 1.0000 | 1.0000 |
+| tweak_hags | 0.00-0.40 | 2012 | 0.0576 | 0.0094 | 0.9906 |
+| tweak_hags | 0.40-0.55 | 29 | 0.4648 | 0.6897 | 0.3103 |
+| tweak_hags | 0.55-0.62 | 6 | 0.5886 | 0.8333 | 0.1667 |
+| tweak_hags | 0.62-0.75 | 1 | 0.6448 | 1.0000 | 1.0000 |
+| tweak_power_plan | 0.00-0.40 | 1989 | 0.0676 | 0.0080 | 0.9920 |
+| tweak_power_plan | 0.40-0.55 | 37 | 0.4602 | 0.7027 | 0.2973 |
+| tweak_power_plan | 0.55-0.62 | 13 | 0.5794 | 1.0000 | 0.0000 |
+| tweak_power_plan | 0.62-0.75 | 9 | 0.6701 | 1.0000 | 1.0000 |
+| tweak_priority | 0.00-0.40 | 1975 | 0.0801 | 0.0091 | 0.9909 |
+| tweak_priority | 0.40-0.55 | 16 | 0.4643 | 0.5000 | 0.5000 |
+| tweak_priority | 0.55-0.62 | 22 | 0.5904 | 1.0000 | 0.0000 |
+| tweak_priority | 0.62-0.75 | 34 | 0.6731 | 1.0000 | 1.0000 |
+| tweak_priority | 0.75-0.90 | 1 | 0.7755 | 1.0000 | 1.0000 |
+| tweak_recording_off | 0.00-0.40 | 1978 | 0.0718 | 0.0061 | 0.9939 |
+| tweak_recording_off | 0.40-0.55 | 32 | 0.4784 | 0.7188 | 0.2812 |
+| tweak_recording_off | 0.55-0.62 | 24 | 0.5847 | 0.9167 | 0.0833 |
+| tweak_recording_off | 0.62-0.75 | 14 | 0.6682 | 1.0000 | 1.0000 |
+| tweak_service | 0.00-0.40 | 2048 | 0.0389 | 0.0107 | 0.9893 |
 
 ## Safety Behavior
 
@@ -128,6 +121,8 @@ Selected regressor: ridge
 - ONNX exported: `True`
 - ONNX path: `C:\Users\foxal.DESKTOP-N1GCIEU\Desktop\aeterna\ml\models\aeterna_fps_model.onnx`
 - Joblib path: `C:\Users\foxal.DESKTOP-N1GCIEU\Desktop\aeterna\ml\models\aeterna_fps_model.joblib`
+- Preprocessing included in ONNX: `True`
+- ONNX raw input columns: `29`
 - Demo examples: `5`
 
 ## Defense Position

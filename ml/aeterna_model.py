@@ -16,6 +16,7 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, cross_val_predict
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
 
 from ml.dataset_loader import DatasetLoader, TARGET_COLUMNS
 
@@ -297,17 +298,21 @@ class AeternaModel:
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib_path = path.with_suffix(".joblib")
         metadata_path = path.with_suffix(".metadata.json")
+        export_model = self._onnx_export_model()
         joblib.dump(self, joblib_path)
 
         onnx_saved = False
         onnx_error = None
+        preprocessing_included = self._onnx_preprocessing_included()
+        initial_types: list[tuple[str, Any]] = []
         try:
             from skl2onnx import convert_sklearn
-            from skl2onnx.common.data_types import FloatTensorType
+            from skl2onnx.common.data_types import FloatTensorType, StringTensorType
 
+            initial_types = self._onnx_initial_types(FloatTensorType, StringTensorType)
             onnx_model = convert_sklearn(
-                self.regressor,
-                initial_types=[("features", FloatTensorType([None, self.n_features_in_]))],
+                export_model,
+                initial_types=initial_types,
                 target_opset=15,
             )
             path.write_bytes(onnx_model.SerializeToString())
@@ -317,10 +322,12 @@ class AeternaModel:
             try:
                 import onnxmltools
                 from onnxmltools.convert.common.data_types import FloatTensorType as OnnxToolsFloatTensorType
+                from onnxmltools.convert.common.data_types import StringTensorType as OnnxToolsStringTensorType
 
+                initial_types = self._onnx_initial_types(OnnxToolsFloatTensorType, OnnxToolsStringTensorType)
                 onnx_model = onnxmltools.convert_sklearn(
-                    self.regressor,
-                    initial_types=[("features", OnnxToolsFloatTensorType([None, self.n_features_in_]))],
+                    export_model,
+                    initial_types=initial_types,
                     target_opset=15,
                 )
                 path.write_bytes(onnx_model.SerializeToString())
@@ -330,8 +337,53 @@ class AeternaModel:
                 onnx_error = f"{onnx_error}; onnxmltools fallback: {fallback_exc}"
 
         metadata = self._metadata(path, joblib_path, onnx_saved, onnx_error)
+        metadata["onnx_input_schema"] = self._onnx_input_schema()
+        metadata["preprocessing"] = {
+            "included_in_onnx": preprocessing_included and onnx_saved,
+            "source": "DatasetLoader ColumnTransformer",
+            "categorical_columns": self.dataset_loader.categorical_columns_ if self.dataset_loader else [],
+            "numeric_columns": self.dataset_loader.numeric_columns_ if self.dataset_loader else [],
+            "raw_feature_columns": self.dataset_loader.feature_columns_ if self.dataset_loader else [],
+            "transformed_feature_names": self.feature_names,
+        }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return metadata
+
+    def _onnx_export_model(self) -> Any:
+        if self._onnx_preprocessing_included():
+            return Pipeline(
+                steps=[
+                    ("preprocessor", self.dataset_loader.preprocessor),
+                    ("regressor", self.regressor),
+                ]
+            )
+        return self.regressor
+
+    def _onnx_preprocessing_included(self) -> bool:
+        return self.dataset_loader is not None and self.dataset_loader.preprocessor is not None
+
+    def _onnx_initial_types(self, float_type: Any, string_type: Any) -> list[tuple[str, Any]]:
+        if not self._onnx_preprocessing_included():
+            return [("features", float_type([None, self.n_features_in_]))]
+        initial_types: list[tuple[str, Any]] = []
+        assert self.dataset_loader is not None
+        for column in self.dataset_loader.feature_columns_:
+            tensor_type = string_type if column in self.dataset_loader.categorical_columns_ else float_type
+            initial_types.append((column, tensor_type([None, 1])))
+        return initial_types
+
+    def _onnx_input_schema(self) -> list[dict[str, str]]:
+        if not self._onnx_preprocessing_included():
+            return [{"name": "features", "dtype": "float32", "shape": "[N, transformed_feature_count]"}]
+        assert self.dataset_loader is not None
+        return [
+            {
+                "name": column,
+                "dtype": "string" if column in self.dataset_loader.categorical_columns_ else "float32",
+                "shape": "[N, 1]",
+            }
+            for column in self.dataset_loader.feature_columns_
+        ]
 
     @classmethod
     def load(cls, path: str | Path) -> "AeternaModel":

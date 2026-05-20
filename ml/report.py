@@ -164,6 +164,8 @@ def write_report(
             f"- ONNX exported: `{metadata.get('artifacts', {}).get('onnx_exported')}`",
             f"- ONNX path: `{metadata.get('artifacts', {}).get('onnx_path')}`",
             f"- Joblib path: `{metadata.get('artifacts', {}).get('joblib_path')}`",
+            f"- Preprocessing included in ONNX: `{metadata.get('preprocessing', {}).get('included_in_onnx')}`",
+            f"- ONNX raw input columns: `{len(metadata.get('onnx_input_schema', []))}`",
             f"- Demo examples: `{len(metadata.get('demo_predictions', []))}`",
             "",
             "## Defense Position",

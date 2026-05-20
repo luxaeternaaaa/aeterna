@@ -18,7 +18,7 @@
       "recommendations": [
         {
           "tweak": "tweak_priority",
-          "confidence": 0.924,
+          "confidence": 0.923,
           "expected_gain_pct": 4.42,
           "reason": "Foreground scheduling pressure is likely limiting frame delivery."
         },
@@ -29,7 +29,7 @@
           "reason": "CPU contention pattern suggests affinity can improve frame pacing."
         }
       ],
-      "confidence": 0.924,
+      "confidence": 0.923,
       "threshold": 0.62,
       "abstained": false,
       "model_version": "aeterna-fps-v1"
@@ -119,7 +119,7 @@
         },
         {
           "tweak": "tweak_priority",
-          "confidence": 0.944,
+          "confidence": 0.943,
           "expected_gain_pct": 4.42,
           "reason": "Foreground scheduling pressure is likely limiting frame delivery."
         },
@@ -167,7 +167,7 @@
         },
         {
           "tweak": "tweak_priority",
-          "confidence": 0.967,
+          "confidence": 0.966,
           "expected_gain_pct": 4.42,
           "reason": "Foreground scheduling pressure is likely limiting frame delivery."
         }

@@ -32,7 +32,7 @@
     "status": "ready",
     "artifact_path": "ml/models/aeterna_fps_model.onnx",
     "metadata_path": "ml/models/aeterna_fps_model.metadata.json",
-    "notes": "Predicts mean FPS and 1% low from game, hardware, graphics settings, and safe-tweak features. Sidecar can detect and validate the ONNX artifact; the live optimization endpoint keeps telemetry fallback active until full FPS feature preprocessing is available in Rust.",
+    "notes": "Predicts mean FPS and 1% low from game, hardware, graphics settings, and safe-tweak features. The ONNX artifact includes DatasetLoader preprocessing and is validated by the sidecar; the live optimization endpoint keeps telemetry fallback active until it can supply the raw FPS model inputs.",
     "inference_mode": "onnx"
   },
   {

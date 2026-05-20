@@ -1,6 +1,6 @@
 {
   "version": "aeterna-fps-v1",
-  "updated_at": "2026-05-20T09:21:58.403544+00:00",
+  "updated_at": "2026-05-20T10:21:48.068216+00:00",
   "model_source": "onnx",
   "metrics": {
     "mean_fps_mae": 21.7462,
@@ -217,9 +217,9 @@
   },
   "tweak_metrics": {
     "tweak_affinity": {
-      "accuracy": 0.9761,
-      "f1": 0.3288,
-      "roc_auc": 0.9617,
+      "accuracy": 0.9746,
+      "f1": 0.2571,
+      "roc_auc": 0.9731,
       "positive_rate": 0.0298
     },
     "tweak_game_mode": {
@@ -229,9 +229,9 @@
       "positive_rate": 0.0
     },
     "tweak_hags": {
-      "accuracy": 0.979,
-      "f1": 0.1224,
-      "roc_auc": 0.9855,
+      "accuracy": 0.9785,
+      "f1": 0.0435,
+      "roc_auc": 0.9891,
       "positive_rate": 0.022
     },
     "tweak_low_timer_resolution": {
@@ -241,21 +241,21 @@
       "positive_rate": 0.0
     },
     "tweak_power_plan": {
-      "accuracy": 0.9761,
-      "f1": 0.3797,
-      "roc_auc": 0.9742,
+      "accuracy": 0.9731,
+      "f1": 0.2466,
+      "roc_auc": 0.9736,
       "positive_rate": 0.0312
     },
     "tweak_priority": {
-      "accuracy": 0.9814,
-      "f1": 0.7031,
-      "roc_auc": 0.9681,
+      "accuracy": 0.9766,
+      "f1": 0.5932,
+      "roc_auc": 0.9667,
       "positive_rate": 0.0405
     },
     "tweak_recording_off": {
-      "accuracy": 0.9824,
-      "f1": 0.6727,
-      "roc_auc": 0.981,
+      "accuracy": 0.9722,
+      "f1": 0.3294,
+      "roc_auc": 0.9758,
       "positive_rate": 0.0347
     },
     "tweak_registry_preset": {
@@ -267,7 +267,7 @@
     "tweak_service": {
       "accuracy": 0.9893,
       "f1": 0.0,
-      "roc_auc": 0.7589,
+      "roc_auc": 0.8857,
       "positive_rate": 0.0107
     }
   },
@@ -276,48 +276,32 @@
       {
         "lower": 0.0,
         "upper": 0.4,
-        "count": 2019,
-        "mean_probability": 0.0198,
-        "positive_rate": 0.0173,
-        "accuracy_at_threshold": 0.9827
+        "count": 1996,
+        "mean_probability": 0.0653,
+        "positive_rate": 0.009,
+        "accuracy_at_threshold": 0.991
       },
       {
         "lower": 0.4,
         "upper": 0.55,
-        "count": 10,
-        "mean_probability": 0.4668,
-        "positive_rate": 0.8,
-        "accuracy_at_threshold": 0.2
+        "count": 36,
+        "mean_probability": 0.4823,
+        "positive_rate": 0.75,
+        "accuracy_at_threshold": 0.25
       },
       {
         "lower": 0.55,
         "upper": 0.62,
         "count": 7,
-        "mean_probability": 0.5953,
-        "positive_rate": 0.8571,
-        "accuracy_at_threshold": 0.1429
+        "mean_probability": 0.5817,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 0.0
       },
       {
         "lower": 0.62,
         "upper": 0.75,
-        "count": 8,
-        "mean_probability": 0.6645,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 1.0
-      },
-      {
-        "lower": 0.75,
-        "upper": 0.9,
-        "count": 3,
-        "mean_probability": 0.8503,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 1.0
-      },
-      {
-        "lower": 0.9,
-        "upper": 1.0,
-        "count": 1,
-        "mean_probability": 0.9127,
+        "count": 9,
+        "mean_probability": 0.6496,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
       }
@@ -327,42 +311,34 @@
       {
         "lower": 0.0,
         "upper": 0.4,
-        "count": 2029,
-        "mean_probability": 0.0156,
-        "positive_rate": 0.0153,
-        "accuracy_at_threshold": 0.9847
+        "count": 2012,
+        "mean_probability": 0.0576,
+        "positive_rate": 0.0094,
+        "accuracy_at_threshold": 0.9906
       },
       {
         "lower": 0.4,
         "upper": 0.55,
-        "count": 13,
-        "mean_probability": 0.45,
-        "positive_rate": 0.7692,
-        "accuracy_at_threshold": 0.2308
+        "count": 29,
+        "mean_probability": 0.4648,
+        "positive_rate": 0.6897,
+        "accuracy_at_threshold": 0.3103
       },
       {
         "lower": 0.55,
         "upper": 0.62,
-        "count": 2,
-        "mean_probability": 0.5897,
-        "positive_rate": 0.5,
-        "accuracy_at_threshold": 0.5
+        "count": 6,
+        "mean_probability": 0.5886,
+        "positive_rate": 0.8333,
+        "accuracy_at_threshold": 0.1667
       },
       {
         "lower": 0.62,
         "upper": 0.75,
-        "count": 2,
-        "mean_probability": 0.6733,
+        "count": 1,
+        "mean_probability": 0.6448,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
-      },
-      {
-        "lower": 0.75,
-        "upper": 0.9,
-        "count": 2,
-        "mean_probability": 0.7986,
-        "positive_rate": 0.5,
-        "accuracy_at_threshold": 0.5
       }
     ],
     "tweak_low_timer_resolution": [],
@@ -370,40 +346,32 @@
       {
         "lower": 0.0,
         "upper": 0.4,
-        "count": 2011,
-        "mean_probability": 0.0175,
-        "positive_rate": 0.0139,
-        "accuracy_at_threshold": 0.9861
+        "count": 1989,
+        "mean_probability": 0.0676,
+        "positive_rate": 0.008,
+        "accuracy_at_threshold": 0.992
       },
       {
         "lower": 0.4,
         "upper": 0.55,
-        "count": 16,
-        "mean_probability": 0.4798,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 0.0
+        "count": 37,
+        "mean_probability": 0.4602,
+        "positive_rate": 0.7027,
+        "accuracy_at_threshold": 0.2973
       },
       {
         "lower": 0.55,
         "upper": 0.62,
-        "count": 6,
-        "mean_probability": 0.5867,
-        "positive_rate": 0.8333,
-        "accuracy_at_threshold": 0.1667
+        "count": 13,
+        "mean_probability": 0.5794,
+        "positive_rate": 1.0,
+        "accuracy_at_threshold": 0.0
       },
       {
         "lower": 0.62,
         "upper": 0.75,
-        "count": 5,
-        "mean_probability": 0.6677,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 1.0
-      },
-      {
-        "lower": 0.75,
-        "upper": 0.9,
-        "count": 10,
-        "mean_probability": 0.815,
+        "count": 9,
+        "mean_probability": 0.6701,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
       }
@@ -412,48 +380,40 @@
       {
         "lower": 0.0,
         "upper": 0.4,
-        "count": 1984,
-        "mean_probability": 0.018,
-        "positive_rate": 0.0106,
-        "accuracy_at_threshold": 0.9894
+        "count": 1975,
+        "mean_probability": 0.0801,
+        "positive_rate": 0.0091,
+        "accuracy_at_threshold": 0.9909
       },
       {
         "lower": 0.4,
         "upper": 0.55,
-        "count": 10,
-        "mean_probability": 0.4808,
-        "positive_rate": 0.8,
-        "accuracy_at_threshold": 0.2
+        "count": 16,
+        "mean_probability": 0.4643,
+        "positive_rate": 0.5,
+        "accuracy_at_threshold": 0.5
       },
       {
         "lower": 0.55,
         "upper": 0.62,
-        "count": 9,
-        "mean_probability": 0.5853,
+        "count": 22,
+        "mean_probability": 0.5904,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 0.0
       },
       {
         "lower": 0.62,
         "upper": 0.75,
-        "count": 14,
-        "mean_probability": 0.6909,
+        "count": 34,
+        "mean_probability": 0.6731,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
       },
       {
         "lower": 0.75,
         "upper": 0.9,
-        "count": 26,
-        "mean_probability": 0.8255,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 1.0
-      },
-      {
-        "lower": 0.9,
-        "upper": 1.0,
-        "count": 5,
-        "mean_probability": 0.9108,
+        "count": 1,
+        "mean_probability": 0.7755,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
       }
@@ -462,48 +422,32 @@
       {
         "lower": 0.0,
         "upper": 0.4,
-        "count": 1990,
-        "mean_probability": 0.0126,
-        "positive_rate": 0.0101,
-        "accuracy_at_threshold": 0.9899
+        "count": 1978,
+        "mean_probability": 0.0718,
+        "positive_rate": 0.0061,
+        "accuracy_at_threshold": 0.9939
       },
       {
         "lower": 0.4,
         "upper": 0.55,
-        "count": 13,
-        "mean_probability": 0.4781,
-        "positive_rate": 0.6154,
-        "accuracy_at_threshold": 0.3846
+        "count": 32,
+        "mean_probability": 0.4784,
+        "positive_rate": 0.7188,
+        "accuracy_at_threshold": 0.2812
       },
       {
         "lower": 0.55,
         "upper": 0.62,
-        "count": 6,
-        "mean_probability": 0.5892,
-        "positive_rate": 1.0,
-        "accuracy_at_threshold": 0.0
+        "count": 24,
+        "mean_probability": 0.5847,
+        "positive_rate": 0.9167,
+        "accuracy_at_threshold": 0.0833
       },
       {
         "lower": 0.62,
         "upper": 0.75,
-        "count": 13,
-        "mean_probability": 0.6903,
-        "positive_rate": 0.9231,
-        "accuracy_at_threshold": 0.9231
-      },
-      {
-        "lower": 0.75,
-        "upper": 0.9,
-        "count": 17,
-        "mean_probability": 0.8287,
-        "positive_rate": 0.9412,
-        "accuracy_at_threshold": 0.9412
-      },
-      {
-        "lower": 0.9,
-        "upper": 1.0,
-        "count": 9,
-        "mean_probability": 0.9378,
+        "count": 14,
+        "mean_probability": 0.6682,
         "positive_rate": 1.0,
         "accuracy_at_threshold": 1.0
       }
@@ -514,7 +458,7 @@
         "lower": 0.0,
         "upper": 0.4,
         "count": 2048,
-        "mean_probability": 0.0106,
+        "mean_probability": 0.0389,
         "positive_rate": 0.0107,
         "accuracy_at_threshold": 0.9893
       }
@@ -557,6 +501,292 @@
       "tweak_power_plan": 0
     }
   ],
+  "onnx_input_schema": [
+    {
+      "name": "game_id",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "cpu_model",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "gpu_model",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "drive_type",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "resolution",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "graphics_preset",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "vsync",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "antialiasing",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "texture_quality",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "special_effects",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "label_target",
+      "dtype": "string",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "ram_gb",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "laptop",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "npc_count",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "player_actions",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "cpu_util",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "gpu_util",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "vram_util",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "temperature",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "background_process_count",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_affinity",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_game_mode",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_hags",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_low_timer_resolution",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_power_plan",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_priority",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_recording_off",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_registry_preset",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    },
+    {
+      "name": "tweak_service",
+      "dtype": "float32",
+      "shape": "[N, 1]"
+    }
+  ],
+  "preprocessing": {
+    "included_in_onnx": true,
+    "source": "DatasetLoader ColumnTransformer",
+    "categorical_columns": [
+      "game_id",
+      "cpu_model",
+      "gpu_model",
+      "drive_type",
+      "resolution",
+      "graphics_preset",
+      "vsync",
+      "antialiasing",
+      "texture_quality",
+      "special_effects",
+      "label_target"
+    ],
+    "numeric_columns": [
+      "ram_gb",
+      "laptop",
+      "npc_count",
+      "player_actions",
+      "cpu_util",
+      "gpu_util",
+      "vram_util",
+      "temperature",
+      "background_process_count",
+      "tweak_affinity",
+      "tweak_game_mode",
+      "tweak_hags",
+      "tweak_low_timer_resolution",
+      "tweak_power_plan",
+      "tweak_priority",
+      "tweak_recording_off",
+      "tweak_registry_preset",
+      "tweak_service"
+    ],
+    "raw_feature_columns": [
+      "game_id",
+      "cpu_model",
+      "gpu_model",
+      "drive_type",
+      "resolution",
+      "graphics_preset",
+      "vsync",
+      "antialiasing",
+      "texture_quality",
+      "special_effects",
+      "label_target",
+      "ram_gb",
+      "laptop",
+      "npc_count",
+      "player_actions",
+      "cpu_util",
+      "gpu_util",
+      "vram_util",
+      "temperature",
+      "background_process_count",
+      "tweak_affinity",
+      "tweak_game_mode",
+      "tweak_hags",
+      "tweak_low_timer_resolution",
+      "tweak_power_plan",
+      "tweak_priority",
+      "tweak_recording_off",
+      "tweak_registry_preset",
+      "tweak_service"
+    ],
+    "transformed_feature_names": [
+      "game_id_apex_legends",
+      "game_id_cs2",
+      "game_id_cyberpunk_2077",
+      "game_id_fortnite",
+      "game_id_valorant",
+      "game_id_warzone",
+      "cpu_model_AMD Ryzen 5 3600",
+      "cpu_model_AMD Ryzen 5 5600X",
+      "cpu_model_AMD Ryzen 7 5800X3D",
+      "cpu_model_AMD Ryzen 7 7840HS",
+      "cpu_model_Intel Core i5-12400F",
+      "cpu_model_Intel Core i5-9400F",
+      "cpu_model_Intel Core i7-12700H",
+      "cpu_model_Intel Core i7-13700K",
+      "gpu_model_AMD RX 6600",
+      "gpu_model_AMD RX 7800 XT",
+      "gpu_model_NVIDIA GTX 1060 6GB",
+      "gpu_model_NVIDIA GTX 1660 Super",
+      "gpu_model_NVIDIA RTX 2060",
+      "gpu_model_NVIDIA RTX 3060 Laptop",
+      "gpu_model_NVIDIA RTX 4060",
+      "gpu_model_NVIDIA RTX 4070",
+      "drive_type_HDD",
+      "drive_type_NVMe",
+      "drive_type_SSD",
+      "resolution_1280x720",
+      "resolution_1920x1080",
+      "resolution_2560x1440",
+      "resolution_3840x2160",
+      "graphics_preset_high",
+      "graphics_preset_low",
+      "graphics_preset_medium",
+      "graphics_preset_ultra",
+      "vsync_off",
+      "vsync_on",
+      "antialiasing_fxaa",
+      "antialiasing_msaa_2x",
+      "antialiasing_msaa_4x",
+      "antialiasing_off",
+      "antialiasing_taa",
+      "texture_quality_high",
+      "texture_quality_low",
+      "texture_quality_medium",
+      "texture_quality_ultra",
+      "special_effects_high",
+      "special_effects_low",
+      "special_effects_medium",
+      "special_effects_ultra",
+      "label_target_balanced",
+      "label_target_max_fps",
+      "label_target_quality",
+      "ram_gb",
+      "laptop",
+      "npc_count",
+      "player_actions",
+      "cpu_util",
+      "gpu_util",
+      "vram_util",
+      "temperature",
+      "background_process_count",
+      "tweak_affinity",
+      "tweak_game_mode",
+      "tweak_hags",
+      "tweak_low_timer_resolution",
+      "tweak_power_plan",
+      "tweak_priority",
+      "tweak_recording_off",
+      "tweak_registry_preset",
+      "tweak_service"
+    ]
+  },
   "baseline_metrics": {
     "dummy_mean": {
       "mean_fps": {
@@ -684,7 +914,7 @@
         "recommendations": [
           {
             "tweak": "tweak_priority",
-            "confidence": 0.924,
+            "confidence": 0.923,
             "expected_gain_pct": 4.42,
             "reason": "Foreground scheduling pressure is likely limiting frame delivery."
           },
@@ -695,7 +925,7 @@
             "reason": "CPU contention pattern suggests affinity can improve frame pacing."
           }
         ],
-        "confidence": 0.924,
+        "confidence": 0.923,
         "threshold": 0.62,
         "abstained": false,
         "model_version": "aeterna-fps-v1"
@@ -785,7 +1015,7 @@
           },
           {
             "tweak": "tweak_priority",
-            "confidence": 0.944,
+            "confidence": 0.943,
             "expected_gain_pct": 4.42,
             "reason": "Foreground scheduling pressure is likely limiting frame delivery."
           },
@@ -833,7 +1063,7 @@
           },
           {
             "tweak": "tweak_priority",
-            "confidence": 0.967,
+            "confidence": 0.966,
             "expected_gain_pct": 4.42,
             "reason": "Foreground scheduling pressure is likely limiting frame delivery."
           }

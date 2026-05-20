@@ -141,7 +141,7 @@ pub fn runtime_truth() -> MlRuntimeTruth {
         _ => "No runtime recommendation path is currently available.".into(),
     };
     if fps_status.loadable {
-        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present and loadable; the current optimization endpoint still uses telemetry-pressure fallback until full game/hardware feature-vector preprocessing is available in the sidecar.");
+        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present, loadable, and includes DatasetLoader preprocessing; the current optimization endpoint still uses telemetry-pressure fallback until it can supply the raw game, hardware, graphics, and tweak inputs required by that graph.");
     } else if fps_status.available {
         let error = fps_status.error.as_deref().unwrap_or("unknown ONNX load error");
         summary.push_str(&format!(
@@ -213,7 +213,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let mut factors = Vec::new();
     factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
     if fps_status.loadable {
-        factors.push("FPS ONNX artifact is loadable; this endpoint keeps using pressure-model recommendations until sidecar preprocessing can supply the full FPS feature vector.".into());
+        factors.push("FPS ONNX artifact is loadable and includes preprocessing; this endpoint keeps using pressure-model recommendations until raw game, hardware, graphics, and tweak inputs are available for FPS inference.".into());
     } else if fps_status.available {
         factors.push("FPS model artifact was found, but telemetry fallback remains active for this inference call.".into());
     }

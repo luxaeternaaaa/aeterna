@@ -247,7 +247,6 @@ class DatasetLoader:
     def _build_preprocessor(self) -> ColumnTransformer:
         categorical_pipeline = Pipeline(
             steps=[
-                ("imputer", SimpleImputer(strategy="constant", fill_value="unknown")),
                 ("onehot", _make_one_hot_encoder()),
             ]
         )
