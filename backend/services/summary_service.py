@@ -2,9 +2,18 @@ from backend.services.benchmark_service import latest_baseline, latest_report
 from backend.services.feature_service import get_feature_flags
 from backend.services.runtime_state_service import get_session_state
 from backend.services.telemetry_service import list_recent
+from backend.services.windows_security_service import windows_security_summary
 
 
 def get_security_summary() -> dict[str, object]:
+    flags = get_feature_flags()
+    windows_summary = windows_security_summary()
+    if windows_summary:
+        return {
+            **windows_summary,
+            "auto_scan_enabled": flags.auto_security_scan,
+        }
+
     latest = list_recent(limit=1)[-1].model_dump()
     label = "stable-session"
     if latest["anomaly_score"] > 0.7:
@@ -15,7 +24,18 @@ def get_security_summary() -> dict[str, object]:
         "status": latest["threat_level"],
         "label": label,
         "confidence": round(min(0.94, 0.58 + float(latest["anomaly_score"]) * 0.3), 2),
-        "auto_scan_enabled": get_feature_flags().auto_security_scan,
+        "auto_scan_enabled": flags.auto_security_scan,
+        "source": "telemetry-fallback",
+        "checked_at": latest["timestamp"],
+        "checks": [
+            {
+                "id": "telemetry-posture",
+                "title": "Telemetry posture",
+                "status": "pass" if latest["threat_level"] == "low" else "warn",
+                "label": label,
+                "detail": "Windows protection scan is unavailable, so Aeterna is using local telemetry risk signals.",
+            }
+        ],
     }
 
 

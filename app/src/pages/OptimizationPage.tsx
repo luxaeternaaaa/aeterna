@@ -47,6 +47,11 @@ import type {
   OptimizationRuntimeState,
   RollbackResponse,
 } from '../types'
+import {
+  dangerWarningForOptimizationFunction,
+  getOptimizationFunctionById,
+  isDangerousOptimizationFunctionId,
+} from '../lib/optimizationFunctions'
 
 type CategoryId = 'basic' | 'security' | 'power' | 'debloat' | 'services' | 'privacy' | 'tweaks' | 'autoruns'
 type MethodMode = 'default' | 'optimal' | 'maximum'
@@ -279,6 +284,43 @@ function unsupportedItem(config: UnsupportedItemConfig): OptimizerItem {
     buildRequest: () => null,
     rollbackHint: () => false,
   }
+}
+
+function itemActiveStateDisablesFeature(item: OptimizerItem): boolean {
+  const activeState = item.stateWhenActive ?? 'Enabled'
+  return activeState === 'Disabled' || activeState === 'Off'
+}
+
+function isDangerousOptimizerItem(item: OptimizerItem): boolean {
+  if (item.supported === false) return false
+  if (isDangerousOptimizationFunctionId(item.id)) return true
+  if (item.requiresReboot) return true
+  if (item.mode === 'maximum' && itemActiveStateDisablesFeature(item)) return true
+  return Boolean(item.warning && itemActiveStateDisablesFeature(item))
+}
+
+function dangerWarningForOptimizerItem(item: OptimizerItem): string {
+  const definition = getOptimizationFunctionById(item.id)
+  if (definition) return dangerWarningForOptimizationFunction(definition)
+  const details = [
+    item.warning,
+    item.requiresReboot ? 'A Windows restart is required before the final state can be trusted.' : null,
+    item.requiresProcess ? 'The action depends on a selected game process still running.' : null,
+  ].filter((line): line is string => Boolean(line))
+  return `You are enabling "${item.title}". Continue only if you understand what this function changes, what can stop working, and how to roll it back.${details.length ? `\n\n${details.join('\n')}` : ''}`
+}
+
+function confirmDangerousOptimizerItems(items: OptimizerItem[], action: string): boolean {
+  const risky = items.filter(isDangerousOptimizerItem)
+  if (risky.length === 0) return true
+  const labels = risky.map((item) => `- ${item.title}`).join('\n')
+  const details = risky
+    .slice(0, 3)
+    .map(dangerWarningForOptimizerItem)
+    .join('\n\n')
+  return window.confirm(
+    `Dangerous tweak warning\n\nYou are about to ${action} ${risky.length} risky function(s):\n${labels}\n\nContinue only if you understand what each function does, what can stop working, and how rollback/restart affects the system.\n\n${details}`,
+  )
 }
 
 function staticItems(): OptimizerItem[] {
@@ -1096,6 +1138,9 @@ function OptimizationRow({
             {item.requiresProcess ? (
               <span className="rounded-md bg-[#315cff]/75 px-2 py-0.5 text-xs font-black uppercase text-white">Process</span>
             ) : null}
+            {isDangerousOptimizerItem(item) ? (
+              <span className="rounded-md bg-[#3b2911] px-2 py-0.5 text-xs font-black uppercase text-[#ffcf5a]">Risk</span>
+            ) : null}
             {item.badge ? (
               <span className="rounded-md bg-[#e93c41] px-2 py-0.5 text-xs font-black uppercase text-white">{item.badge}</span>
             ) : null}
@@ -1343,6 +1388,14 @@ export function OptimizationPage({
   const latestSample = dashboard.history.at(-1) ?? null
 
   const setCategoryMode = (nextMode: MethodMode, targetCategory = category) => {
+    const targets = items.filter((row) => {
+      if (row.category !== targetCategory || row.supported === false) return false
+      if (nextMode === 'optimal') return row.mode === 'optimal'
+      if (nextMode === 'maximum') return row.mode !== 'manual'
+      return false
+    })
+    const newlyEnabledRisky = targets.filter((item) => !desired.has(item.id) && isDangerousOptimizerItem(item))
+    if (newlyEnabledRisky.length > 0 && !confirmDangerousOptimizerItems(newlyEnabledRisky, 'enable')) return
     setMode(nextMode)
     setDirty(true)
     setDesired((current) => {
@@ -1353,6 +1406,18 @@ export function OptimizationPage({
         if (nextMode === 'optimal' && item.mode === 'optimal') next.add(item.id)
         if (nextMode === 'maximum' && item.mode !== 'manual') next.add(item.id)
       }
+      return next
+    })
+  }
+
+  const toggleDesiredItem = (item: OptimizerItem, active: boolean) => {
+    const enabling = !active
+    if (enabling && !confirmDangerousOptimizerItems([item], 'enable')) return
+    setDirty(true)
+    setDesired((currentSet) => {
+      const next = new Set(currentSet)
+      if (next.has(item.id)) next.delete(item.id)
+      else next.add(item.id)
       return next
     })
   }
@@ -1425,6 +1490,8 @@ export function OptimizationPage({
 
   const applyChanges = async () => {
     if (busy || changedItems.length === 0) return
+    const riskyItems = changedItems.filter((item) => desired.has(item.id) && isDangerousOptimizerItem(item))
+    if (riskyItems.length > 0 && !confirmDangerousOptimizerItems(riskyItems, 'apply')) return
     const rebootItems = changedItems.filter((item) => desired.has(item.id) && item.requiresReboot)
     if (rebootItems.length > 0) {
       const confirmed = window.confirm(
@@ -1668,15 +1735,7 @@ export function OptimizationPage({
                     changed={active !== current}
                     disabled={busy !== null}
                     item={item}
-                    onToggle={() => {
-                      setDirty(true)
-                      setDesired((currentSet) => {
-                        const next = new Set(currentSet)
-                        if (next.has(item.id)) next.delete(item.id)
-                        else next.add(item.id)
-                        return next
-                      })
-                    }}
+                    onToggle={() => toggleDesiredItem(item, active)}
                   />
                 )
               })

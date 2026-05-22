@@ -17,6 +17,9 @@ import {
 import { getMlRuntimeTruth, requestWindowsRestart, runOptimizationInference } from '../lib/sidecar'
 import { gameCandidateProcesses, matchingGameProfile } from '../lib/gameDetection'
 import {
+  dangerWarningForOptimizationFunction,
+  HIGH_RISK_FUNCTION_IDS,
+  isDangerousOptimizationFunctionId,
   loadMlDenyFunctionList,
   ML_TWEAK_TO_FUNCTION_ID,
   OPTIMIZATION_FUNCTIONS,
@@ -47,6 +50,7 @@ interface DashboardPageProps {
   onAttachSession: (request: AttachSessionRequest) => Promise<OptimizationRuntimeState | unknown> | OptimizationRuntimeState | void
   onOpenLogs: () => void
   onOpenOptimization: () => void
+  onRefreshRuntime: () => void | Promise<void>
   onOpenTests: () => void
   onRollbackSnapshot: (snapshotId: string, processId?: number) => Promise<RollbackResponse>
   profiles: GameProfile[]
@@ -55,7 +59,7 @@ interface DashboardPageProps {
 }
 
 type ScanState = 'idle' | 'analyzing' | 'ready' | 'applying' | 'complete' | 'failed'
-type PlanTone = 'safe' | 'balanced' | 'restart'
+type PlanTone = 'safe' | 'balanced' | 'restart' | 'danger'
 
 type PlanRequest =
   | { kind: 'tweak'; payload: ApplyTweakRequest }
@@ -103,8 +107,6 @@ const SAFE_FALLBACK_IDS = [
   'feedback-frequency-off',
   'app-launch-tracking-off',
 ]
-
-const HIGH_RISK_IDS = new Set(['disable-hpet', 'disable-dynamic-ticks', 'memory-integrity-off', 'mpo-off'])
 
 const FUNCTION_REASONS: Record<string, string> = {
   'ultimate-power': 'Active power policy is part of the baseline. ML keeps CPU/GPU boost behavior predictable during gaming.',
@@ -233,12 +235,14 @@ function buildInferenceInput(
 }
 
 function planTone(definition: OptimizationFunctionDefinition): PlanTone {
+  if (definition.risk === 'high') return 'danger'
   if (definition.requiresReboot) return 'restart'
   if (definition.processRequired) return 'balanced'
   return 'safe'
 }
 
 function toneClass(tone: PlanTone) {
+  if (tone === 'danger') return 'bg-[#45131a] text-[#ff7b85]'
   if (tone === 'restart') return 'bg-[#3b2911] text-[#ffcf5a]'
   if (tone === 'balanced') return 'bg-[#152b5c] text-[#7ba2ff]'
   return 'bg-[#123d2d] text-[#4dff9b]'
@@ -352,7 +356,7 @@ async function analyzeSystem(props: DashboardPageProps, selectedGame: ProcessSum
     selectedIds.add('hags-on')
   }
 
-  for (const id of HIGH_RISK_IDS) {
+  for (const id of HIGH_RISK_FUNCTION_IDS) {
     if (selectedIds.has(id)) selectedIds.delete(id)
     const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
     if (definition) skipped.push(`${definition.title}: too risky for balanced ML mode.`)
@@ -411,6 +415,19 @@ function StatusBadge({ children, tone }: { children: string; tone: PlanTone }) {
   return <span className={`rounded-full px-3 py-1 text-xs font-black ${toneClass(tone)}`}>{children}</span>
 }
 
+function confirmDangerousMlApply(items: MlPlanItem[]): boolean {
+  const risky = items.filter((item) => isDangerousOptimizationFunctionId(item.definition.id))
+  if (risky.length === 0) return true
+  const labels = risky.map((item) => `- ${item.definition.title}`).join('\n')
+  const details = risky
+    .slice(0, 3)
+    .map((item) => dangerWarningForOptimizationFunction(item.definition))
+    .join('\n\n')
+  return window.confirm(
+    `Dangerous tweak warning\n\nYou are about to apply ${risky.length} selected risky function(s):\n${labels}\n\nContinue only if you understand what each function does, what can stop working, and how rollback/restart affects the system.\n\n${details}`,
+  )
+}
+
 export function DashboardPage(props: DashboardPageProps) {
   const sample = latestSample(props.dashboard, props.realtime)
   const gameProcesses = useMemo(() => gameCandidateProcesses(props.runtimeState, props.profiles), [props.profiles, props.runtimeState])
@@ -439,13 +456,22 @@ export function DashboardPage(props: DashboardPageProps) {
     setSelectedGamePid(gameProcesses[0]?.pid ?? null)
   }, [gameProcesses, selectedGamePid])
 
+  const refreshGames = async () => {
+    if (scanState === 'analyzing' || scanState === 'applying') return
+    setErrorText(null)
+    await props.onRefreshRuntime()
+  }
+
   const startScan = async () => {
     if (scanState === 'analyzing' || scanState === 'applying') return
     if (!selectedGame) {
       setScanState('idle')
-      setErrorText('No running games found. Start a supported game, then refresh and run ML analysis again.')
+      setErrorText('No running games found. Start a supported game, refresh the game list, then run ML analysis again.')
       setScan(null)
       setSelectedIds(new Set())
+      setApplied([])
+      setRestartNeeded([])
+      await props.onRefreshRuntime()
       return
     }
     setScanState('analyzing')
@@ -467,6 +493,7 @@ export function DashboardPage(props: DashboardPageProps) {
 
   const applyPlan = async () => {
     if (!scan || scanState === 'applying' || selectedPlan.length === 0) return
+    if (!confirmDangerousMlApply(selectedPlan)) return
     setScanState('applying')
     setErrorText(null)
     const nextApplied: AppliedPlanItem[] = []
@@ -504,6 +531,7 @@ export function DashboardPage(props: DashboardPageProps) {
         }
       }
 
+      await props.onRefreshRuntime()
       setApplied(nextApplied)
       const rebootItems = nextApplied.filter((item) => item.requiresReboot).map((item) => item.label)
       setRestartNeeded(rebootItems)
@@ -550,12 +578,12 @@ export function DashboardPage(props: DashboardPageProps) {
         <div className="flex items-center gap-2 rounded-[1.35rem] bg-[#070b1b]/88 p-2">
           <button
             className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#315cff] px-5 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-55"
-            disabled={scanState === 'analyzing' || scanState === 'applying' || !selectedGame}
-            onClick={() => void startScan()}
+            disabled={scanState === 'analyzing' || scanState === 'applying'}
+            onClick={() => void (selectedGame ? startScan() : refreshGames())}
             type="button"
           >
             {scanState === 'analyzing' ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}
-            <span>{scanState === 'analyzing' ? 'Analyzing' : 'Analyze System'}</span>
+            <span>{scanState === 'analyzing' ? 'Analyzing' : selectedGame ? 'Analyze System' : 'Refresh Games'}</span>
           </button>
           <button className="flex min-h-11 items-center gap-2 rounded-[1rem] bg-[#202942] px-5 text-base font-semibold" onClick={props.onOpenOptimization} type="button">
             <Sparkles size={17} />
@@ -612,7 +640,7 @@ export function DashboardPage(props: DashboardPageProps) {
                 })
               ) : (
                 <div className="rounded-xl bg-[#111936] px-4 py-4 text-sm font-semibold leading-6 text-white/54">
-                  No running games found. Start a game and return to ML Tweaks.
+                  No running games found. Start a game, then refresh the game list.
                 </div>
               )}
             </div>
@@ -640,12 +668,12 @@ export function DashboardPage(props: DashboardPageProps) {
             </div>
             <button
               className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#315cff] px-4 text-base font-bold disabled:cursor-not-allowed disabled:bg-white/30"
-              disabled={scanState === 'analyzing' || scanState === 'applying' || !selectedGame}
-              onClick={() => void startScan()}
+              disabled={scanState === 'analyzing' || scanState === 'applying'}
+              onClick={() => void (selectedGame ? startScan() : refreshGames())}
               type="button"
             >
               {scanState === 'analyzing' ? <Loader2 className="animate-spin" size={18} /> : <Gauge size={18} />}
-              <span>{scanState === 'analyzing' ? 'Scanning system' : 'Start ML Analysis'}</span>
+              <span>{scanState === 'analyzing' ? 'Scanning system' : selectedGame ? 'Start ML Analysis' : 'Refresh game list'}</span>
             </button>
             <button
               className="mt-2 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#202942] px-4 text-base font-bold disabled:cursor-not-allowed disabled:opacity-45"
@@ -780,7 +808,7 @@ export function DashboardPage(props: DashboardPageProps) {
                             <p className="mt-1 text-sm leading-5 text-white/56">{item.reason}</p>
                           </div>
                         </div>
-                        <StatusBadge tone={item.tone}>{item.tone === 'restart' ? 'Restart' : item.tone}</StatusBadge>
+                        <StatusBadge tone={item.tone}>{item.tone === 'danger' ? 'Risk' : item.tone === 'restart' ? 'Restart' : item.tone}</StatusBadge>
                       </div>
                       <p className="mt-3 text-xs font-bold uppercase text-white/36">{item.impact}</p>
                     </button>

@@ -199,6 +199,20 @@ def test_feature_flags_start_disabled_and_create_snapshot_on_update(tmp_path) ->
     assert next_snapshots.json()[0]["surface"] == "config"
 
 
+def test_security_summary_exposes_scan_checks(tmp_path) -> None:
+    client = load_client(str(tmp_path / "runtime"))
+
+    response = client.get("/api/security")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] in {"low", "medium", "high"}
+    assert payload["source"] in {"windows-security-scan", "windows-scan-error", "telemetry-fallback"}
+    assert isinstance(payload["checks"], list)
+    assert payload["checks"]
+    assert {"id", "title", "status", "label", "detail"} <= set(payload["checks"][0])
+
+
 def test_model_activation_changes_active_model_and_supports_diff_lookup(tmp_path) -> None:
     client = load_client(str(tmp_path / "runtime"))
 

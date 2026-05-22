@@ -237,11 +237,22 @@ class HealthPayload(BaseModel):
     mode: str
 
 
+class SecurityCheck(BaseModel):
+    id: str
+    title: str
+    status: Literal["pass", "warn", "fail", "unknown"]
+    label: str
+    detail: str
+
+
 class SecuritySummary(BaseModel):
     status: str
     label: str
     confidence: float
     auto_scan_enabled: bool
+    source: str = "telemetry-fallback"
+    checked_at: str | None = None
+    checks: list[SecurityCheck] = Field(default_factory=list)
 
 
 class OptimizationSummary(BaseModel):

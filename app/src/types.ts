@@ -205,11 +205,22 @@ export interface LogRecord {
   message: string
 }
 
+export interface SecurityCheck {
+  id: string
+  title: string
+  status: 'pass' | 'warn' | 'fail' | 'unknown'
+  label: string
+  detail: string
+}
+
 export interface SecuritySummary {
   status: string
   label: string
   confidence: number
   auto_scan_enabled: boolean
+  source?: string
+  checked_at?: string | null
+  checks?: SecurityCheck[]
 }
 
 export interface OptimizationSummary {

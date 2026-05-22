@@ -19,7 +19,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 
 import { requestWindowsRestart } from '../lib/sidecar'
-import type { SecuritySummary } from '../types'
+import type { SecurityCheck, SecuritySummary } from '../types'
 
 interface SecurityPageProps {
   security: SecuritySummary
@@ -81,6 +81,34 @@ function postureFromSecurity(security: SecuritySummary) {
     label: security.label || 'Protected session',
     detail: 'Core protection is treated as active. Aeterna will not silently weaken Windows security controls.',
     tone: 'good' as Tone,
+  }
+}
+
+function toneFromCheck(status: SecurityCheck['status']): Tone {
+  if (status === 'pass') return 'good'
+  if (status === 'fail') return 'danger'
+  if (status === 'warn') return 'watch'
+  return 'neutral'
+}
+
+function iconFromCheck(check: SecurityCheck): LucideIcon {
+  if (check.id.includes('firewall')) return Shield
+  if (check.id.includes('service')) return Database
+  if (check.id.includes('memory')) return Cpu
+  if (check.id.includes('secure-boot')) return HardDrive
+  if (check.id.includes('uac')) return Lock
+  if (check.status === 'fail') return ShieldAlert
+  if (check.status === 'warn' || check.status === 'unknown') return ShieldQuestion
+  return ShieldCheck
+}
+
+function checkToCard(check: SecurityCheck): SecurityCard {
+  return {
+    title: check.title,
+    label: check.label,
+    tone: toneFromCheck(check.status),
+    icon: iconFromCheck(check),
+    description: check.detail,
   }
 }
 
@@ -167,6 +195,8 @@ export function SecurityPage({
   const [rebootBusy, setRebootBusy] = useState(false)
   const posture = postureFromSecurity(security)
   const confidence = Math.max(0, Math.min(100, Math.round(security.confidence * 100)))
+  const scanCards = (security.checks ?? []).map(checkToCard)
+  const scanSource = security.source === 'windows-security-scan' ? 'Windows scan' : security.source === 'windows-scan-error' ? 'Scan error' : 'Fallback'
 
   const handleVerify = async () => {
     if (verifyBusy || !onVerify) return
@@ -190,7 +220,7 @@ export function SecurityPage({
     }
   }
 
-  const controls: SecurityCard[] = [
+  const fallbackControls: SecurityCard[] = [
     {
       title: 'Windows Defender Antivirus',
       label: 'Protected',
@@ -248,6 +278,7 @@ export function SecurityPage({
       description: 'Game-aware ML avoids kernel/security downgrades that can conflict with anti-cheat or make test results unreliable.',
     },
   ]
+  const controls = scanCards.length > 0 ? scanCards : fallbackControls
 
   const guardrails: Guardrail[] = [
     {
@@ -351,6 +382,11 @@ export function SecurityPage({
                   {security.auto_scan_enabled ? 'On' : 'Off'}
                 </p>
               </div>
+              <div className="col-span-2 rounded-xl bg-[#111936] p-4">
+                <p className="text-xs font-bold uppercase text-white/36">Scan source</p>
+                <p className="mt-2 text-base font-black">{scanSource}</p>
+                <p className="mt-1 truncate text-xs text-white/42">{security.checked_at ?? 'Not scanned yet'}</p>
+              </div>
             </div>
           </section>
 
@@ -391,7 +427,11 @@ export function SecurityPage({
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-black">Protected defaults</h2>
-                  <p className="mt-1 text-sm text-white/48">Security-sensitive areas that Aeterna keeps enabled or manual-only.</p>
+                  <p className="mt-1 text-sm text-white/48">
+                    {security.source === 'windows-security-scan'
+                      ? 'Live Windows protection signals collected locally from this PC.'
+                      : 'Security-sensitive areas that Aeterna keeps enabled or manual-only.'}
+                  </p>
                 </div>
                 <StatusPill tone={posture.tone}>{posture.tone === 'danger' ? 'Inspect now' : posture.tone === 'watch' ? 'Review' : 'Ready'}</StatusPill>
               </div>

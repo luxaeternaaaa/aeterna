@@ -448,6 +448,7 @@ export default function App() {
           onAttachSession={attachSession}
           onOpenLogs={() => setActivePage('history')}
           onOpenOptimization={() => setActivePage('optimize')}
+          onRefreshRuntime={() => loadOptimizationRuntime(selectedProcessId ?? undefined)}
           onOpenTests={() => setActivePage('tests')}
           onRollbackSnapshot={rollbackSnapshot}
           profiles={profiles}

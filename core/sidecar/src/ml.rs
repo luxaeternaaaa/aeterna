@@ -141,7 +141,7 @@ pub fn runtime_truth() -> MlRuntimeTruth {
         _ => "No runtime recommendation path is currently available.".into(),
     };
     if fps_status.loadable {
-        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present, loadable, and includes DatasetLoader preprocessing; the current optimization endpoint still uses telemetry-pressure fallback until it can supply the raw game, hardware, graphics, and tweak inputs required by that graph.");
+        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present and loadable; the optimization endpoint uses live telemetry pressure plus trained FPS tweak priors from its local metadata for safe-tweak ranking.");
     } else if fps_status.available {
         let error = fps_status.error.as_deref().unwrap_or("unknown ONNX load error");
         summary.push_str(&format!(
@@ -191,6 +191,27 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     }
 }
 
+fn fps_recommendation_reason(metadata: &serde_json::Value, key: &str) -> String {
+    metadata
+        .get("recommendation_map")
+        .and_then(|value| value.get(key))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("The trained FPS model metadata marks this tweak as a useful candidate.")
+        .to_string()
+}
+
+fn push_fps_metadata_factor(factors: &mut Vec<String>, metadata: &serde_json::Value, key: &str, gain: f64) {
+    let reason = fps_recommendation_reason(metadata, key);
+    factors.push(format!(
+        "{} prior from FPS model metadata: expected useful gain {:.1}%. {}",
+        key.replace("tweak_", "").replace('_', " "),
+        gain * 100.0,
+        reason
+    ));
+}
+
 fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
     payload
         .game_context
@@ -199,10 +220,104 @@ fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn fps_metadata_ranked_tweaks(metadata: &serde_json::Value) -> Vec<(String, f64)> {
+    let Some(priors) = metadata.get("tweak_gain_priors").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    let mut rows = priors
+        .iter()
+        .filter_map(|(key, value)| value.as_f64().map(|gain| (key.clone(), gain)))
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.1.partial_cmp(&left.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows
+}
+
+fn apply_fps_metadata_recommendations(
+    payload: &MlInferenceRequest,
+    fps_metadata: Option<&serde_json::Value>,
+    spike_probability: f64,
+    recommended_tweaks: &mut Vec<String>,
+    recommended_functions: &mut Vec<String>,
+    factors: &mut Vec<String>,
+) {
+    let Some(metadata) = fps_metadata else {
+        return;
+    };
+    let ranked = fps_metadata_ranked_tweaks(metadata);
+    if ranked.is_empty() {
+        return;
+    }
+    let threshold = metadata
+        .get("confidence_threshold")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.62);
+    factors.push(format!(
+        "FPS model metadata contributes {} trained tweak prior(s) with confidence threshold {:.2}.",
+        ranked.len(),
+        threshold
+    ));
+    let discrete_gpu_absent = payload
+        .system_profile
+        .as_ref()
+        .and_then(|profile| profile.discrete_gpu_available)
+        == Some(false);
+
+    for (key, gain) in ranked {
+        let confidence = (0.55 + gain * 7.0 + spike_probability * 0.18).min(0.97);
+        let strong_signal = confidence >= threshold || spike_probability >= 0.42;
+        match key.as_str() {
+            "tweak_power_plan" if strong_signal && (payload.frametime_p95_ms >= 10.0 || payload.gpu_usage_pct >= 45.0) => {
+                push_unique(recommended_tweaks, "power_plan");
+                push_unique(recommended_functions, "ultimate-power");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_priority" if strong_signal && payload.game_context.is_some() && (payload.cpu_process_pct >= 25.0 || payload.background_process_count >= 35) => {
+                push_unique(recommended_tweaks, "process_priority");
+                push_unique(recommended_functions, "max-games");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_affinity" if strong_signal && game_allows(payload, "cpu_affinity") && (payload.cpu_process_pct >= 35.0 || payload.frametime_p95_ms >= 12.0) => {
+                push_unique(recommended_tweaks, "cpu_affinity");
+                push_unique(recommended_functions, "keep-cores");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_recording_off" if strong_signal && payload.game_context.is_some() => {
+                push_unique(recommended_functions, "turn-off-recordings");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_hags" if strong_signal && !discrete_gpu_absent && payload.gpu_usage_pct >= 45.0 => {
+                push_unique(recommended_functions, "hags-on");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_game_mode" if payload.game_context.is_some() => {
+                push_unique(recommended_functions, "game-mode-on");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_low_timer_resolution" if payload.frametime_p95_ms >= 16.0 || payload.frame_drop_ratio >= 0.05 || payload.anomaly_score >= 0.25 => {
+                push_unique(recommended_functions, "low-timer-resolution");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_service" if payload.background_process_count >= 70 || payload.cpu_total_pct >= 60.0 => {
+                push_unique(recommended_functions, "diagtrack-off");
+                push_unique(recommended_functions, "maps-broker-off");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            "tweak_registry_preset" if strong_signal => {
+                push_unique(recommended_functions, "power-throttling-off");
+                push_unique(recommended_functions, "windowed-optimizations-on");
+                push_unique(recommended_functions, "reduce-input-lag");
+                push_fps_metadata_factor(factors, metadata, &key, gain);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let metadata = load_metadata();
     let mode = runtime_mode(&metadata.model_source);
     let fps_status = fps_model_status();
+    let fps_metadata = if fps_status.loadable { load_fps_metadata_value() } else { None };
     let score = metadata
         .weights
         .iter()
@@ -213,7 +328,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let mut factors = Vec::new();
     factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
     if fps_status.loadable {
-        factors.push("FPS ONNX artifact is loadable and includes preprocessing; this endpoint keeps using pressure-model recommendations until raw game, hardware, graphics, and tweak inputs are available for FPS inference.".into());
+        factors.push("FPS ONNX artifact is loadable; live recommendations use telemetry pressure plus trained FPS tweak priors from the local artifact metadata.".into());
     } else if fps_status.available {
         factors.push("FPS model artifact was found, but telemetry fallback remains active for this inference call.".into());
     }
@@ -273,6 +388,14 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
             factors.push(format!("Detected {memory_gb:.0} GB RAM from sidecar system inspection."));
         }
     }
+    apply_fps_metadata_recommendations(
+        &payload,
+        fps_metadata.as_ref(),
+        spike_probability,
+        &mut recommended_tweaks,
+        &mut recommended_functions,
+        &mut factors,
+    );
     if let Some(game) = payload.game_context.as_ref() {
         let game_name = game
             .profile_title
@@ -373,7 +496,13 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         ),
         factors,
         model_version: Some(metadata.version),
-        model_source: Some(if mode == "unavailable" { "unavailable".into() } else { metadata.model_source }),
+        model_source: Some(if mode == "unavailable" {
+            "unavailable".into()
+        } else if fps_status.loadable && fps_metadata.is_some() {
+            format!("{}+fps-metadata", metadata.model_source)
+        } else {
+            metadata.model_source
+        }),
         shap_preview: metadata.shap_preview,
     }
 }

@@ -45,6 +45,9 @@ export const initialSecurity: SecuritySummary = {
   label: 'normal-session',
   confidence: 0.89,
   auto_scan_enabled: false,
+  source: 'initial',
+  checked_at: null,
+  checks: [],
 }
 
 export const initialOptimizationRuntime: OptimizationRuntimeState = {
