@@ -23,9 +23,10 @@ use std::{
 };
 
 use models::{
-    ApplyRegistryPresetRequest, ApplyRegistryPresetResponse, ApplyTweakRequest, ApplyTweakResponse, AttachSessionRequest,
-    InspectRequest, IpcRequest, IpcResponse, MlInferenceRequest, OptimizationStatePayload, RollbackRequest,
-    RollbackResponse, StartupDiagnostics,
+    ApplyRegistryPresetRequest, ApplyRegistryPresetResponse, ApplyTweakRequest, ApplyTweakResponse,
+    AttachSessionRequest, InspectRequest, IpcRequest, IpcResponse, MlInferenceRequest,
+    OptimizationStatePayload, RollbackRequest, RollbackResponse, SelectedProcessState,
+    SessionState, SnapshotMeta, StartupDiagnostics,
 };
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -52,7 +53,12 @@ fn service_names_for_preset(preset_id: &str) -> Vec<&'static str> {
         "dps_off" => vec!["DPS"],
         "diagtrack_off" => vec!["DiagTrack"],
         "maps_broker_off" => vec!["MapsBroker"],
-        "xbox_services_off" => vec!["XblAuthManager", "XblGameSave", "XboxNetApiSvc", "XboxGipSvc"],
+        "xbox_services_off" => vec![
+            "XblAuthManager",
+            "XblGameSave",
+            "XboxNetApiSvc",
+            "XboxGipSvc",
+        ],
         "delivery_optimization_off" => vec!["DoSvc"],
         "print_spooler_off" => vec!["Spooler"],
         _ => Vec::new(),
@@ -87,11 +93,19 @@ fn write_startup_diagnostics() {
 }
 
 fn response(payload: Value) -> IpcResponse {
-    IpcResponse { ok: true, payload: Some(payload), error: None }
+    IpcResponse {
+        ok: true,
+        payload: Some(payload),
+        error: None,
+    }
 }
 
 fn error(message: String) -> IpcResponse {
-    IpcResponse { ok: false, payload: None, error: Some(message) }
+    IpcResponse {
+        ok: false,
+        payload: None,
+        error: Some(message),
+    }
 }
 
 fn helper_available() -> bool {
@@ -140,7 +154,10 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
         selected_process,
         power_plans: power::list_power_plans()?,
         autoruns: autoruns::list_autoruns().unwrap_or_default(),
-        registry_presets: registry::preset_summaries(&session, policy::system_settings().show_advanced_registry_details),
+        registry_presets: registry::preset_summaries(
+            &session,
+            policy::system_settings().show_advanced_registry_details,
+        ),
         activity: activity::list_recent(12),
         last_snapshot: snapshots::latest_snapshot(),
         session,
@@ -150,7 +167,11 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
 }
 
 fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, String> {
-    let session = telemetry::attach_session(request.process_id, request.process_name.clone(), helper_available());
+    let session = telemetry::attach_session(
+        request.process_id,
+        request.process_name.clone(),
+        helper_available(),
+    );
     let settings = policy::system_settings();
     if policy::auto_apply_allowed("process_priority", &session) {
         let _ = apply(ApplyTweakRequest {
@@ -187,122 +208,217 @@ fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, Str
     inspect(Some(request.process_id))
 }
 
+fn resolve_selected_process(
+    session: &SessionState,
+    requested_pid: Option<u32>,
+) -> Result<(u32, SelectedProcessState), String> {
+    let pid = requested_pid
+        .or(session.process_id)
+        .ok_or("Process id is required.")?;
+    let current = inspect(Some(pid))?
+        .selected_process
+        .ok_or("Selected process is unavailable.")?;
+    Ok((pid, current))
+}
+
+fn finish_tweak_apply(
+    snapshot: SnapshotMeta,
+    session_id: Option<String>,
+    track_kind: &str,
+    action: &str,
+    detail: String,
+    risk: &str,
+    inspect_process_id: Option<u32>,
+) -> Result<ApplyTweakResponse, String> {
+    let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+    telemetry::track_tweak(&snapshot.id, track_kind);
+    let entry = activity::append(snapshots::activity(
+        "tweak",
+        action,
+        detail,
+        risk,
+        Some(snapshot.id.clone()),
+        session_id,
+        true,
+    ))?;
+    Ok(ApplyTweakResponse {
+        state: inspect(inspect_process_id)?,
+        snapshot,
+        activity: entry,
+    })
+}
+
+fn apply_process_tweak<Apply, Detail>(
+    session: &SessionState,
+    requested_pid: Option<u32>,
+    snapshot_kind: &str,
+    snapshot_note: impl FnOnce(&SelectedProcessState) -> String,
+    apply_change: Apply,
+    track_kind: &str,
+    action: &str,
+    detail: Detail,
+    risk: &str,
+) -> Result<ApplyTweakResponse, String>
+where
+    Apply: FnOnce(u32) -> Result<(), String>,
+    Detail: FnOnce(&SelectedProcessState) -> String,
+{
+    let (pid, current) = resolve_selected_process(session, requested_pid)?;
+    let restore = processes::capture_restore_state(pid, &current.name)?;
+    let mut draft = snapshots::next_snapshot(
+        snapshot_kind,
+        snapshot_note(&current),
+        Some(restore),
+        None,
+        None,
+    );
+    draft.session_id = session.session_id.clone();
+    let snapshot = snapshots::create_snapshot(draft)?;
+    apply_change(pid)?;
+    finish_tweak_apply(
+        snapshot,
+        session.session_id.clone(),
+        track_kind,
+        action,
+        detail(&current),
+        risk,
+        Some(pid),
+    )
+}
+
+fn apply_power_setting_tweak(
+    session: &SessionState,
+    requested_pid: Option<u32>,
+    snapshot_note: &str,
+    subgroup_guid: &str,
+    setting_guid: &str,
+    target_ac: Option<u32>,
+    target_dc: Option<u32>,
+    track_kind: &str,
+    action: &str,
+    detail: &str,
+) -> Result<ApplyTweakResponse, String> {
+    let (old_ac, old_dc) = power::query_setting_indices(subgroup_guid, setting_guid)?;
+    let mut draft =
+        snapshots::next_snapshot("power-setting", snapshot_note.into(), None, None, None);
+    draft.session_id = session.session_id.clone();
+    draft.extra = json!({
+        "kind": "power_setting",
+        "subgroup_guid": subgroup_guid,
+        "setting_guid": setting_guid,
+        "old_ac": old_ac,
+        "old_dc": old_dc,
+    });
+    let snapshot = snapshots::create_snapshot(draft)?;
+    power::set_setting_indices(subgroup_guid, setting_guid, target_ac, target_dc)?;
+    finish_tweak_apply(
+        snapshot,
+        session.session_id.clone(),
+        track_kind,
+        action,
+        detail.into(),
+        "medium",
+        requested_pid.or(session.process_id),
+    )
+}
+
+fn apply_boot_option_tweak(
+    session: &SessionState,
+    requested_pid: Option<u32>,
+    snapshot_note: &str,
+    option_key: &str,
+    target_value: &str,
+    track_kind: &str,
+    action: &str,
+    detail: &str,
+) -> Result<ApplyTweakResponse, String> {
+    let previous = bootcfg::query_option(option_key)?;
+    let mut draft = snapshots::next_snapshot("boot-option", snapshot_note.into(), None, None, None);
+    draft.session_id = session.session_id.clone();
+    draft.extra = json!({
+        "kind": "boot_option",
+        "option_key": option_key,
+        "previous_value": previous,
+    });
+    let snapshot = snapshots::create_snapshot(draft)?;
+    bootcfg::set_option(option_key, target_value)?;
+    finish_tweak_apply(
+        snapshot,
+        session.session_id.clone(),
+        track_kind,
+        action,
+        detail.into(),
+        "high",
+        requested_pid.or(session.process_id),
+    )
+}
+
 fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
     let session = telemetry::read_session_state();
     let session_id = session.session_id.clone();
     policy::require_tweak_allowed(&request.kind, &session, request.process_id)?;
     match request.kind.as_str() {
         "process_priority" => {
-            let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
-            let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
-            let restore = processes::capture_restore_state(pid, &current.name)?;
-            let mut draft = snapshots::next_snapshot(
+            let priority = request
+                .priority
+                .clone()
+                .unwrap_or_else(|| "above_normal".into());
+            apply_process_tweak(
+                &session,
+                request.process_id,
                 "process-priority",
-                format!("Before raising priority for {}", current.name),
-                Some(restore),
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            let snapshot = snapshots::create_snapshot(draft)?;
-            processes::apply_priority(pid, request.priority.as_deref().unwrap_or("above_normal"))?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "process_priority");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
+                |current| format!("Before raising priority for {}", current.name),
+                |pid| processes::apply_priority(pid, &priority),
+                "process_priority",
                 "Priority applied",
-                format!("Raised {} to {}.", current.name, request.priority.clone().unwrap_or_else(|| "above_normal".into())),
+                |current| format!("Raised {} to {}.", current.name, priority),
                 "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
+            )
         }
-        "process_qos" => {
-            let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
-            let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
-            let restore = processes::capture_restore_state(pid, &current.name)?;
-            let mut draft = snapshots::next_snapshot(
-                "process-qos",
-                format!("Before setting QoS for {}", current.name),
-                Some(restore),
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            let snapshot = snapshots::create_snapshot(draft)?;
-            processes::apply_process_qos(pid, "high")?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "process_qos");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "Per-process QoS applied",
-                format!("Enabled high QoS policy for {}.", current.name),
-                "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
-        }
-        "process_isolation" => {
-            let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
-            let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
-            let restore = processes::capture_restore_state(pid, &current.name)?;
-            let mut draft = snapshots::next_snapshot(
-                "cpu-affinity-isolation",
-                format!("Before isolating threads for {}", current.name),
-                Some(restore),
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            let snapshot = snapshots::create_snapshot(draft)?;
-            processes::apply_affinity(pid, "one_thread_per_core")?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "process_isolation");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "Process isolation applied",
-                format!("Applied one-thread-per-core affinity for {}.", current.name),
-                "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
-        }
+        "process_qos" => apply_process_tweak(
+            &session,
+            request.process_id,
+            "process-qos",
+            |current| format!("Before setting QoS for {}", current.name),
+            |pid| processes::apply_process_qos(pid, "high"),
+            "process_qos",
+            "Per-process QoS applied",
+            |current| format!("Enabled high QoS policy for {}.", current.name),
+            "medium",
+        ),
+        "process_isolation" => apply_process_tweak(
+            &session,
+            request.process_id,
+            "cpu-affinity-isolation",
+            |current| format!("Before isolating threads for {}", current.name),
+            |pid| processes::apply_affinity(pid, "one_thread_per_core"),
+            "process_isolation",
+            "Process isolation applied",
+            |current| format!("Applied one-thread-per-core affinity for {}.", current.name),
+            "medium",
+        ),
         "cpu_affinity" => {
-            let pid = request.process_id.or(session.process_id).ok_or("Process id is required.")?;
-            let current = inspect(Some(pid))?.selected_process.ok_or("Selected process is unavailable.")?;
-            let restore = processes::capture_restore_state(pid, &current.name)?;
-            let mut draft = snapshots::next_snapshot(
+            let affinity_preset = request
+                .affinity_preset
+                .clone()
+                .unwrap_or_else(|| "balanced_threads".into());
+            apply_process_tweak(
+                &session,
+                request.process_id,
                 "cpu-affinity",
-                format!("Before changing affinity for {}", current.name),
-                Some(restore),
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            let snapshot = snapshots::create_snapshot(draft)?;
-            processes::apply_affinity(pid, request.affinity_preset.as_deref().unwrap_or("balanced_threads"))?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "cpu_affinity");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
+                |current| format!("Before changing affinity for {}", current.name),
+                |pid| processes::apply_affinity(pid, &affinity_preset),
+                "cpu_affinity",
                 "Affinity applied",
-                format!("Updated {} affinity preset.", current.name),
+                |current| format!("Updated {} affinity preset.", current.name),
                 "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(Some(pid))?, snapshot, activity: entry })
+            )
         }
         "power_plan" => {
             let current = power::active_power_plan()?;
-            let target = request.power_plan_guid.ok_or("Power plan guid is required.")?;
+            let target = request
+                .power_plan_guid
+                .ok_or("Power plan guid is required.")?;
             let mut draft = snapshots::next_snapshot(
                 "power-plan",
                 "Before switching power plan".into(),
@@ -313,175 +429,72 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             draft.session_id = session_id.clone();
             let snapshot = snapshots::create_snapshot(draft)?;
             power::set_active_power_plan(&target)?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "power_plan");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
+            finish_tweak_apply(
+                snapshot,
+                session_id,
+                "power_plan",
                 "Power plan applied",
                 format!("Activated power plan {target}."),
                 "low",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
+                request.process_id.or(session.process_id),
+            )
         }
-        "interrupt_affinity_lock" => {
-            let (old_ac, old_dc) = power::query_setting_indices(INTERRUPT_SUBGROUP_GUID, INTERRUPT_MODE_SETTING_GUID)?;
-            let mut draft = snapshots::next_snapshot(
-                "power-setting",
-                "Before changing interrupt steering mode".into(),
-                None,
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            draft.extra = json!({
-                "kind": "power_setting",
-                "subgroup_guid": INTERRUPT_SUBGROUP_GUID,
-                "setting_guid": INTERRUPT_MODE_SETTING_GUID,
-                "old_ac": old_ac,
-                "old_dc": old_dc,
-            });
-            let snapshot = snapshots::create_snapshot(draft)?;
-            power::set_setting_indices(INTERRUPT_SUBGROUP_GUID, INTERRUPT_MODE_SETTING_GUID, Some(4), Some(4))?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "interrupt_affinity_lock");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "Interrupt affinity applied",
-                "Locked interrupt steering mode for the active power scheme.".into(),
-                "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
-        }
-        "usb_selective_suspend_off" => {
-            let (old_ac, old_dc) = power::query_setting_indices(USB_SUBGROUP_GUID, USB_SELECTIVE_SUSPEND_GUID)?;
-            let mut draft = snapshots::next_snapshot(
-                "power-setting",
-                "Before disabling USB selective suspend".into(),
-                None,
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            draft.extra = json!({
-                "kind": "power_setting",
-                "subgroup_guid": USB_SUBGROUP_GUID,
-                "setting_guid": USB_SELECTIVE_SUSPEND_GUID,
-                "old_ac": old_ac,
-                "old_dc": old_dc,
-            });
-            let snapshot = snapshots::create_snapshot(draft)?;
-            power::set_setting_indices(USB_SUBGROUP_GUID, USB_SELECTIVE_SUSPEND_GUID, Some(0), Some(0))?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "usb_selective_suspend_off");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "USB selective suspend disabled",
-                "Disabled USB selective suspend for AC/DC power mode.".into(),
-                "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
-        }
-        "pcie_lspm_off" => {
-            let (old_ac, old_dc) = power::query_setting_indices(PCIE_SUBGROUP_GUID, PCIE_LSPM_GUID)?;
-            let mut draft = snapshots::next_snapshot(
-                "power-setting",
-                "Before disabling PCIe Link State Power Management".into(),
-                None,
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            draft.extra = json!({
-                "kind": "power_setting",
-                "subgroup_guid": PCIE_SUBGROUP_GUID,
-                "setting_guid": PCIE_LSPM_GUID,
-                "old_ac": old_ac,
-                "old_dc": old_dc,
-            });
-            let snapshot = snapshots::create_snapshot(draft)?;
-            power::set_setting_indices(PCIE_SUBGROUP_GUID, PCIE_LSPM_GUID, Some(0), Some(0))?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "pcie_lspm_off");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "PCIe LSPM disabled",
-                "Disabled PCIe Link State Power Management for AC/DC mode.".into(),
-                "medium",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
-        }
-        "disable_dynamic_ticks" => {
-            let previous = bootcfg::query_option("disabledynamictick")?;
-            let mut draft = snapshots::next_snapshot(
-                "boot-option",
-                "Before disabling dynamic ticks".into(),
-                None,
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            draft.extra = json!({
-                "kind": "boot_option",
-                "option_key": "disabledynamictick",
-                "previous_value": previous,
-            });
-            let snapshot = snapshots::create_snapshot(draft)?;
-            bootcfg::set_option("disabledynamictick", "yes")?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "disable_dynamic_ticks");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "Dynamic ticks disabled",
-                "Set boot option disabledynamictick=yes.".into(),
-                "high",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
-        }
-        "disable_hpet" => {
-            let previous = bootcfg::query_option("useplatformclock")?;
-            let mut draft = snapshots::next_snapshot(
-                "boot-option",
-                "Before disabling HPET boot option".into(),
-                None,
-                None,
-                None,
-            );
-            draft.session_id = session_id.clone();
-            draft.extra = json!({
-                "kind": "boot_option",
-                "option_key": "useplatformclock",
-                "previous_value": previous,
-            });
-            let snapshot = snapshots::create_snapshot(draft)?;
-            bootcfg::set_option("useplatformclock", "false")?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "disable_hpet");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "HPET boot flag disabled",
-                "Set boot option useplatformclock=false.".into(),
-                "high",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
-        }
+        "interrupt_affinity_lock" => apply_power_setting_tweak(
+            &session,
+            request.process_id,
+            "Before changing interrupt steering mode".into(),
+            INTERRUPT_SUBGROUP_GUID,
+            INTERRUPT_MODE_SETTING_GUID,
+            Some(4),
+            Some(4),
+            "interrupt_affinity_lock",
+            "Interrupt affinity applied",
+            "Locked interrupt steering mode for the active power scheme.",
+        ),
+        "usb_selective_suspend_off" => apply_power_setting_tweak(
+            &session,
+            request.process_id,
+            "Before disabling USB selective suspend",
+            USB_SUBGROUP_GUID,
+            USB_SELECTIVE_SUSPEND_GUID,
+            Some(0),
+            Some(0),
+            "usb_selective_suspend_off",
+            "USB selective suspend disabled",
+            "Disabled USB selective suspend for AC/DC power mode.",
+        ),
+        "pcie_lspm_off" => apply_power_setting_tweak(
+            &session,
+            request.process_id,
+            "Before disabling PCIe Link State Power Management",
+            PCIE_SUBGROUP_GUID,
+            PCIE_LSPM_GUID,
+            Some(0),
+            Some(0),
+            "pcie_lspm_off",
+            "PCIe LSPM disabled",
+            "Disabled PCIe Link State Power Management for AC/DC mode.",
+        ),
+        "disable_dynamic_ticks" => apply_boot_option_tweak(
+            &session,
+            request.process_id,
+            "Before disabling dynamic ticks",
+            "disabledynamictick",
+            "yes",
+            "disable_dynamic_ticks",
+            "Dynamic ticks disabled",
+            "Set boot option disabledynamictick=yes.",
+        ),
+        "disable_hpet" => apply_boot_option_tweak(
+            &session,
+            request.process_id,
+            "Before disabling HPET boot option",
+            "useplatformclock",
+            "false",
+            "disable_hpet",
+            "HPET boot flag disabled",
+            "Set boot option useplatformclock=false.",
+        ),
         "low_timer_resolution" => {
             let requested = timer::enable_low_resolution()?;
             let mut draft = snapshots::next_snapshot(
@@ -497,18 +510,18 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
                 "requested_100ns": requested,
             });
             let snapshot = snapshots::create_snapshot(draft)?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "timer_resolution_low");
-            let entry = activity::append(snapshots::activity(
-                "tweak",
-                "Timer resolution lowered",
-                format!("Requested system timer resolution {} (100ns units).", requested),
-                "medium",
-                Some(snapshot.id.clone()),
+            finish_tweak_apply(
+                snapshot,
                 session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
+                "timer_resolution_low",
+                "Timer resolution lowered",
+                format!(
+                    "Requested system timer resolution {} (100ns units).",
+                    requested
+                ),
+                "medium",
+                request.process_id.or(session.process_id),
+            )
         }
         "autorun_disable" => {
             let autorun_id = request.autorun_id.ok_or("Autorun id is required.")?;
@@ -516,39 +529,41 @@ fn apply(request: ApplyTweakRequest) -> Result<ApplyTweakResponse, String> {
             let snapshot = snapshots::create_snapshot(draft)?;
             let stored = snapshots::load_snapshot(&snapshot.id)?;
             autoruns::disable_from_snapshot(&stored)?;
-            let _ = snapshots::mark_snapshot_applied(&snapshot.id);
-            telemetry::track_tweak(&snapshot.id, "autorun_disable");
             let value_name = stored
                 .extra
                 .get("value_name")
                 .and_then(Value::as_str)
                 .unwrap_or("autorun entry")
                 .to_string();
-            let entry = activity::append(snapshots::activity(
-                "tweak",
+            finish_tweak_apply(
+                snapshot,
+                session_id,
+                "autorun_disable",
                 "Autorun disabled",
                 format!("Disabled startup entry {value_name}."),
                 "low",
-                Some(snapshot.id.clone()),
-                session_id,
-                true,
-            ))?;
-            Ok(ApplyTweakResponse { state: inspect(request.process_id.or(session.process_id))?, snapshot, activity: entry })
+                request.process_id.or(session.process_id),
+            )
         }
         _ => Err(format!("Unsupported tweak kind: {}", request.kind)),
     }
 }
 
-fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyRegistryPresetResponse, String> {
+fn apply_registry_preset(
+    request: ApplyRegistryPresetRequest,
+) -> Result<ApplyRegistryPresetResponse, String> {
     let session = telemetry::read_session_state();
     let session_id = session.session_id.clone();
-    if request.preset_id == "gpu_preference_high" || request.preset_id == "fullscreen_optimizations_off" {
+    if request.preset_id == "gpu_preference_high"
+        || request.preset_id == "fullscreen_optimizations_off"
+    {
         policy::require_registry_preset_allowed(&session, false)?;
         let pid = request
             .process_id
             .or(session.process_id)
             .ok_or("Process id is required for per-app graphics preset.")?;
-        let process_path = processes::process_image_path(pid).ok_or("Unable to resolve executable path for selected process.")?;
+        let process_path = processes::process_image_path(pid)
+            .ok_or("Unable to resolve executable path for selected process.")?;
         let draft = if request.preset_id == "gpu_preference_high" {
             registry::build_gpu_preference_snapshot(&process_path, session_id.clone())?
         } else {
@@ -566,7 +581,10 @@ fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyReg
             "Disabled fullscreen optimizations for the selected executable.".to_string()
         };
         let entry = activity::append(models::ActivityEntry {
-            id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+            id: format!(
+                "activity-{}",
+                OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+            ),
             timestamp: now(),
             category: "registry".into(),
             action: "System preset applied".into(),
@@ -595,7 +613,10 @@ fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyReg
         .ok_or_else(|| format!("Unknown registry preset: {}", request.preset_id))?;
     if let Some(reason) = summary.blocking_reason.clone() {
         let entry = activity::append(models::ActivityEntry {
-            id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+            id: format!(
+                "activity-{}",
+                OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+            ),
             timestamp: now(),
             category: "blocked".into(),
             action: "System preset blocked".into(),
@@ -650,7 +671,10 @@ fn apply_registry_preset(request: ApplyRegistryPresetRequest) -> Result<ApplyReg
     telemetry::track_tweak(&snapshot.id, &format!("registry:{}", request.preset_id));
     telemetry::sync_pending_restore_state();
     let entry = activity::append(models::ActivityEntry {
-        id: format!("activity-{}", OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000),
+        id: format!(
+            "activity-{}",
+            OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+        ),
         timestamp: now(),
         category: "registry".into(),
         action: "System preset applied".into(),
@@ -710,7 +734,12 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
         }
     }
     if snapshot.extra.get("kind").and_then(Value::as_str) == Some("service") {
-        if snapshot.extra.get("was_running").and_then(Value::as_bool).unwrap_or(false) {
+        if snapshot
+            .extra
+            .get("was_running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             if let Some(service_name) = snapshot.extra.get("service_name").and_then(Value::as_str) {
                 let _ = services::start_service(service_name);
             }
@@ -719,7 +748,10 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
     if snapshot.extra.get("kind").and_then(Value::as_str) == Some("services") {
         if let Some(service_states) = snapshot.extra.get("services").and_then(Value::as_array) {
             for service in service_states {
-                let was_running = service.get("was_running").and_then(Value::as_bool).unwrap_or(false);
+                let was_running = service
+                    .get("was_running")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let service_name = service.get("name").and_then(Value::as_str);
                 if was_running {
                     if let Some(service_name) = service_name {
@@ -733,8 +765,16 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
     telemetry::untrack_snapshot(&request.snapshot_id);
     telemetry::sync_pending_restore_state();
     let entry = activity::append(snapshots::activity(
-        if snapshot.registry_entries.is_empty() { "restore" } else { "registry-restore" },
-        if snapshot.registry_entries.is_empty() { "Rollback completed" } else { "System preset restored" },
+        if snapshot.registry_entries.is_empty() {
+            "restore"
+        } else {
+            "registry-restore"
+        },
+        if snapshot.registry_entries.is_empty() {
+            "Rollback completed"
+        } else {
+            "System preset restored"
+        },
         format!("Restored {}.", snapshot.note),
         "low",
         Some(snapshot.id.clone()),
@@ -742,7 +782,11 @@ fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
         false,
     ))?;
     Ok(RollbackResponse {
-        state: inspect(request.process_id.or(snapshot.process.as_ref().map(|process| process.pid)))?,
+        state: inspect(
+            request
+                .process_id
+                .or(snapshot.process.as_ref().map(|process| process.pid)),
+        )?,
         activity: entry,
     })
 }
@@ -755,26 +799,33 @@ fn dispatch(request: IpcRequest) -> Result<Value, String> {
             "session": telemetry::read_session_state(),
         })),
         "inspect" => Ok(json!(inspect(
-            serde_json::from_value::<InspectRequest>(request.payload).map_err(|error| error.to_string())?.process_id
+            serde_json::from_value::<InspectRequest>(request.payload)
+                .map_err(|error| error.to_string())?
+                .process_id
         )?)),
         "attach_session" => Ok(json!(attach(
-            serde_json::from_value::<AttachSessionRequest>(request.payload).map_err(|error| error.to_string())?
+            serde_json::from_value::<AttachSessionRequest>(request.payload)
+                .map_err(|error| error.to_string())?
         )?)),
         "end_session" => {
             telemetry::end_session()?;
             Ok(json!(inspect(None)?))
         }
         "apply_tweak" => Ok(json!(apply(
-            serde_json::from_value::<ApplyTweakRequest>(request.payload).map_err(|error| error.to_string())?
+            serde_json::from_value::<ApplyTweakRequest>(request.payload)
+                .map_err(|error| error.to_string())?
         )?)),
         "apply_registry_preset" => Ok(json!(apply_registry_preset(
-            serde_json::from_value::<ApplyRegistryPresetRequest>(request.payload).map_err(|error| error.to_string())?
+            serde_json::from_value::<ApplyRegistryPresetRequest>(request.payload)
+                .map_err(|error| error.to_string())?
         )?)),
         "rollback" => Ok(json!(rollback(
-            serde_json::from_value::<RollbackRequest>(request.payload).map_err(|error| error.to_string())?
+            serde_json::from_value::<RollbackRequest>(request.payload)
+                .map_err(|error| error.to_string())?
         )?)),
         "ml_inference" => Ok(json!(ml::infer(
-            serde_json::from_value::<MlInferenceRequest>(request.payload).map_err(|error| error.to_string())?
+            serde_json::from_value::<MlInferenceRequest>(request.payload)
+                .map_err(|error| error.to_string())?
         ))),
         "ml_runtime_truth" => Ok(json!(ml::runtime_truth())),
         _ => Err(format!("Unknown command: {}", request.command)),
@@ -784,7 +835,13 @@ fn dispatch(request: IpcRequest) -> Result<Value, String> {
 #[cfg(windows)]
 fn spawn_parent_watch(parent_pid: u32) {
     thread::spawn(move || {
-        let handle = unsafe { OpenProcess(SYNCHRONIZE_ACCESS | PROCESS_QUERY_LIMITED_INFORMATION, 0, parent_pid) };
+        let handle = unsafe {
+            OpenProcess(
+                SYNCHRONIZE_ACCESS | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                parent_pid,
+            )
+        };
         if handle.is_null() {
             std::process::exit(0);
         }
