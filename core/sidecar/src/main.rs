@@ -2,6 +2,7 @@ mod activity;
 mod autoruns;
 mod bootcfg;
 mod ml;
+mod ml_scoring;
 mod models;
 mod paths;
 mod policy;
