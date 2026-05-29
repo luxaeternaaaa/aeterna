@@ -35,6 +35,7 @@ import type {
   BenchmarkWindow,
   DashboardPayload,
   GameProfile,
+  MlFunctionScore,
   OptimizationRuntimeState,
   ProcessSummary,
   RollbackResponse,
@@ -67,9 +68,12 @@ type PlanRequest =
 
 interface MlPlanItem {
   definition: OptimizationFunctionDefinition
+  expectedGainPct: number | null
   impact: string
+  mlConfidence: number | null
   reason: string
   request: PlanRequest
+  scoreSource: string | null
   tone: PlanTone
 }
 
@@ -248,7 +252,16 @@ function toneClass(tone: PlanTone) {
   return 'bg-[#123d2d] text-[#4dff9b]'
 }
 
-function makePlanItem(id: string, processId: number | null, runtimeState: OptimizationRuntimeState): MlPlanItem | null {
+function scoreSourceLabel(source: string | null) {
+  if (!source) return null
+  return source
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+function makePlanItem(id: string, processId: number | null, runtimeState: OptimizationRuntimeState, score?: MlFunctionScore): MlPlanItem | null {
   const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
   if (!definition) return null
   if (definition.processRequired && !processId) return null
@@ -256,9 +269,12 @@ function makePlanItem(id: string, processId: number | null, runtimeState: Optimi
   if (!request) return null
   return {
     definition,
+    expectedGainPct: typeof score?.expected_gain_pct === 'number' ? score.expected_gain_pct : null,
     impact: FUNCTION_IMPACT[id] ?? 'System',
-    reason: FUNCTION_REASONS[id] ?? definition.description,
+    mlConfidence: typeof score?.confidence === 'number' ? score.confidence : null,
+    reason: score?.reason || FUNCTION_REASONS[id] || definition.description,
     request,
+    scoreSource: scoreSourceLabel(score?.source ?? null),
     tone: planTone(definition),
   }
 }
@@ -327,6 +343,7 @@ async function analyzeSystem(props: DashboardPageProps, selectedGame: ProcessSum
   const skipped: string[] = []
 
   const modelFunctionIds = inference?.recommended_functions ?? []
+  const scoreByFunction = new Map((inference?.function_scores ?? []).map((score) => [score.function_id, score]))
   const useFallbackPlan = !inference || modelFunctionIds.length === 0 || runtimeTruth?.runtime_mode === 'unavailable'
 
   for (const id of useFallbackPlan ? SAFE_FALLBACK_IDS : modelFunctionIds) selectedIds.add(id)
@@ -379,9 +396,10 @@ async function analyzeSystem(props: DashboardPageProps, selectedGame: ProcessSum
       skipped.push(`${definition.title}: waiting for a selected game session.`)
       continue
     }
-    const item = makePlanItem(id, processId, runtimeState)
+    const item = makePlanItem(id, processId, runtimeState, scoreByFunction.get(id))
     if (item) plan.push(item)
   }
+  plan.sort((left, right) => (right.mlConfidence ?? 0) - (left.mlConfidence ?? 0))
 
   const rebootCount = plan.filter((item) => item.definition.requiresReboot).length
   const fallback = !inference || runtimeTruth?.runtime_mode === 'unavailable'
@@ -394,7 +412,7 @@ async function analyzeSystem(props: DashboardPageProps, selectedGame: ProcessSum
   const rationale = [
     `Model path: ${runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'Runtime model')}.`,
     `Selected game: ${selectedProfile?.title ?? selectedGame.name} (PID ${selectedGame.pid}).`,
-    `Function source: ${useFallbackPlan ? 'safe fallback rules' : `${modelFunctionIds.length} model-ranked function(s)`}.`,
+    `Function source: ${useFallbackPlan ? 'safe fallback rules' : `${modelFunctionIds.length} model-ranked function(s), ${scoreByFunction.size} scored action(s)`}.`,
     `Telemetry source: ${sample ? `${sample.capture_source}, ${sample.session_state}` : 'no live sample, system profile and process state only'}.`,
     `Balanced mode: ${plan.length} action(s), ${rebootCount} restart-required action(s), ${skipped.length} high-risk/blocked action(s) skipped.`,
   ]
@@ -810,7 +828,14 @@ export function DashboardPage(props: DashboardPageProps) {
                         </div>
                         <StatusBadge tone={item.tone}>{item.tone === 'danger' ? 'Risk' : item.tone === 'restart' ? 'Restart' : item.tone}</StatusBadge>
                       </div>
-                      <p className="mt-3 text-xs font-bold uppercase text-white/36">{item.impact}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold uppercase text-white/38">
+                        <span>{item.impact}</span>
+                        {item.mlConfidence != null ? <span className="rounded-full bg-[#202942] px-2.5 py-1 text-white/62">ML {(item.mlConfidence * 100).toFixed(0)}%</span> : null}
+                        {item.expectedGainPct != null && item.expectedGainPct > 0 ? (
+                          <span className="rounded-full bg-[#123d2d] px-2.5 py-1 text-[#4dff9b]">+{item.expectedGainPct.toFixed(1)}% expected</span>
+                        ) : null}
+                        {item.scoreSource ? <span className="rounded-full bg-[#202942] px-2.5 py-1 text-white/52">{item.scoreSource}</span> : null}
+                      </div>
                     </button>
                   )
                 })}

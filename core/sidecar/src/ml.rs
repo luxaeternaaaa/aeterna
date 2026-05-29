@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::{
-    models::{MlInferencePayload, MlInferenceRequest, MlModelMetadata, MlRuntimeTruth},
+    models::{
+        MlFunctionScore, MlInferencePayload, MlInferenceRequest, MlModelMetadata, MlRuntimeTruth,
+    },
     paths::{ml_fps_metadata_path, ml_fps_model_path, ml_metadata_path},
     processes,
 };
@@ -48,9 +50,20 @@ fn default_metadata() -> MlModelMetadata {
             "cpu_process_pct is the strongest scheduler-side pressure signal.".into(),
         ],
         recommendation_map: BTreeMap::from([
-            ("cpu_affinity".into(), vec!["High CPU pressure suggests reducing scheduler contention.".into()]),
-            ("power_plan".into(), vec!["Lower clocks or power-saving plans can amplify spikes under load.".into()]),
-            ("process_priority".into(), vec!["The game may benefit from a higher scheduler share in the next window.".into()]),
+            (
+                "cpu_affinity".into(),
+                vec!["High CPU pressure suggests reducing scheduler contention.".into()],
+            ),
+            (
+                "power_plan".into(),
+                vec!["Lower clocks or power-saving plans can amplify spikes under load.".into()],
+            ),
+            (
+                "process_priority".into(),
+                vec![
+                    "The game may benefit from a higher scheduler share in the next window.".into(),
+                ],
+            ),
         ]),
     }
 }
@@ -69,7 +82,10 @@ fn load_fps_metadata_value() -> Option<serde_json::Value> {
 }
 
 fn metadata_string(value: &serde_json::Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|item| item.as_str()).map(str::to_owned)
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .map(str::to_owned)
 }
 
 fn validate_onnx_artifact(path: &Path) -> Result<(), String> {
@@ -85,8 +101,12 @@ fn fps_model_status() -> FpsModelStatus {
     let mut status = FpsModelStatus {
         available: model_path.exists(),
         model_path: Some(model_path.display().to_string()),
-        model_source: metadata.as_ref().and_then(|value| metadata_string(value, "model_source")),
-        version: metadata.as_ref().and_then(|value| metadata_string(value, "version")),
+        model_source: metadata
+            .as_ref()
+            .and_then(|value| metadata_string(value, "model_source")),
+        version: metadata
+            .as_ref()
+            .and_then(|value| metadata_string(value, "version")),
         ..FpsModelStatus::default()
     };
 
@@ -143,7 +163,10 @@ pub fn runtime_truth() -> MlRuntimeTruth {
     if fps_status.loadable {
         summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present and loadable; the optimization endpoint uses live telemetry pressure plus trained FPS tweak priors from its local metadata for safe-tweak ranking.");
     } else if fps_status.available {
-        let error = fps_status.error.as_deref().unwrap_or("unknown ONNX load error");
+        let error = fps_status
+            .error
+            .as_deref()
+            .unwrap_or("unknown ONNX load error");
         summary.push_str(&format!(
             " FPS prediction artifact is present but could not be loaded by the sidecar ONNX runtime: {error}."
         ));
@@ -191,6 +214,122 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     }
 }
 
+fn push_unique_signal(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|item| item == &value) {
+        values.push(value);
+    }
+}
+
+fn round_score(value: f64) -> f64 {
+    (value.clamp(0.0, 0.99) * 1000.0).round() / 1000.0
+}
+
+fn round_gain_pct(value: f64) -> f64 {
+    (value.max(0.0) * 100.0).round() / 100.0
+}
+
+fn metadata_nested_f64(
+    metadata: &serde_json::Value,
+    section: &str,
+    key: &str,
+    field: &str,
+) -> Option<f64> {
+    metadata
+        .get(section)
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.get(field))
+        .and_then(serde_json::Value::as_f64)
+}
+
+fn fps_expected_gain_pct(metadata: &serde_json::Value, key: &str, gain_prior: f64) -> f64 {
+    metadata_nested_f64(metadata, "ablation_summary", key, "positive_mean_gain_pct")
+        .unwrap_or(gain_prior * 100.0)
+}
+
+fn fps_metadata_confidence(
+    metadata: &serde_json::Value,
+    key: &str,
+    gain_prior: f64,
+    spike_probability: f64,
+) -> f64 {
+    let mut confidence = 0.55 + gain_prior * 7.0 + spike_probability * 0.18;
+    if let Some(roc_auc) = metadata_nested_f64(metadata, "tweak_metrics", key, "roc_auc") {
+        if roc_auc >= 0.75 {
+            confidence += ((roc_auc - 0.75) * 0.12).min(0.04);
+        } else if roc_auc <= 0.55 {
+            confidence -= 0.05;
+        }
+    }
+    let has_reliability = metadata
+        .get("tweak_reliability")
+        .and_then(|value| value.get(key))
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false);
+    let useful_rate =
+        metadata_nested_f64(metadata, "tweak_metrics", key, "positive_rate").unwrap_or(0.0);
+    if !has_reliability && useful_rate <= 0.0 {
+        confidence -= 0.05;
+    }
+    confidence.clamp(0.45, 0.97)
+}
+
+fn fps_score_signals(
+    metadata: &serde_json::Value,
+    key: &str,
+    spike_probability: f64,
+    confidence: f64,
+) -> Vec<String> {
+    let mut signals = vec![
+        format!("Live spike probability {:.0}%.", spike_probability * 100.0),
+        format!("Calibrated tweak confidence {:.0}%.", confidence * 100.0),
+    ];
+    if let Some(roc_auc) = metadata_nested_f64(metadata, "tweak_metrics", key, "roc_auc") {
+        signals.push(format!("Tweak ROC-AUC {:.2}.", roc_auc));
+    }
+    if let Some(useful_rate) = metadata_nested_f64(metadata, "tweak_metrics", key, "positive_rate")
+    {
+        signals.push(format!("Training useful-rate {:.1}%.", useful_rate * 100.0));
+    }
+    signals
+}
+
+fn push_function_score(
+    function_scores: &mut Vec<MlFunctionScore>,
+    function_id: &str,
+    confidence: f64,
+    expected_gain_pct: f64,
+    reason: String,
+    source: &str,
+    signals: Vec<String>,
+) {
+    if let Some(existing) = function_scores
+        .iter_mut()
+        .find(|item| item.function_id == function_id)
+    {
+        if confidence > existing.confidence {
+            existing.confidence = round_score(confidence);
+            existing.reason = reason;
+            existing.source = source.into();
+        }
+        if expected_gain_pct > existing.expected_gain_pct {
+            existing.expected_gain_pct = round_gain_pct(expected_gain_pct);
+        }
+        for signal in signals {
+            push_unique_signal(&mut existing.signals, signal);
+        }
+        return;
+    }
+    function_scores.push(MlFunctionScore {
+        function_id: function_id.into(),
+        confidence: round_score(confidence),
+        expected_gain_pct: round_gain_pct(expected_gain_pct),
+        reason,
+        source: source.into(),
+        signals,
+    });
+}
+
 fn fps_recommendation_reason(metadata: &serde_json::Value, key: &str) -> String {
     metadata
         .get("recommendation_map")
@@ -202,33 +341,75 @@ fn fps_recommendation_reason(metadata: &serde_json::Value, key: &str) -> String 
         .to_string()
 }
 
-fn push_fps_metadata_factor(factors: &mut Vec<String>, metadata: &serde_json::Value, key: &str, gain: f64) {
+fn push_fps_metadata_factor(
+    factors: &mut Vec<String>,
+    metadata: &serde_json::Value,
+    key: &str,
+    gain: f64,
+) {
     let reason = fps_recommendation_reason(metadata, key);
+    let expected_gain_pct = fps_expected_gain_pct(metadata, key, gain);
     factors.push(format!(
         "{} prior from FPS model metadata: expected useful gain {:.1}%. {}",
         key.replace("tweak_", "").replace('_', " "),
-        gain * 100.0,
+        expected_gain_pct,
         reason
     ));
+}
+
+fn push_fps_metadata_score(
+    function_scores: &mut Vec<MlFunctionScore>,
+    metadata: &serde_json::Value,
+    key: &str,
+    gain: f64,
+    spike_probability: f64,
+    confidence: f64,
+    function_ids: &[&str],
+) {
+    let reason = fps_recommendation_reason(metadata, key);
+    let expected_gain_pct = fps_expected_gain_pct(metadata, key, gain);
+    let signals = fps_score_signals(metadata, key, spike_probability, confidence);
+    for function_id in function_ids {
+        push_function_score(
+            function_scores,
+            function_id,
+            confidence,
+            expected_gain_pct,
+            reason.clone(),
+            "fps-metadata-prior",
+            signals.clone(),
+        );
+    }
 }
 
 fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
     payload
         .game_context
         .as_ref()
-        .map(|game| game.allowed_actions.is_empty() || game.allowed_actions.iter().any(|item| item == action))
+        .map(|game| {
+            game.allowed_actions.is_empty()
+                || game.allowed_actions.iter().any(|item| item == action)
+        })
         .unwrap_or(false)
 }
 
 fn fps_metadata_ranked_tweaks(metadata: &serde_json::Value) -> Vec<(String, f64)> {
-    let Some(priors) = metadata.get("tweak_gain_priors").and_then(serde_json::Value::as_object) else {
+    let Some(priors) = metadata
+        .get("tweak_gain_priors")
+        .and_then(serde_json::Value::as_object)
+    else {
         return Vec::new();
     };
     let mut rows = priors
         .iter()
         .filter_map(|(key, value)| value.as_f64().map(|gain| (key.clone(), gain)))
         .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.1.partial_cmp(&left.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     rows
 }
 
@@ -238,6 +419,7 @@ fn apply_fps_metadata_recommendations(
     spike_probability: f64,
     recommended_tweaks: &mut Vec<String>,
     recommended_functions: &mut Vec<String>,
+    function_scores: &mut Vec<MlFunctionScore>,
     factors: &mut Vec<String>,
 ) {
     let Some(metadata) = fps_metadata else {
@@ -263,68 +445,373 @@ fn apply_fps_metadata_recommendations(
         == Some(false);
 
     for (key, gain) in ranked {
-        let confidence = (0.55 + gain * 7.0 + spike_probability * 0.18).min(0.97);
+        let confidence = fps_metadata_confidence(metadata, &key, gain, spike_probability);
         let strong_signal = confidence >= threshold || spike_probability >= 0.42;
         match key.as_str() {
-            "tweak_power_plan" if strong_signal && (payload.frametime_p95_ms >= 10.0 || payload.gpu_usage_pct >= 45.0) => {
+            "tweak_power_plan"
+                if strong_signal
+                    && (payload.frametime_p95_ms >= 10.0 || payload.gpu_usage_pct >= 45.0) =>
+            {
                 push_unique(recommended_tweaks, "power_plan");
                 push_unique(recommended_functions, "ultimate-power");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["ultimate-power"],
+                );
             }
-            "tweak_priority" if strong_signal && payload.game_context.is_some() && (payload.cpu_process_pct >= 25.0 || payload.background_process_count >= 35) => {
+            "tweak_priority"
+                if strong_signal
+                    && payload.game_context.is_some()
+                    && (payload.cpu_process_pct >= 25.0
+                        || payload.background_process_count >= 35) =>
+            {
                 push_unique(recommended_tweaks, "process_priority");
                 push_unique(recommended_functions, "max-games");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["max-games"],
+                );
             }
-            "tweak_affinity" if strong_signal && game_allows(payload, "cpu_affinity") && (payload.cpu_process_pct >= 35.0 || payload.frametime_p95_ms >= 12.0) => {
+            "tweak_affinity"
+                if strong_signal
+                    && game_allows(payload, "cpu_affinity")
+                    && (payload.cpu_process_pct >= 35.0 || payload.frametime_p95_ms >= 12.0) =>
+            {
                 push_unique(recommended_tweaks, "cpu_affinity");
                 push_unique(recommended_functions, "keep-cores");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["keep-cores"],
+                );
             }
             "tweak_recording_off" if strong_signal && payload.game_context.is_some() => {
                 push_unique(recommended_functions, "turn-off-recordings");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["turn-off-recordings"],
+                );
             }
-            "tweak_hags" if strong_signal && !discrete_gpu_absent && payload.gpu_usage_pct >= 45.0 => {
+            "tweak_hags"
+                if strong_signal && !discrete_gpu_absent && payload.gpu_usage_pct >= 45.0 =>
+            {
                 push_unique(recommended_functions, "hags-on");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["hags-on"],
+                );
             }
             "tweak_game_mode" if payload.game_context.is_some() => {
                 push_unique(recommended_functions, "game-mode-on");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["game-mode-on"],
+                );
             }
-            "tweak_low_timer_resolution" if payload.frametime_p95_ms >= 16.0 || payload.frame_drop_ratio >= 0.05 || payload.anomaly_score >= 0.25 => {
+            "tweak_low_timer_resolution"
+                if payload.frametime_p95_ms >= 16.0
+                    || payload.frame_drop_ratio >= 0.05
+                    || payload.anomaly_score >= 0.25 =>
+            {
                 push_unique(recommended_functions, "low-timer-resolution");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["low-timer-resolution"],
+                );
             }
-            "tweak_service" if payload.background_process_count >= 70 || payload.cpu_total_pct >= 60.0 => {
+            "tweak_service"
+                if payload.background_process_count >= 70 || payload.cpu_total_pct >= 60.0 =>
+            {
                 push_unique(recommended_functions, "diagtrack-off");
                 push_unique(recommended_functions, "maps-broker-off");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &["diagtrack-off", "maps-broker-off"],
+                );
             }
             "tweak_registry_preset" if strong_signal => {
                 push_unique(recommended_functions, "power-throttling-off");
                 push_unique(recommended_functions, "windowed-optimizations-on");
                 push_unique(recommended_functions, "reduce-input-lag");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
+                push_fps_metadata_score(
+                    function_scores,
+                    metadata,
+                    &key,
+                    gain,
+                    spike_probability,
+                    confidence,
+                    &[
+                        "power-throttling-off",
+                        "windowed-optimizations-on",
+                        "reduce-input-lag",
+                    ],
+                );
             }
             _ => {}
         }
     }
 }
 
+fn rule_score_for_function(
+    function_id: &str,
+    payload: &MlInferenceRequest,
+    spike_probability: f64,
+) -> (f64, f64, String, &'static str, Vec<String>) {
+    let has_game = payload.game_context.is_some();
+    let mut confidence = 0.58 + spike_probability * 0.2 + if has_game { 0.06 } else { 0.0 };
+    let mut expected_gain_pct = 0.8;
+    let mut source = "live-safety-rule";
+    let mut reason =
+        "Selected by the local safety rules after telemetry, OS, and game-context analysis."
+            .to_string();
+    let mut signals = vec![
+        format!(
+            "CPU process {:.0}%, CPU total {:.0}%.",
+            payload.cpu_process_pct, payload.cpu_total_pct
+        ),
+        format!(
+            "P95 frametime {:.1} ms, frame drops {:.1}%.",
+            payload.frametime_p95_ms,
+            payload.frame_drop_ratio * 100.0
+        ),
+        format!(
+            "GPU usage {:.0}%, background processes {}.",
+            payload.gpu_usage_pct, payload.background_process_count
+        ),
+    ];
+
+    if let Some(game) = payload.game_context.as_ref() {
+        let game_name = game
+            .profile_title
+            .as_deref()
+            .or(game.process_name.as_deref())
+            .unwrap_or("selected game");
+        signals.push(format!("Game profile context: {game_name}."));
+    }
+
+    match function_id {
+        "ultimate-power" => {
+            confidence += 0.08;
+            expected_gain_pct = if payload.gpu_usage_pct >= 70.0 || payload.frametime_p95_ms >= 16.0
+            {
+                3.8
+            } else {
+                2.2
+            };
+            reason = "Power policy is likely limiting sustained CPU/GPU boost behavior during the current workload.".into();
+        }
+        "max-games" => {
+            confidence += 0.08;
+            expected_gain_pct =
+                if payload.cpu_process_pct >= 45.0 || payload.background_process_count >= 42 {
+                    3.1
+                } else {
+                    1.7
+                };
+            source = "game-session-rule";
+            reason = "Foreground game scheduling can improve when CPU pressure or process noise is visible.".into();
+        }
+        "keep-cores" => {
+            confidence += 0.05;
+            expected_gain_pct =
+                if payload.cpu_process_pct >= 55.0 || payload.frametime_p95_ms >= 12.0 {
+                    2.4
+                } else {
+                    1.2
+                };
+            source = "game-session-rule";
+            reason = "The selected game profile allows affinity tuning and the telemetry shows scheduler pressure.".into();
+        }
+        "hags-on" => {
+            confidence += if payload.gpu_usage_pct >= 45.0 {
+                0.06
+            } else {
+                0.01
+            };
+            expected_gain_pct = 2.0;
+            reason = "GPU/compositor pressure makes Hardware Accelerated GPU Scheduling a useful restart-gated candidate.".into();
+        }
+        "low-timer-resolution" => {
+            confidence += if payload.frametime_p95_ms >= 18.0 || payload.frame_drop_ratio >= 0.08 {
+                0.07
+            } else {
+                0.02
+            };
+            expected_gain_pct = 1.1;
+            reason = "Frame pacing volatility is high enough to justify a tighter timer-resolution request.".into();
+        }
+        "diagtrack-off"
+        | "maps-broker-off"
+        | "content-delivery-off"
+        | "feedback-frequency-off"
+        | "app-launch-tracking-off" => {
+            confidence += if payload.background_process_count >= 70 || payload.cpu_total_pct >= 60.0
+            {
+                0.06
+            } else {
+                0.0
+            };
+            expected_gain_pct = 1.0;
+            source = "background-noise-rule";
+            reason = "Background process and service noise is high enough to prefer reversible low-risk cleanup.".into();
+        }
+        "game-mode-on" => {
+            confidence += if has_game { 0.06 } else { 0.0 };
+            expected_gain_pct = 1.5;
+            source = "game-profile-rule";
+            reason = "A detected game session should receive Windows foreground-game scheduling behavior.".into();
+        }
+        "turn-off-recordings" => {
+            confidence += if has_game { 0.05 } else { 0.0 };
+            expected_gain_pct = 1.6;
+            source = "capture-overhead-rule";
+            reason =
+                "Capture and recording services can reduce GPU headroom during gameplay.".into();
+        }
+        "windowed-optimizations-on" => {
+            confidence += if has_game { 0.04 } else { 0.0 };
+            expected_gain_pct = 1.2;
+            source = "presentation-rule";
+            reason =
+                "The selected game can benefit from the modern Windows presentation path.".into();
+        }
+        "power-throttling-off" | "process-qos-high" => {
+            confidence += 0.05;
+            expected_gain_pct = 1.7;
+            source = "power-qos-rule";
+            reason = "The current workload should avoid per-process or system power throttling during a game session.".into();
+        }
+        "usb-selective-suspend-off"
+        | "pcie-lspm-off"
+        | "reduce-input-lag"
+        | "win32-priority-separation" => {
+            confidence += if has_game { 0.04 } else { 0.0 };
+            expected_gain_pct = 1.0;
+            source = "latency-rule";
+            reason = "Latency-sensitive device and scheduler settings are useful for the selected game profile.".into();
+        }
+        _ => {}
+    }
+
+    (
+        confidence.clamp(0.45, 0.9),
+        expected_gain_pct,
+        reason,
+        source,
+        signals,
+    )
+}
+
+fn ensure_rule_scores_for_recommendations(
+    payload: &MlInferenceRequest,
+    spike_probability: f64,
+    recommended_functions: &[String],
+    function_scores: &mut Vec<MlFunctionScore>,
+) {
+    for function_id in recommended_functions {
+        let (confidence, expected_gain_pct, reason, source, signals) =
+            rule_score_for_function(function_id, payload, spike_probability);
+        push_function_score(
+            function_scores,
+            function_id,
+            confidence,
+            expected_gain_pct,
+            reason,
+            source,
+            signals,
+        );
+    }
+}
+
+fn finalize_function_scores(
+    recommended_functions: &[String],
+    function_scores: &mut Vec<MlFunctionScore>,
+) {
+    function_scores.retain(|score| {
+        recommended_functions
+            .iter()
+            .any(|id| id == &score.function_id)
+    });
+    function_scores.sort_by(|left, right| {
+        let left_index = recommended_functions
+            .iter()
+            .position(|id| id == &left.function_id)
+            .unwrap_or(usize::MAX);
+        let right_index = recommended_functions
+            .iter()
+            .position(|id| id == &right.function_id)
+            .unwrap_or(usize::MAX);
+        left_index.cmp(&right_index)
+    });
+}
+
 pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let metadata = load_metadata();
     let mode = runtime_mode(&metadata.model_source);
     let fps_status = fps_model_status();
-    let fps_metadata = if fps_status.loadable { load_fps_metadata_value() } else { None };
+    let fps_metadata = if fps_status.loadable {
+        load_fps_metadata_value()
+    } else {
+        None
+    };
     let score = metadata
         .weights
         .iter()
-        .fold(metadata.intercept, |acc, (key, weight)| acc + feature_value(&payload, key) * weight);
+        .fold(metadata.intercept, |acc, (key, weight)| {
+            acc + feature_value(&payload, key) * weight
+        });
     let mut spike_probability = sigmoid(score).clamp(0.02, 0.98);
     let mut recommended_tweaks = Vec::new();
     let mut recommended_functions = Vec::new();
+    let mut function_scores = Vec::new();
     let mut factors = Vec::new();
     factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
     if fps_status.loadable {
@@ -341,7 +828,9 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
             factors.push(format!("Detected {cores} logical cores. Scheduler pressure can rise faster under burst load."));
         } else if cores >= 12 {
             spike_probability = (spike_probability - 0.02).max(0.02);
-            factors.push(format!("Detected {cores} logical cores. Core headroom may absorb transient spikes better."));
+            factors.push(format!(
+                "Detected {cores} logical cores. Core headroom may absorb transient spikes better."
+            ));
         }
         if let Some(memory_gb) = profile.memory_gb.or_else(processes::system_memory_total_gb) {
             if memory_gb <= 8.0 {
@@ -355,7 +844,8 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
             factors.push(format!("Active power plan signal: {power_plan}."));
         }
         if profile.discrete_gpu_available == Some(false) {
-            factors.push("Discrete GPU signal is absent; avoid forcing GPU-only assumptions.".into());
+            factors
+                .push("Discrete GPU signal is absent; avoid forcing GPU-only assumptions.".into());
         }
         if !profile.active_tweaks.is_empty() || !profile.active_registry_presets.is_empty() {
             factors.push(format!(
@@ -378,14 +868,24 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
                 profile.autorun_count
             ));
         }
-        if !profile.active_power_plan.as_deref().unwrap_or_default().to_ascii_lowercase().contains("performance") {
+        if !profile
+            .active_power_plan
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("performance")
+        {
             push_unique(&mut recommended_functions, "ultimate-power");
         }
     } else {
         let cores = processes::logical_processor_count() as u32;
-        factors.push(format!("Detected {cores} logical cores from sidecar system inspection."));
+        factors.push(format!(
+            "Detected {cores} logical cores from sidecar system inspection."
+        ));
         if let Some(memory_gb) = processes::system_memory_total_gb() {
-            factors.push(format!("Detected {memory_gb:.0} GB RAM from sidecar system inspection."));
+            factors.push(format!(
+                "Detected {memory_gb:.0} GB RAM from sidecar system inspection."
+            ));
         }
     }
     apply_fps_metadata_recommendations(
@@ -394,6 +894,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         spike_probability,
         &mut recommended_tweaks,
         &mut recommended_functions,
+        &mut function_scores,
         &mut factors,
     );
     if let Some(game) = payload.game_context.as_ref() {
@@ -410,22 +911,33 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         push_unique(&mut recommended_functions, "usb-selective-suspend-off");
         push_unique(&mut recommended_functions, "pcie-lspm-off");
         push_unique(&mut recommended_functions, "reduce-input-lag");
-        if game_allows(&payload, "process_priority") || payload.cpu_process_pct > 45.0 || payload.background_process_count > 42 {
+        if game_allows(&payload, "process_priority")
+            || payload.cpu_process_pct > 45.0
+            || payload.background_process_count > 42
+        {
             push_unique(&mut recommended_tweaks, "process_priority");
             push_unique(&mut recommended_functions, "max-games");
         }
-        if game_allows(&payload, "power_plan") || payload.gpu_usage_pct > 70.0 || payload.frametime_p95_ms > 16.0 {
+        if game_allows(&payload, "power_plan")
+            || payload.gpu_usage_pct > 70.0
+            || payload.frametime_p95_ms > 16.0
+        {
             push_unique(&mut recommended_tweaks, "power_plan");
             push_unique(&mut recommended_functions, "ultimate-power");
         }
-        if game_allows(&payload, "cpu_affinity") && (payload.cpu_process_pct > 55.0 || payload.frametime_p95_ms > 12.0) {
+        if game_allows(&payload, "cpu_affinity")
+            && (payload.cpu_process_pct > 55.0 || payload.frametime_p95_ms > 12.0)
+        {
             push_unique(&mut recommended_tweaks, "cpu_affinity");
             push_unique(&mut recommended_functions, "keep-cores");
         }
         if payload.cpu_total_pct > 70.0 || payload.frametime_p95_ms > 18.0 {
             push_unique(&mut recommended_functions, "process-qos-high");
         }
-        if payload.frametime_p95_ms >= 18.0 || payload.frame_drop_ratio >= 0.08 || payload.anomaly_score >= 0.32 {
+        if payload.frametime_p95_ms >= 18.0
+            || payload.frame_drop_ratio >= 0.08
+            || payload.anomaly_score >= 0.32
+        {
             push_unique(&mut recommended_functions, "low-timer-resolution");
         }
         if payload.gpu_usage_pct >= 45.0 {
@@ -438,17 +950,23 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         } else if profile_id.contains("fortnite") || profile_id.contains("warzone") {
             push_unique(&mut recommended_functions, "diagtrack-off");
             push_unique(&mut recommended_functions, "maps-broker-off");
-            factors.push("Large streaming titles get additional background-service noise reduction.".into());
+            factors.push(
+                "Large streaming titles get additional background-service noise reduction.".into(),
+            );
         } else if profile_id.contains("cs2") {
             push_unique(&mut recommended_functions, "win32-priority-separation");
-            factors.push("CS2 profile emphasizes scheduler responsiveness and input latency.".into());
+            factors
+                .push("CS2 profile emphasizes scheduler responsiveness and input latency.".into());
         }
     }
     if payload.cpu_process_pct > 82.0 || payload.background_process_count > 42 {
         push_unique(&mut recommended_tweaks, "process_priority");
         push_unique(&mut recommended_functions, "max-games");
     }
-    if payload.cpu_process_pct > 76.0 && payload.frametime_p95_ms > 12.0 && game_allows(&payload, "cpu_affinity") {
+    if payload.cpu_process_pct > 76.0
+        && payload.frametime_p95_ms > 12.0
+        && game_allows(&payload, "cpu_affinity")
+    {
         push_unique(&mut recommended_tweaks, "cpu_affinity");
         push_unique(&mut recommended_functions, "keep-cores");
     }
@@ -467,13 +985,30 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         push_unique(&mut recommended_functions, "maps-broker-off");
         push_unique(&mut recommended_functions, "app-launch-tracking-off");
     }
-    let risk_label = if spike_probability > 0.78 { "high" } else if spike_probability > 0.48 { "medium" } else { "low" };
+    ensure_rule_scores_for_recommendations(
+        &payload,
+        spike_probability,
+        &recommended_functions,
+        &mut function_scores,
+    );
+    finalize_function_scores(&recommended_functions, &mut function_scores);
+    let risk_label = if spike_probability > 0.78 {
+        "high"
+    } else if spike_probability > 0.48 {
+        "medium"
+    } else {
+        "low"
+    };
     for tweak in &recommended_tweaks {
         if let Some(lines) = metadata.recommendation_map.get(tweak) {
             factors.extend(lines.clone());
         }
     }
-    let confidence_bonus = if payload.system_profile.is_some() { 0.04 } else { 0.0 };
+    let confidence_bonus = if payload.system_profile.is_some() {
+        0.04
+    } else {
+        0.0
+    };
     let signal_scope = if payload.game_context.is_some() {
         "telemetry, system profile, and selected game signals"
     } else if payload.system_profile.is_some() {
@@ -488,6 +1023,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         confidence: (0.58 + spike_probability * 0.28 + confidence_bonus).min(0.97),
         recommended_tweaks,
         recommended_functions,
+        function_scores,
         summary: format!(
             "Local model {} estimates a {} spike probability using {}.",
             metadata.version,
@@ -510,7 +1046,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
 #[cfg(test)]
 mod tests {
     use super::infer;
-    use crate::models::MlInferenceRequest;
+    use crate::models::{MlGameContext, MlInferenceRequest, MlSystemProfile};
 
     #[test]
     fn flags_high_pressure_sessions() {
@@ -531,5 +1067,62 @@ mod tests {
         assert_eq!(result.risk_label, "high");
         assert!(!result.recommended_tweaks.is_empty());
         assert!(!result.recommended_functions.is_empty());
+        assert!(!result.function_scores.is_empty());
+        assert!(result.function_scores.iter().all(|score| result
+            .recommended_functions
+            .iter()
+            .any(|id| id == &score.function_id)));
+    }
+
+    #[test]
+    fn explains_game_aware_function_scores() {
+        let result = infer(MlInferenceRequest {
+            fps_avg: 96.0,
+            frametime_avg_ms: 12.8,
+            frametime_p95_ms: 24.0,
+            frame_drop_ratio: 0.12,
+            cpu_process_pct: 68.0,
+            cpu_total_pct: 81.0,
+            gpu_usage_pct: 78.0,
+            ram_working_set_mb: 6200.0,
+            background_process_count: 91,
+            anomaly_score: 0.46,
+            system_profile: Some(MlSystemProfile {
+                logical_cores: Some(8),
+                memory_gb: Some(16.0),
+                discrete_gpu_available: Some(true),
+                active_power_plan: Some("Balanced".into()),
+                session_attached: Some(true),
+                active_tweaks: Vec::new(),
+                active_registry_presets: Vec::new(),
+                autorun_count: 9,
+                running_process_count: 94,
+            }),
+            game_context: Some(MlGameContext {
+                process_id: Some(4242),
+                process_name: Some("cs2.exe".into()),
+                profile_id: Some("cs2".into()),
+                profile_title: Some("Counter-Strike 2".into()),
+                allowed_actions: vec![
+                    "process_priority".into(),
+                    "power_plan".into(),
+                    "cpu_affinity".into(),
+                ],
+            }),
+        });
+
+        assert!(result
+            .recommended_functions
+            .iter()
+            .any(|id| id == "ultimate-power" || id == "max-games"));
+        let score = result
+            .function_scores
+            .iter()
+            .find(|score| score.function_id == "ultimate-power" || score.function_id == "max-games")
+            .expect("expected an ML score for a primary game recommendation");
+        assert!(score.confidence >= 0.6);
+        assert!(score.expected_gain_pct > 0.0);
+        assert!(!score.reason.is_empty());
+        assert!(!score.signals.is_empty());
     }
 }

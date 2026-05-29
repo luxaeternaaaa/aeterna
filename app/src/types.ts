@@ -455,12 +455,22 @@ export interface RollbackResponse {
   activity: ActivityEntry
 }
 
+export interface MlFunctionScore {
+  function_id: string
+  confidence: number
+  expected_gain_pct: number
+  reason: string
+  source: string
+  signals?: string[]
+}
+
 export interface MlInferencePayload {
   spike_probability: number
   risk_label: string
   confidence: number
   recommended_tweaks: string[]
   recommended_functions?: string[]
+  function_scores?: MlFunctionScore[]
   summary: string
   factors: string[]
   model_version?: string

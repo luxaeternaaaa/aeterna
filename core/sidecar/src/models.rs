@@ -287,12 +287,24 @@ pub struct MlInferenceRequest {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct MlFunctionScore {
+    pub function_id: String,
+    pub confidence: f64,
+    pub expected_gain_pct: f64,
+    pub reason: String,
+    pub source: String,
+    #[serde(default)]
+    pub signals: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct MlInferencePayload {
     pub spike_probability: f64,
     pub risk_label: String,
     pub confidence: f64,
     pub recommended_tweaks: Vec<String>,
     pub recommended_functions: Vec<String>,
+    pub function_scores: Vec<MlFunctionScore>,
     pub summary: String,
     pub factors: Vec<String>,
     pub model_version: Option<String>,
