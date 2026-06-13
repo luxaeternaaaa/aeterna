@@ -68,14 +68,17 @@ pub fn fps_score_signals(
 ) -> Vec<String> {
     let mut signals = vec![
         format!("Live spike probability {:.0}%.", spike_probability * 100.0),
-        format!("Calibrated tweak confidence {:.0}%.", confidence * 100.0),
+        format!("Metadata prior score {:.0}%.", confidence * 100.0),
     ];
     if let Some(roc_auc) = metadata_nested_f64(metadata, "tweak_metrics", key, "roc_auc") {
         signals.push(format!("Tweak ROC-AUC {:.2}.", roc_auc));
     }
     if let Some(useful_rate) = metadata_nested_f64(metadata, "tweak_metrics", key, "positive_rate")
     {
-        signals.push(format!("Training useful-rate {:.1}%.", useful_rate * 100.0));
+        signals.push(format!("Paired-label positive rate {:.1}%.", useful_rate * 100.0));
+    }
+    if let Some(f1) = metadata_nested_f64(metadata, "tweak_metrics", key, "f1") {
+        signals.push(format!("Out-of-fold F1 {:.2}.", f1));
     }
     signals
 }

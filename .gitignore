@@ -12,3 +12,5 @@ app/src-tauri/target/
 core/sidecar/target/
 installer/out/
 build/
+tmp/ml-full-check/
+tmp/ml-smoke*/

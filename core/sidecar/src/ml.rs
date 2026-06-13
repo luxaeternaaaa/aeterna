@@ -31,12 +31,8 @@ fn default_metadata() -> MlModelMetadata {
     MlModelMetadata {
         version: "fallback-v1".into(),
         updated_at: String::new(),
-        model_source: "metadata-fallback".into(),
-        metrics: BTreeMap::from([
-            ("roc_auc".into(), 0.79),
-            ("precision".into(), 0.74),
-            ("recall".into(), 0.71),
-        ]),
+        model_source: "heuristic-rules".into(),
+        metrics: BTreeMap::new(),
         weights: BTreeMap::from([
             ("cpu_process_pct".into(), 1.05),
             ("cpu_total_pct".into(), 0.4),
@@ -50,8 +46,8 @@ fn default_metadata() -> MlModelMetadata {
         ]),
         intercept: -1.65,
         shap_preview: vec![
-            "frametime_p95_ms contributes the most to spike probability.".into(),
-            "cpu_process_pct is the strongest scheduler-side pressure signal.".into(),
+            "Heuristic factor: frametime_p95_ms has the largest configured weight.".into(),
+            "Heuristic factor: cpu_process_pct is a scheduler-pressure input.".into(),
         ],
         recommendation_map: BTreeMap::from([
             (
@@ -123,14 +119,16 @@ fn fps_model_status() -> FpsModelStatus {
     status
 }
 
-fn runtime_mode(source: &str) -> &'static str {
-    if source.contains("onnx") {
-        "onnx"
-    } else if source.contains("fallback") {
-        "fallback"
-    } else {
-        "unavailable"
-    }
+fn runtime_mode(_source: &str) -> &'static str {
+    "fallback"
+}
+
+fn fps_recommendations_released(metadata: &serde_json::Value) -> bool {
+    metadata
+        .get("recommendation_release")
+        .and_then(|value| value.get("enabled"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub fn runtime_truth() -> MlRuntimeTruth {
@@ -138,34 +136,29 @@ pub fn runtime_truth() -> MlRuntimeTruth {
     let mode = runtime_mode(&metadata.model_source);
     let fps_status = fps_model_status();
     let active_label = if fps_status.loadable {
-        format!(
-            "FPS ONNX ready; {}",
-            match mode {
-                "onnx" => format!("runtime {}", metadata.version),
-                "fallback" => "fallback pressure model active".into(),
-                _ => "pressure model unavailable".into(),
-            }
-        )
+        "FPS ONNX artifact verified; heuristic pressure runtime active".into()
     } else {
-        match mode {
-            "onnx" => format!("ONNX runtime {}", metadata.version),
-            "fallback" => "Fallback runtime available".into(),
-            _ => "No runtime recommendation path".into(),
-        }
+        "Heuristic pressure runtime active".into()
     };
-    let mut summary = match mode {
-        "onnx" => format!(
-            "Local runtime-backed inference is available via {}. Treat compare results as proof, and ML as advisory ranking.",
-            metadata.version
-        ),
-        "fallback" => format!(
-            "Fallback inference is available via {}. It can rank likely session pressure, but it does not replace benchmark proof.",
-            metadata.version
-        ),
-        _ => "No runtime recommendation path is currently available.".into(),
-    };
+    let mut summary = format!(
+        "The sidecar currently uses heuristic telemetry rules from {}. Benchmark comparisons are the proof path.",
+        metadata.version
+    );
     if fps_status.loadable {
-        summary.push_str(" FPS prediction artifact aeterna_fps_model.onnx is present and loadable; the optimization endpoint uses live telemetry pressure plus trained FPS tweak priors from its local metadata for safe-tweak ranking.");
+        summary.push_str(
+            " The FPS ONNX artifact is structurally loadable but is not executed by this endpoint.",
+        );
+        if let Some(fps_metadata) = load_fps_metadata_value() {
+            if fps_recommendations_released(&fps_metadata) {
+                summary.push_str(
+                    " Independently validated tweak priors are released for advisory metadata ranking.",
+                );
+            } else {
+                summary.push_str(
+                    " Its synthetic or internally validated tweak priors are blocked from runtime ranking.",
+                );
+            }
+        }
     } else if fps_status.available {
         let error = fps_status
             .error
@@ -282,6 +275,20 @@ fn game_allows(payload: &MlInferenceRequest, action: &str) -> bool {
 }
 
 fn fps_metadata_ranked_tweaks(metadata: &serde_json::Value) -> Vec<(String, f64)> {
+    if !fps_recommendations_released(metadata) {
+        return Vec::new();
+    }
+    let released = metadata
+        .get("recommendation_release")
+        .and_then(|value| value.get("released_tweaks"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let Some(priors) = metadata
         .get("tweak_gain_priors")
         .and_then(serde_json::Value::as_object)
@@ -290,6 +297,11 @@ fn fps_metadata_ranked_tweaks(metadata: &serde_json::Value) -> Vec<(String, f64)
     };
     let mut rows = priors
         .iter()
+        .filter(|(key, _)| {
+            released
+                .iter()
+                .any(|released_key| *released_key == key.as_str())
+        })
         .filter_map(|(key, value)| value.as_f64().map(|gain| (key.clone(), gain)))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| {
@@ -313,6 +325,13 @@ fn apply_fps_metadata_recommendations(
     let Some(metadata) = fps_metadata else {
         return;
     };
+    if !fps_recommendations_released(metadata) {
+        factors.push(
+            "FPS artifact priors are blocked because no independent validation release is recorded."
+                .into(),
+        );
+        return;
+    }
     let ranked = fps_metadata_ranked_tweaks(metadata);
     if ranked.is_empty() {
         return;
@@ -418,7 +437,7 @@ fn apply_fps_metadata_recommendations(
                     &["hags-on"],
                 );
             }
-            "tweak_game_mode" if payload.game_context.is_some() => {
+            "tweak_game_mode" if strong_signal && payload.game_context.is_some() => {
                 push_unique(recommended_functions, "game-mode-on");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
                 push_fps_metadata_score(
@@ -432,9 +451,10 @@ fn apply_fps_metadata_recommendations(
                 );
             }
             "tweak_low_timer_resolution"
-                if payload.frametime_p95_ms >= 16.0
+                if strong_signal
+                    && (payload.frametime_p95_ms >= 16.0
                     || payload.frame_drop_ratio >= 0.05
-                    || payload.anomaly_score >= 0.25 =>
+                    || payload.anomaly_score >= 0.25) =>
             {
                 push_unique(recommended_functions, "low-timer-resolution");
                 push_fps_metadata_factor(factors, metadata, &key, gain);
@@ -449,7 +469,9 @@ fn apply_fps_metadata_recommendations(
                 );
             }
             "tweak_service"
-                if payload.background_process_count >= 70 || payload.cpu_total_pct >= 60.0 =>
+                if strong_signal
+                    && (payload.background_process_count >= 70
+                        || payload.cpu_total_pct >= 60.0) =>
             {
                 push_unique(recommended_functions, "diagtrack-off");
                 push_unique(recommended_functions, "maps-broker-off");
@@ -510,7 +532,10 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
     let mut factors = Vec::new();
     factors.push(format!("OS runtime signal: {}.", std::env::consts::OS));
     if fps_status.loadable {
-        factors.push("FPS ONNX artifact is loadable; live recommendations use telemetry pressure plus trained FPS tweak priors from the local artifact metadata.".into());
+        factors.push(
+            "FPS ONNX artifact is structurally loadable but is not executed by this endpoint."
+                .into(),
+        );
     } else if fps_status.available {
         factors.push("FPS model artifact was found, but telemetry fallback remains active for this inference call.".into());
     }
@@ -720,7 +745,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         recommended_functions,
         function_scores,
         summary: format!(
-            "Local model {} estimates a {} spike probability using {}.",
+            "Heuristic runtime {} estimates a {} pressure score using {}.",
             metadata.version,
             (spike_probability * 100.0).round(),
             signal_scope
@@ -729,8 +754,13 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
         model_version: Some(metadata.version),
         model_source: Some(if mode == "unavailable" {
             "unavailable".into()
-        } else if fps_status.loadable && fps_metadata.is_some() {
-            format!("{}+fps-metadata", metadata.model_source)
+        } else if fps_status.loadable
+            && fps_metadata
+                .as_ref()
+                .map(fps_recommendations_released)
+                .unwrap_or(false)
+        {
+            format!("{}+validated-fps-metadata-prior", metadata.model_source)
         } else {
             metadata.model_source
         }),
@@ -740,7 +770,7 @@ pub fn infer(payload: MlInferenceRequest) -> MlInferencePayload {
 
 #[cfg(test)]
 mod tests {
-    use super::infer;
+    use super::{fps_metadata_ranked_tweaks, infer};
     use crate::models::{MlGameContext, MlInferenceRequest, MlSystemProfile};
 
     #[test]
@@ -819,5 +849,34 @@ mod tests {
         assert!(score.expected_gain_pct > 0.0);
         assert!(!score.reason.is_empty());
         assert!(!score.signals.is_empty());
+    }
+
+    #[test]
+    fn blocks_unreleased_fps_metadata_priors() {
+        let metadata = serde_json::json!({
+            "tweak_gain_priors": {
+                "tweak_power_plan": 0.08
+            },
+            "recommendation_release": {
+                "enabled": false,
+                "released_tweaks": []
+            }
+        });
+        assert!(fps_metadata_ranked_tweaks(&metadata).is_empty());
+
+        let released = serde_json::json!({
+            "tweak_gain_priors": {
+                "tweak_power_plan": 0.08,
+                "tweak_game_mode": 0.02
+            },
+            "recommendation_release": {
+                "enabled": true,
+                "released_tweaks": ["tweak_power_plan"]
+            }
+        });
+        assert_eq!(
+            fps_metadata_ranked_tweaks(&released),
+            vec![("tweak_power_plan".into(), 0.08)]
+        );
     }
 }

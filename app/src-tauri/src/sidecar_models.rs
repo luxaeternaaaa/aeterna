@@ -62,6 +62,13 @@ pub struct AutorunEntry {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct ServiceRuntimeSummary {
+    pub name: String,
+    pub startup_type: Option<u32>,
+    pub running: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct RegistryPresetSummary {
     pub id: String,
     pub title: String,
@@ -148,6 +155,8 @@ pub struct OptimizationStatePayload {
     pub power_plans: Vec<PowerPlanSummary>,
     #[serde(default)]
     pub autoruns: Vec<AutorunEntry>,
+    #[serde(default)]
+    pub services: Vec<ServiceRuntimeSummary>,
     pub registry_presets: Vec<RegistryPresetSummary>,
     pub activity: Vec<ActivityEntry>,
     pub last_snapshot: Option<SnapshotMeta>,
@@ -248,12 +257,25 @@ pub struct MlInferenceRequest {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct MlFunctionScore {
+    pub function_id: String,
+    pub confidence: f64,
+    pub expected_gain_pct: f64,
+    pub reason: String,
+    pub source: String,
+    #[serde(default)]
+    pub signals: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct MlInferencePayload {
     pub spike_probability: f64,
     pub risk_label: String,
     pub confidence: f64,
     pub recommended_tweaks: Vec<String>,
     pub recommended_functions: Vec<String>,
+    #[serde(default)]
+    pub function_scores: Vec<MlFunctionScore>,
     pub summary: String,
     pub factors: Vec<String>,
     pub model_version: Option<String>,

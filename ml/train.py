@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         "--regressor",
         choices=["auto", "lightgbm", "catboost", "random_forest", "ridge"],
         default="auto",
-        help="Regression model family. `auto` selects the lowest CV MAPE from the benchmark table.",
+        help="Regression model family. `auto` ranks CV MAE, MAPE, and R2 together.",
     )
     parser.add_argument("--skip-eda", action="store_true")
     return parser.parse_args()
@@ -71,23 +71,54 @@ def main() -> None:
         export_synthetic_fps_csv(csv_path, rows=args.rows, seed=args.seed)
         print(f"Generated synthetic FPS sessions: {csv_path}")
 
-    loader = DatasetLoader()
+    loader = DatasetLoader(include_tweaks=True)
     loaded = loader.load(csv_path)
+    tweak_loader = DatasetLoader(include_tweaks=False)
+    tweak_loaded = tweak_loader.fit_transform(loaded.raw)
     y_tweak, tweak_gains = loader.derive_tweak_labels(loaded.raw, min_gain=args.min_gain)
     groups = loaded.raw["session_config_id"] if "session_config_id" in loaded.raw.columns else None
 
-    baseline_metrics = benchmark_regressors(loaded.X, loaded.y, groups=groups, cv=args.cv, random_state=args.seed)
+    baseline_metrics = benchmark_regressors(
+        loaded.feature_frame,
+        loaded.y,
+        groups=groups,
+        cv=args.cv,
+        random_state=args.seed,
+        dataset_loader=loader,
+    )
     selected_regressor = select_best_regressor(baseline_metrics, args.regressor)
     model = AeternaModel(
         dataset_loader=loader,
+        tweak_dataset_loader=tweak_loader,
         confidence_threshold=args.confidence_threshold,
         random_state=args.seed,
         regressor_kind=selected_regressor,
     )
-    regression_metrics = model.evaluate_regression_cv(loaded.X, loaded.y, cv=args.cv, groups=groups)
-    tweak_metrics = model.evaluate_tweak_cv(loaded.X, y_tweak, cv=args.cv, groups=groups) if not y_tweak.empty else {}
+    model.training_data_origin = "provided-csv" if args.csv else "synthetic-generator"
+    regression_metrics = model.evaluate_regression_cv(
+        loaded.feature_frame,
+        loaded.y,
+        cv=args.cv,
+        groups=groups,
+    )
+    tweak_metrics = (
+        model.evaluate_tweak_cv(
+            tweak_loaded.feature_frame,
+            y_tweak,
+            cv=args.cv,
+            groups=groups,
+        )
+        if not y_tweak.empty
+        else {}
+    )
     ablation_summary = tweak_ablation_summary(tweak_gains) if not tweak_gains.empty else {}
-    model.fit(loaded.X, loaded.y, y_tweak, tweak_gains=tweak_gains)
+    model.fit(
+        loaded.X,
+        loaded.y,
+        y_tweak,
+        tweak_gains=tweak_gains,
+        X_tweak=tweak_loaded.X,
+    )
 
     validation_metrics: dict[str, object] = {}
     if args.validation_csv:
@@ -96,12 +127,14 @@ def main() -> None:
         validation_y = validation_frame[loader.target_columns].astype(float)
         validation_metrics["regression"] = evaluate_regressor_holdout(model.regressor, validation_X, validation_y)
         validation_tweak_y, _ = loader.derive_tweak_labels(validation_frame, min_gain=args.min_gain)
+        validation_tweak_X = tweak_loader.transform_features(validation_frame)
         validation_metrics["tweaks"] = evaluate_tweak_holdout(
             model,
-            validation_X,
+            validation_tweak_X,
             validation_tweak_y,
             threshold=args.confidence_threshold,
         )
+        model.apply_external_tweak_validation(validation_metrics["tweaks"])
 
     onnx_path = args.model_dir / "aeterna_fps_model.onnx"
     metadata = model.save_to_onnx(onnx_path)
@@ -114,10 +147,19 @@ def main() -> None:
             "demo_predictions": examples,
             "evaluation_protocol": {
                 "cv": args.cv,
-                "split": "GroupKFold by session_config_id when available; KFold fallback otherwise.",
-                "positive_tweak_label": f"paired mean_fps gain >= {args.min_gain:.2%}",
+                "split": "Fold-local preprocessing with GroupKFold by session_config_id when available; KFold fallback otherwise.",
+                "positive_tweak_label": (
+                    f"paired baseline-only mean_fps gain >= {args.min_gain:.2%}; "
+                    "rows without a measured counterfactual are masked, not negative"
+                ),
                 "selected_regressor": selected_regressor,
-                "regressor_selection": "lowest mean target MAPE in benchmark table" if args.regressor == "auto" else "manual CLI selection",
+                "regressor_selection": (
+                    "lowest combined cross-validation rank across MAE, MAPE, and R2"
+                    if args.regressor == "auto"
+                    else "manual CLI selection"
+                ),
+                "external_validation_required_for_runtime_release": True,
+                "post_treatment_features_excluded": ["cpu_util", "gpu_util", "vram_util", "temperature"],
             },
         }
     )

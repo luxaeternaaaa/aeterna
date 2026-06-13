@@ -375,6 +375,12 @@ export interface AutorunEntry {
   supported: boolean
 }
 
+export interface ServiceRuntimeSummary {
+  name: string
+  startup_type: number | null
+  running: boolean
+}
+
 export interface ActivityEntry {
   id: string
   timestamp: string
@@ -396,6 +402,7 @@ export interface OptimizationRuntimeState {
   selected_process: SelectedProcessState | null
   power_plans: PowerPlanSummary[]
   autoruns: AutorunEntry[]
+  services: ServiceRuntimeSummary[]
   registry_presets: RegistryPresetSummary[]
   activity: ActivityEntry[]
   last_snapshot: SnapshotRecord | null

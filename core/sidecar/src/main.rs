@@ -26,7 +26,7 @@ use models::{
     ApplyRegistryPresetRequest, ApplyRegistryPresetResponse, ApplyTweakRequest, ApplyTweakResponse,
     AttachSessionRequest, InspectRequest, IpcRequest, IpcResponse, MlInferenceRequest,
     OptimizationStatePayload, RollbackRequest, RollbackResponse, SelectedProcessState,
-    SessionState, SnapshotMeta, StartupDiagnostics,
+    ServiceRuntimeSummary, SessionState, SnapshotMeta, StartupDiagnostics,
 };
 use serde_json::{json, Value};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -63,6 +63,22 @@ fn service_names_for_preset(preset_id: &str) -> Vec<&'static str> {
         "print_spooler_off" => vec!["Spooler"],
         _ => Vec::new(),
     }
+}
+
+fn managed_service_names() -> Vec<&'static str> {
+    vec![
+        "SysMain",
+        "WSearch",
+        "DPS",
+        "DiagTrack",
+        "MapsBroker",
+        "XblAuthManager",
+        "XblGameSave",
+        "XboxNetApiSvc",
+        "XboxGipSvc",
+        "DoSvc",
+        "Spooler",
+    ]
 }
 
 fn snapshot_extra_u32(value: &Value, key: &str) -> Option<u32> {
@@ -154,6 +170,16 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
         selected_process,
         power_plans: power::list_power_plans()?,
         autoruns: autoruns::list_autoruns().unwrap_or_default(),
+        services: managed_service_names()
+            .into_iter()
+            .map(|service_name| ServiceRuntimeSummary {
+                name: service_name.into(),
+                startup_type: services::query_service_start_type(service_name)
+                    .ok()
+                    .flatten(),
+                running: services::is_service_running(service_name).unwrap_or(false),
+            })
+            .collect(),
         registry_presets: registry::preset_summaries(
             &session,
             policy::system_settings().show_advanced_registry_details,
@@ -230,7 +256,8 @@ fn finish_tweak_apply(
     risk: &str,
     inspect_process_id: Option<u32>,
 ) -> Result<ApplyTweakResponse, String> {
-    let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+    snapshots::set_snapshot_track_kind(&snapshot.id, track_kind)?;
+    snapshots::mark_snapshot_applied(&snapshot.id)?;
     telemetry::track_tweak(&snapshot.id, track_kind);
     let entry = activity::append(snapshots::activity(
         "tweak",
@@ -572,7 +599,11 @@ fn apply_registry_preset(
         let snapshot = snapshots::create_snapshot(draft)?;
         let stored = snapshots::load_snapshot(&snapshot.id)?;
         registry::apply_snapshot(&stored)?;
-        let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+        snapshots::set_snapshot_track_kind(
+            &snapshot.id,
+            &format!("registry:{}", request.preset_id),
+        )?;
+        snapshots::mark_snapshot_applied(&snapshot.id)?;
         telemetry::track_tweak(&snapshot.id, &format!("registry:{}", request.preset_id));
         telemetry::sync_pending_restore_state();
         let detail = if request.preset_id == "gpu_preference_high" {
@@ -667,7 +698,11 @@ fn apply_registry_preset(
     for service_name in &service_names {
         let _ = services::stop_service(service_name);
     }
-    let _ = snapshots::mark_snapshot_applied(&snapshot.id);
+    snapshots::set_snapshot_track_kind(
+        &snapshot.id,
+        &format!("registry:{}", request.preset_id),
+    )?;
+    snapshots::mark_snapshot_applied(&snapshot.id)?;
     telemetry::track_tweak(&snapshot.id, &format!("registry:{}", request.preset_id));
     telemetry::sync_pending_restore_state();
     let entry = activity::append(models::ActivityEntry {

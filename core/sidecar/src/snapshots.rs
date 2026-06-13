@@ -60,6 +60,21 @@ pub fn save_snapshot(snapshot: &TweakSnapshot) -> Result<(), String> {
     write_snapshot(snapshot)
 }
 
+pub fn set_snapshot_track_kind(snapshot_id: &str, track_kind: &str) -> Result<TweakSnapshot, String> {
+    let mut snapshot = load_snapshot(snapshot_id)?;
+    if !snapshot.extra.is_object() {
+        snapshot.extra = serde_json::json!({});
+    }
+    if let Some(extra) = snapshot.extra.as_object_mut() {
+        extra.insert(
+            "track_kind".into(),
+            serde_json::Value::String(track_kind.into()),
+        );
+    }
+    save_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
 pub fn mark_snapshot_applied(snapshot_id: &str) -> Result<TweakSnapshot, String> {
     let mut snapshot = load_snapshot(snapshot_id)?;
     snapshot.applied_at = Some(now().format(&Rfc3339).expect("current utc time should format as rfc3339"));

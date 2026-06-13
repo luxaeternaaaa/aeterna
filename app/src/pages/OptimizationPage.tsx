@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   BellOff,
   Boxes,
@@ -46,6 +47,7 @@ import type {
   DashboardPayload,
   OptimizationRuntimeState,
   RollbackResponse,
+  ServiceRuntimeSummary,
 } from '../types'
 import {
   dangerWarningForOptimizationFunction,
@@ -79,6 +81,9 @@ interface OptimizerItem {
   title: string
   description: string
   warning?: string
+  dangerNote?: string
+  recommendation?: string
+  recommendationNotes?: string[]
   detail?: string
   icon: LucideIcon
   mode: ItemMode
@@ -114,6 +119,14 @@ interface ApplyRunState {
   rebootRequired: boolean
   stats: ApplyStats
   total: number
+}
+
+interface ServiceGroupInfo {
+  risk: 'safe' | 'dangerous'
+  services: Array<{
+    displayName: string
+    name: string
+  }>
 }
 
 const SNAPSHOT_STORAGE_KEY = 'aeterna.optimization.v2.snapshots'
@@ -198,16 +211,61 @@ const EMPTY_APPLY_STATS: ApplyStats = {
   tweaksApplied: 0,
 }
 
-const serviceLikeItemIds = new Set([
-  'delivery-optimization-off',
-  'diagtrack-off',
-  'dps-off',
-  'maps-broker-off',
-  'print-spooler-off',
-  'sysmain-off',
-  'windows-search-off',
-  'xbox-services-off',
-])
+const SERVICE_GROUP_INFO: Record<string, ServiceGroupInfo> = {
+  'maps-broker-off': {
+    risk: 'safe',
+    services: [{ name: 'MapsBroker', displayName: 'Downloaded Maps Manager' }],
+  },
+  'windows-search-off': {
+    risk: 'safe',
+    services: [{ name: 'WSearch', displayName: 'Windows Search' }],
+  },
+  'sysmain-off': {
+    risk: 'safe',
+    services: [{ name: 'SysMain', displayName: 'SysMain' }],
+  },
+  'print-spooler-off': {
+    risk: 'safe',
+    services: [{ name: 'Spooler', displayName: 'Print Spooler' }],
+  },
+  'delivery-optimization-off': {
+    risk: 'safe',
+    services: [{ name: 'DoSvc', displayName: 'Delivery Optimization' }],
+  },
+  'diagtrack-off': {
+    risk: 'safe',
+    services: [{ name: 'DiagTrack', displayName: 'Connected User Experiences and Telemetry' }],
+  },
+  'dps-off': {
+    risk: 'dangerous',
+    services: [{ name: 'DPS', displayName: 'Diagnostic Policy Service' }],
+  },
+  'xbox-services-off': {
+    risk: 'dangerous',
+    services: [
+      { name: 'XblAuthManager', displayName: 'Xbox Live Auth Manager' },
+      { name: 'XblGameSave', displayName: 'Xbox Live Game Save' },
+      { name: 'XboxNetApiSvc', displayName: 'Xbox Live Networking Service' },
+      { name: 'XboxGipSvc', displayName: 'Xbox Accessory Management Service' },
+    ],
+  },
+}
+
+const serviceLikeItemIds = new Set(Object.keys(SERVICE_GROUP_INFO))
+
+function itemsForCategory(items: OptimizerItem[], category: CategoryId): OptimizerItem[] {
+  if (category === 'services') return items.filter((item) => serviceLikeItemIds.has(item.id))
+  return items.filter((item) => item.category === category)
+}
+
+function serviceStartupTypeLabel(value: number | null): string {
+  if (value === 0) return 'Boot'
+  if (value === 1) return 'System'
+  if (value === 2) return 'Automatic'
+  if (value === 3) return 'Manual'
+  if (value === 4) return 'Disabled'
+  return 'Unavailable'
+}
 
 function addApplyStats(current: ApplyStats, next: Partial<ApplyStats>): ApplyStats {
   return {
@@ -303,11 +361,66 @@ function dangerWarningForOptimizerItem(item: OptimizerItem): string {
   const definition = getOptimizationFunctionById(item.id)
   if (definition) return dangerWarningForOptimizationFunction(definition)
   const details = [
+    item.dangerNote,
     item.warning,
     item.requiresReboot ? 'A Windows restart is required before the final state can be trusted.' : null,
     item.requiresProcess ? 'The action depends on a selected game process still running.' : null,
   ].filter((line): line is string => Boolean(line))
   return `You are enabling "${item.title}". Continue only if you understand what this function changes, what can stop working, and how to roll it back.${details.length ? `\n\n${details.join('\n')}` : ''}`
+}
+
+function dangerNoteForOptimizerItem(item: OptimizerItem): string | null {
+  const definition = getOptimizationFunctionById(item.id)
+  if (definition?.dangerNote) return definition.dangerNote
+  if (item.dangerNote) return item.dangerNote
+  if (!isDangerousOptimizerItem(item)) return null
+  if (item.requiresReboot) {
+    return 'This tweak changes a system-level setting and requires a Windows restart. Apply it only with a rollback snapshot.'
+  }
+  return 'This tweak can affect system stability, compatibility, or security. Apply it only if you understand the trade-offs.'
+}
+
+const categoryRecommendations: Record<CategoryId, string> = {
+  basic: 'Use this setting only when it matches how you use the PC, then compare responsiveness and frame-time consistency before keeping it.',
+  security: 'Keep the Windows default unless you understand the protection or compatibility trade-off and have a tested rollback path.',
+  power: 'Prefer this on a desktop or while connected to power. Check temperatures, fan noise, and idle power after applying it.',
+  debloat: 'Apply only when the Windows component is not part of your workflow. Restore it if dependent apps or shell features stop working.',
+  services: 'Disable a service only when you do not use the feature it supports. Test related apps and devices before keeping the change.',
+  privacy: 'Use this when the reduced background activity is worth the loss of diagnostics, personalization, or synchronization.',
+  tweaks: 'Treat this as an advanced Windows setting. Change one item at a time and keep it only after a repeatable before-and-after test.',
+  autoruns: 'Disable the startup entry only if you recognize the application and do not need it immediately after signing in.',
+}
+
+function guidanceForOptimizerItem(item: OptimizerItem): { recommendation: string; notes: string[] } {
+  const definition = getOptimizationFunctionById(item.id)
+  const dangerNote = definition?.dangerNote ?? item.dangerNote
+  const generatedNotes = [
+    item.requiresProcess ? 'A running game process must be selected before this function can be applied.' : null,
+    item.requiresReboot ? 'Restart Windows after applying or restoring this function so the final state can be verified.' : null,
+    item.warning ? item.warning : null,
+    item.detail ? `Location: ${item.detail}` : null,
+  ].filter((note): note is string => Boolean(note))
+  const notes = [...(item.recommendationNotes ?? []), ...generatedNotes]
+
+  if (item.supported === false) {
+    return {
+      recommendation:
+        item.recommendation ??
+        dangerNote ??
+        'This function is shown for transparency, but Aeterna does not apply it automatically. Keep the current Windows setting unless you have a manual, tested rollback plan.',
+      notes: dangerNote
+        ? [
+            ...notes,
+            'Aeterna shows this function for transparency but does not apply it automatically. Keep the current Windows setting unless you have a tested manual rollback plan.',
+          ]
+        : notes,
+    }
+  }
+
+  return {
+    recommendation: item.recommendation ?? dangerNote ?? categoryRecommendations[item.category],
+    notes,
+  }
 }
 
 function confirmDangerousOptimizerItems(items: OptimizerItem[], action: string): boolean {
@@ -555,6 +668,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Windows Defender (Antivirus)',
       description: 'Disabling antivirus is unsafe; Aeterna will not automate this action.',
+      dangerNote: 'Disabling Microsoft Defender removes the built-in real-time antivirus layer and can leave the PC exposed to untrusted files.',
       icon: Shield,
       mode: 'manual',
     }),
@@ -577,6 +691,7 @@ function staticItems(): OptimizerItem[] {
       title: 'VBS (Memory Integrity, DeviceGuard, HVCI, CG)',
       description: 'Full VBS policy stacks are hardware/build dependent and are not changed as a group.',
       warning: 'Will not work if disabled: EAC Kernel Patch Protection Disabled',
+      dangerNote: 'Disabling the VBS protection stack weakens kernel and credential isolation and may conflict with anti-cheat requirements.',
       icon: Cpu,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -587,6 +702,7 @@ function staticItems(): OptimizerItem[] {
       title: 'VBS (Virtualization Based Security)',
       description: 'Global VBS changes are not automated without a machine-specific compatibility plan.',
       warning: 'Will not work if disabled: EAC Kernel Patch Protection Disabled',
+      dangerNote: 'Disabling Virtualization Based Security reduces kernel isolation and can make security-sensitive software reject the system state.',
       icon: Cpu,
       mode: 'manual',
     }),
@@ -632,6 +748,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'AMSI',
       description: 'AMSI bypass/disable actions are unsafe and are not automated.',
+      dangerNote: 'Disabling AMSI prevents supported antivirus products from inspecting PowerShell and other script content before execution.',
       icon: Shield,
       mode: 'manual',
     }),
@@ -640,6 +757,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Code Integrity',
       description: 'Unsupported Code Integrity policy toggles are blocked.',
+      dangerNote: 'Weakening Code Integrity can allow untrusted or vulnerable kernel modules to load.',
       icon: Lock,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -649,6 +767,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Code Integrity',
       description: 'Code Integrity is left under Windows security control.',
+      dangerNote: 'Weakening Code Integrity can allow untrusted or vulnerable kernel modules to load.',
       icon: Lock,
       mode: 'manual',
     }),
@@ -665,6 +784,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'UAC',
       description: 'UAC policy changes are intentionally blocked.',
+      dangerNote: 'Disabling User Account Control removes an important elevation boundary for applications and scripts.',
       icon: Shield,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -674,6 +794,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'UAC',
       description: 'Aeterna keeps User Account Control under Windows defaults.',
+      dangerNote: 'Disabling User Account Control removes an important elevation boundary for applications and scripts.',
       icon: Shield,
       mode: 'manual',
     }),
@@ -682,6 +803,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Spectre v2',
       description: 'CPU mitigation changes require CPU/BIOS-specific validation.',
+      dangerNote: 'Disabling CPU vulnerability mitigations can expose data across process and privilege boundaries.',
       icon: Cpu,
       mode: 'manual',
     }),
@@ -690,6 +812,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Spectre v2',
       description: 'Unsupported CPU mitigation mode for this build.',
+      dangerNote: 'Disabling CPU vulnerability mitigations can expose data across process and privilege boundaries.',
       icon: Cpu,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -699,6 +822,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Meltdown',
       description: 'CPU mitigation changes are not automated.',
+      dangerNote: 'Disabling CPU vulnerability mitigations can expose protected kernel data.',
       icon: Cpu,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -708,6 +832,7 @@ function staticItems(): OptimizerItem[] {
       category: 'security',
       title: 'Downfall',
       description: 'CPU mitigation changes are not automated.',
+      dangerNote: 'Disabling CPU vulnerability mitigations can expose data processed by affected CPUs.',
       icon: Cpu,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -805,6 +930,11 @@ function staticItems(): OptimizerItem[] {
       category: 'privacy',
       title: 'Telemetry service',
       description: 'Disables Connected User Experiences and Telemetry service.',
+      recommendation: 'Disable this on a personal or gaming PC when you do not participate in Windows Insider or depend on Microsoft diagnostic support.',
+      recommendationNotes: [
+        'This reduces background diagnostic sessions and scheduled uploads.',
+        'Keep it enabled on managed work PCs where administrators rely on Windows analytics.',
+      ],
       icon: Activity,
       mode: 'optimal',
       presetId: 'diagtrack_off',
@@ -815,6 +945,10 @@ function staticItems(): OptimizerItem[] {
       category: 'privacy',
       title: 'Advertising ID',
       description: 'Disables the per-user advertising identifier.',
+      recommendation: 'Disable this when personalized Store advertising and cross-app recommendations are not useful to you.',
+      recommendationNotes: [
+        'Apps can still show generic advertising, but they cannot use the Windows advertising identifier for personalization.',
+      ],
       icon: Shield,
       mode: 'optimal',
       presetId: 'advertising_id_off',
@@ -823,8 +957,12 @@ function staticItems(): OptimizerItem[] {
     registryItem({
       id: 'telemetry-minimal',
       category: 'privacy',
-      title: 'Windows diagnostic telemetry',
-      description: 'Sets Windows diagnostic telemetry policy to the minimum value.',
+      title: 'Data Collection Policy Telemetry',
+      description: 'Sets the Windows diagnostic data policy to the minimum value accepted by the installed edition.',
+      recommendation: 'Use the minimum diagnostic level on personal PCs that do not use Windows Copilot analytics or organization-wide Microsoft 365 reporting.',
+      recommendationNotes: [
+        'Windows edition and servicing rules can enforce a higher effective level than the policy value.',
+      ],
       icon: Activity,
       mode: 'optimal',
       stateWhenActive: 'Enabled',
@@ -835,8 +973,12 @@ function staticItems(): OptimizerItem[] {
     registryItem({
       id: 'feedback-frequency-off',
       category: 'privacy',
-      title: 'Feedback prompts',
-      description: 'Disables Windows feedback prompt frequency for the current user.',
+      title: 'Windows Feedback and Diagnostics',
+      description: 'Disables recurring Windows feedback prompts for the current user.',
+      recommendation: 'Disable this when you do not participate in Windows Insider feedback and want to avoid feedback notifications during games or full-screen work.',
+      recommendationNotes: [
+        'Manual feedback through Feedback Hub remains available.',
+      ],
       icon: BellOff,
       mode: 'optimal',
       presetId: 'feedback_frequency_off',
@@ -845,8 +987,12 @@ function staticItems(): OptimizerItem[] {
     registryItem({
       id: 'activity-history-off',
       category: 'privacy',
-      title: 'Activity history sync',
-      description: 'Disables activity history publishing and upload policies.',
+      title: 'Activity Feed',
+      description: 'Disables publishing and cloud synchronization of application and document activity history.',
+      recommendation: 'Disable this on personal or streaming PCs when you do not need activity history shared between Windows devices.',
+      recommendationNotes: [
+        'Recent activity may stop appearing across devices, but local application histories are not deleted.',
+      ],
       icon: Database,
       mode: 'optimal',
       presetId: 'activity_history_off',
@@ -857,6 +1003,10 @@ function staticItems(): OptimizerItem[] {
       category: 'privacy',
       title: 'Windows Error Reporting',
       description: 'Disables Windows Error Reporting background collection.',
+      recommendation: 'Disable this on a stable gaming PC only when you do not need automatic crash reports or Microsoft troubleshooting data.',
+      recommendationNotes: [
+        'Keep it enabled while diagnosing application or driver crashes because dump collection can be useful.',
+      ],
       icon: Info,
       mode: 'maximum',
       presetId: 'windows_error_reporting_off',
@@ -865,8 +1015,12 @@ function staticItems(): OptimizerItem[] {
     registryItem({
       id: 'app-launch-tracking-off',
       category: 'privacy',
-      title: 'App launch tracking',
-      description: 'Disables app launch tracking used by Start personalization.',
+      title: 'Hide Most Used Apps',
+      description: 'Disables app launch tracking used by the Start menu to build the most-used applications list.',
+      recommendation: 'Disable this on shared or streaming PCs when recent application usage should not appear in Start.',
+      recommendationNotes: [
+        'Start menu recommendations become less personalized after launch tracking is disabled.',
+      ],
       icon: Search,
       mode: 'optimal',
       presetId: 'app_launch_tracking_off',
@@ -889,6 +1043,10 @@ function staticItems(): OptimizerItem[] {
       title: 'Cross-Device Resume',
       description: 'Cross-device sync is left to Windows account/privacy settings.',
       warning: 'Will not work if disabled: Cross Device, sync with phone',
+      recommendation: 'Keep this enabled if you continue tasks, notifications, or browser activity between the PC and a phone; otherwise it can be disabled manually.',
+      recommendationNotes: [
+        'Disabling it can reduce background synchronization and device-to-device data exchange.',
+      ],
       icon: MonitorUp,
       mode: 'manual',
       badge: 'NOT SUPPORTED',
@@ -898,6 +1056,11 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Win32PrioritySeparation',
       description: 'Sets foreground scheduler quantum separation to the 0x2a tuning value.',
+      recommendation: 'Use 0x2a as a conservative foreground scheduling value. Change it only when repeatable CPU-bound testing shows better frame-time consistency.',
+      recommendationNotes: [
+        'This value changes how processor time is divided between the foreground application and background work.',
+        'A different hexadecimal value is not automatically safer or faster.',
+      ],
       icon: Keyboard,
       mode: 'optimal',
       stateWhenActive: 'Enabled',
@@ -911,6 +1074,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Service grouping (svchosts.exe)',
       description: 'Service host grouping is not changed automatically because the safe threshold depends on installed RAM and services.',
+      recommendation: 'Leave Windows service grouping at its current value on modern systems. Manual consolidation is mainly useful on low-memory PCs and increases the impact of a host-process failure.',
+      recommendationNotes: [
+        'Aeterna does not apply this because the correct threshold depends on installed memory and the active service set.',
+      ],
       icon: Boxes,
       mode: 'manual',
     }),
@@ -919,15 +1086,23 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Reserved Storage for Updates',
       description: 'Reserved storage management is not available in this build.',
+      recommendation: 'Keep reserved storage on systems with enough disk space so updates have a reliable staging area.',
+      recommendationNotes: [
+        'Removing it may recover several gigabytes, but feature updates can fail when the system drive is nearly full.',
+      ],
       icon: HardDrive,
       mode: 'manual',
-      badge: 'PRO',
+      badge: 'NOT SUPPORTED',
     }),
     registryItem({
       id: 'ntfs-last-access-off',
       category: 'tweaks',
       title: 'NTFS Last Access Update',
       description: 'Disables last-access timestamp updates to reduce metadata writes.',
+      recommendation: 'Disable last-access timestamp updates on gaming and general-purpose PCs that do not use backup or archival tools based on that timestamp.',
+      recommendationNotes: [
+        'This reduces metadata writes; some backup or auditing software may perform a larger rescan after the change.',
+      ],
       icon: HardDrive,
       mode: 'optimal',
       presetId: 'ntfs_last_access_off',
@@ -938,6 +1113,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: '8.3 Filename Convention',
       description: 'Disables legacy short filename creation for new files.',
+      recommendation: 'Disable short-name creation on clean systems that run modern software. Keep it enabled when old installers or legacy business applications are still required.',
+      recommendationNotes: [
+        'Existing short names are not removed; the setting affects creation of new names.',
+      ],
       icon: HardDrive,
       mode: 'optimal',
       presetId: 'ntfs_8dot3_off',
@@ -948,6 +1127,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Diagnostic Events',
       description: 'Diagnostic event policies are left visible for now until per-task rollback is implemented.',
+      recommendation: 'Keep diagnostic event channels enabled while troubleshooting sleep, power, or device problems; consider reducing them only on a stable system.',
+      recommendationNotes: [
+        'Aeterna does not change this until task-level rollback can restore each channel reliably.',
+      ],
       icon: Activity,
       mode: 'manual',
       stateWhenActive: 'Disabled',
@@ -959,6 +1142,10 @@ function staticItems(): OptimizerItem[] {
       title: 'Application Compatibility',
       description: 'Disables Application Compatibility inventory policy.',
       warning: 'Will not work if disabled: Launch games in EA Launcher',
+      recommendation: 'Use this only on a clean system with modern software. Keep compatibility services enabled for older games, legacy installers, and launchers that depend on Windows shims.',
+      recommendationNotes: [
+        'Disabling compatibility inventory can remove helper prompts but may prevent Windows from applying known application fixes.',
+      ],
       icon: MonitorUp,
       mode: 'maximum',
       presetId: 'application_compatibility_off',
@@ -969,6 +1156,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Automatic Maintenance',
       description: 'Disables Windows Automatic Maintenance policy.',
+      recommendation: 'Disable this only if you manually schedule Windows updates, security scans, drive optimization, and cleanup outside gaming hours.',
+      recommendationNotes: [
+        'The PC will no longer rely on the normal maintenance window for those background tasks.',
+      ],
       icon: Activity,
       mode: 'maximum',
       presetId: 'automatic_maintenance_off',
@@ -979,6 +1170,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'Scheduled Diagnostics',
       description: 'Scheduled diagnostics are not changed until task-level rollback lands.',
+      recommendation: 'Keep scheduled diagnostics enabled unless you monitor system health yourself and accept losing automatic checks for recurring Windows errors.',
+      recommendationNotes: [
+        'Aeterna does not change this until every affected scheduled task can be restored reliably.',
+      ],
       icon: Activity,
       mode: 'manual',
     }),
@@ -987,6 +1182,10 @@ function staticItems(): OptimizerItem[] {
       category: 'tweaks',
       title: 'UCPD',
       description: 'User Choice Protection Driver is not modified automatically.',
+      recommendation: 'Keep UCPD enabled unless you have a controlled deployment that must change default application associations through trusted scripts.',
+      recommendationNotes: [
+        'Disabling this protection can allow software to replace browser and file-association choices without the normal Windows confirmation flow.',
+      ],
       icon: Lock,
       mode: 'manual',
     }),
@@ -1063,7 +1262,7 @@ function runtimeActiveIds(runtimeState: OptimizationRuntimeState): Set<string> {
 function statusLabel(active: boolean, item: OptimizerItem) {
   if (item.supported === false) {
     return {
-      text: item.badge === 'PRO' ? 'PRO feature' : 'Not supported',
+      text: 'Not supported',
       tone: 'neutral' as const,
     }
   }
@@ -1110,15 +1309,23 @@ function OptimizationRow({
   disabled,
   item,
   onToggle,
+  runtimeServices,
 }: {
   active: boolean
   changed: boolean
   disabled: boolean
   item: OptimizerItem
   onToggle: () => void
+  runtimeServices: ServiceRuntimeSummary[]
 }) {
   const Icon = item.icon
   const label = statusLabel(active, item)
+  const [expanded, setExpanded] = useState(false)
+  const dangerTooltipId = useId()
+  const dangerNote = dangerNoteForOptimizerItem(item)
+  const guidance = guidanceForOptimizerItem(item)
+  const serviceGroup = SERVICE_GROUP_INFO[item.id] ?? null
+  const serviceStateByName = new globalThis.Map(runtimeServices.map((service) => [service.name.toLowerCase(), service]))
 
   return (
     <article
@@ -1127,39 +1334,50 @@ function OptimizationRow({
       }`}
     >
       <div className="flex min-w-0 items-center gap-4">
-        <Icon className="shrink-0 text-white/92" size={25} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h3 className="min-w-0 truncate text-[18px] font-semibold leading-6 text-white">{item.title}</h3>
-            <ChevronDown className="shrink-0 text-white/70" size={16} />
-            {item.requiresReboot ? (
-              <span className="rounded-md bg-[#e93c41] px-2 py-0.5 text-xs font-black uppercase text-white">Restart</span>
-            ) : null}
-            {item.requiresProcess ? (
-              <span className="rounded-md bg-[#315cff]/75 px-2 py-0.5 text-xs font-black uppercase text-white">Process</span>
-            ) : null}
-            {isDangerousOptimizerItem(item) ? (
-              <span className="rounded-md bg-[#3b2911] px-2 py-0.5 text-xs font-black uppercase text-[#ffcf5a]">Risk</span>
-            ) : null}
-            {item.badge ? (
-              <span className="rounded-md bg-[#e93c41] px-2 py-0.5 text-xs font-black uppercase text-white">{item.badge}</span>
-            ) : null}
-            {changed ? <span className="rounded-md bg-[#4f6ba8] px-2 py-0.5 text-xs font-bold text-white">Pending</span> : null}
-          </div>
-          {item.warning ? <p className="mt-1 text-sm font-semibold leading-5 text-[#ffd12f]">{item.warning}</p> : null}
-          {item.detail ? <p className="mt-1 truncate text-sm text-white/48">{item.detail}</p> : null}
-          {item.valueControl ? (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-semibold text-white/88">{item.valueControl.label}</span>
-              <input
-                className="h-8 w-28 rounded-lg border border-white/10 bg-white px-3 text-center font-bold text-[#070b1b] outline-none"
-                readOnly
-                value={item.valueControl.value}
+        <button
+          aria-describedby={dangerNote ? dangerTooltipId : undefined}
+          aria-expanded={expanded}
+          aria-label={item.title}
+          className="flex min-w-0 flex-1 items-center gap-4 rounded-xl text-left"
+          onClick={() => setExpanded((current) => !current)}
+          type="button"
+        >
+          <Icon className="shrink-0 text-white/92" size={25} />
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="min-w-0 truncate text-[18px] font-semibold leading-6 text-white">{item.title}</span>
+              <ChevronDown
+                className={`shrink-0 text-white/70 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                size={16}
               />
-              <span className="rounded-lg bg-[#315cff] px-3 py-1.5 text-xs font-black uppercase text-white">OK</span>
-            </div>
-          ) : null}
-        </div>
+              {dangerNote ? (
+                <span
+                  className="group/danger relative inline-flex shrink-0"
+                  title={dangerNote}
+                >
+                  <AlertTriangle aria-hidden="true" className="fill-[#e93c41] text-[#e93c41]" size={20} />
+                  <span
+                    className="pointer-events-none absolute left-1/2 top-[calc(100%+0.55rem)] z-30 w-max max-w-[390px] -translate-x-1/2 rounded-xl border border-[#6b49ff] bg-[#090d21] px-3 py-2 text-left text-xs font-semibold leading-5 text-white opacity-0 shadow-[0_14px_36px_rgba(0,0,0,0.5)] transition-opacity group-hover/danger:opacity-100"
+                    id={dangerTooltipId}
+                    role="tooltip"
+                  >
+                    {dangerNote}
+                  </span>
+                </span>
+              ) : null}
+              {item.requiresReboot ? (
+                <span className="rounded-md bg-[#e93c41] px-2 py-0.5 text-xs font-black uppercase text-white">Restart</span>
+              ) : null}
+              {item.requiresProcess ? (
+                <span className="rounded-md bg-[#315cff]/75 px-2 py-0.5 text-xs font-black uppercase text-white">Process</span>
+              ) : null}
+              {item.badge ? (
+                <span className="rounded-md bg-[#e93c41] px-2 py-0.5 text-xs font-black uppercase text-white">{item.badge}</span>
+              ) : null}
+              {changed ? <span className="rounded-md bg-[#4f6ba8] px-2 py-0.5 text-xs font-bold text-white">Pending</span> : null}
+            </span>
+          </span>
+        </button>
         <div className="flex shrink-0 items-center gap-3">
           <span
             className={`text-sm font-bold ${
@@ -1171,6 +1389,83 @@ function OptimizationRow({
           <OptimizerSwitch disabled={disabled || item.supported === false} onToggle={onToggle} tone={label.tone} />
         </div>
       </div>
+
+      {expanded ? (
+        <div className="mt-4 pl-10">
+          <p className="text-[16px] font-medium leading-6 text-white/88">{item.description}</p>
+          {item.warning ? (
+            <p className="mt-2 flex items-start gap-2 text-sm font-semibold leading-5 text-[#ffd12f]">
+              <Info className="mt-0.5 shrink-0" size={16} />
+              <span>{item.warning}</span>
+            </p>
+          ) : null}
+
+          <div className="mt-4 inline-flex items-center gap-1 rounded-full bg-[#34405c] px-3 py-1 text-xs font-black uppercase text-white">
+            Detailed description
+            <ChevronDown size={14} />
+          </div>
+
+          {serviceGroup ? (
+            <div className="mt-3 rounded-[1.2rem] border border-white/10 bg-[#111936]/88 p-3">
+              <p className="px-1 text-xs font-black uppercase tracking-[0.08em] text-[#7ba2ff]">Included services</p>
+              <div className="mt-2 space-y-2">
+                {serviceGroup.services.map((service) => {
+                  const runtimeService = serviceStateByName.get(service.name.toLowerCase())
+                  return (
+                    <div
+                      key={service.name}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#070b1b]/72 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-white">{service.displayName}</p>
+                        <p className="mt-0.5 text-xs font-semibold text-white/45">{service.name}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4 text-xs font-bold">
+                        <span className="text-white/55">
+                          Startup:{' '}
+                          <span className={runtimeService?.startup_type === 4 ? 'text-[#ff4e5e]' : 'text-[#ffd12f]'}>
+                            {serviceStartupTypeLabel(runtimeService?.startup_type ?? null)}
+                          </span>
+                        </span>
+                        <span className="text-white/55">
+                          Status:{' '}
+                          <span className={runtimeService?.running ? 'text-[#315cff]' : 'text-white/45'}>
+                            {runtimeService ? (runtimeService.running ? 'Running' : 'Stopped') : 'Unavailable'}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 rounded-[1.2rem] border-2 border-[#315cff] bg-[#24408e]/72 px-5 py-4">
+            <p className="text-sm font-black uppercase text-white">Recommendation</p>
+            <p className="mt-2 text-[15px] font-medium leading-6 text-white/92">{guidance.recommendation}</p>
+            {guidance.notes.length > 0 ? (
+              <div className="mt-3 space-y-1.5 text-sm font-medium leading-5 text-white/72">
+                {guidance.notes.map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          {item.valueControl ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold text-white/88">{item.valueControl.label}</span>
+              <input
+                className="h-8 w-28 rounded-lg border border-white/10 bg-white px-3 text-center font-bold text-[#070b1b] outline-none"
+                readOnly
+                value={item.valueControl.value}
+              />
+              <span className="rounded-lg bg-[#315cff] px-3 py-1.5 text-xs font-black uppercase text-white">OK</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -1381,15 +1676,16 @@ export function OptimizationPage({
     window.localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshotMap))
   }, [snapshotMap])
 
-  const visibleItems = items.filter((item) => item.category === category)
+  const visibleItems = itemsForCategory(items, category)
   const changedItems = items.filter((item) => desired.has(item.id) !== activeIds.has(item.id))
   const selectedCategory = categories.find((item) => item.id === category) ?? categories[0]
   const contentTitle = category === 'basic' ? 'Basic settings' : selectedCategory.label
   const latestSample = dashboard.history.at(-1) ?? null
 
   const setCategoryMode = (nextMode: MethodMode, targetCategory = category) => {
-    const targets = items.filter((row) => {
-      if (row.category !== targetCategory || row.supported === false) return false
+    const categoryItems = itemsForCategory(items, targetCategory)
+    const targets = categoryItems.filter((row) => {
+      if (row.supported === false) return false
       if (nextMode === 'optimal') return row.mode === 'optimal'
       if (nextMode === 'maximum') return row.mode !== 'manual'
       return false
@@ -1400,7 +1696,7 @@ export function OptimizationPage({
     setDirty(true)
     setDesired((current) => {
       const next = new Set(current)
-      for (const item of items.filter((row) => row.category === targetCategory)) {
+      for (const item of categoryItems) {
         if (item.supported === false) continue
         next.delete(item.id)
         if (nextMode === 'optimal' && item.mode === 'optimal') next.add(item.id)
@@ -1603,7 +1899,7 @@ export function OptimizationPage({
     <div className="grid h-full min-h-0 grid-cols-[minmax(240px,300px)_minmax(0,1fr)] gap-5 text-white">
       <aside className="flex min-h-0 flex-col gap-5">
         <h1 className="px-3 text-2xl font-black">Optimization</h1>
-        <div className="min-h-0 rounded-[1.35rem] bg-[#070b1b]/86 p-3">
+        <div className="min-h-0 overflow-y-auto rounded-[1.35rem] bg-[#070b1b]/86 p-3">
           <button className="mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-base font-semibold text-white" type="button">
             <Boxes size={20} />
             <span>My tweaks</span>
@@ -1725,20 +2021,56 @@ export function OptimizationPage({
         <div className="min-h-0 flex-1 overflow-y-auto pr-2">
           <div className="space-y-2 pb-5">
             {visibleItems.length > 0 ? (
-              visibleItems.map((item) => {
-                const active = desired.has(item.id)
-                const current = activeIds.has(item.id)
-                return (
-                  <OptimizationRow
-                    key={item.id}
-                    active={active}
-                    changed={active !== current}
-                    disabled={busy !== null}
-                    item={item}
-                    onToggle={() => toggleDesiredItem(item, active)}
-                  />
-                )
-              })
+              category === 'services' ? (
+                ([
+                  { id: 'safe' as const, label: 'Safe when unused', tone: 'text-white' },
+                  { id: 'dangerous' as const, label: 'Dangerous to disable', tone: 'text-[#ff4e5e]' },
+                ]).map((section) => {
+                  const sectionItems = visibleItems.filter((item) => SERVICE_GROUP_INFO[item.id]?.risk === section.id)
+                  if (sectionItems.length === 0) return null
+                  return (
+                    <section key={section.id} className="space-y-2">
+                      <div className="flex items-center gap-3 px-1 pb-1 pt-2">
+                        <h3 className={`text-lg font-black ${section.tone}`}>{section.label}</h3>
+                        <span className="rounded-full bg-[#5d6f9e]/70 px-5 py-1.5 text-xs font-semibold text-white">
+                          Tip <ChevronDown className="ml-1 inline" size={13} />
+                        </span>
+                      </div>
+                      {sectionItems.map((item) => {
+                        const active = desired.has(item.id)
+                        const current = activeIds.has(item.id)
+                        return (
+                          <OptimizationRow
+                            key={item.id}
+                            active={active}
+                            changed={active !== current}
+                            disabled={busy !== null}
+                            item={item}
+                            onToggle={() => toggleDesiredItem(item, active)}
+                            runtimeServices={runtimeState.services}
+                          />
+                        )
+                      })}
+                    </section>
+                  )
+                })
+              ) : (
+                visibleItems.map((item) => {
+                  const active = desired.has(item.id)
+                  const current = activeIds.has(item.id)
+                  return (
+                    <OptimizationRow
+                      key={item.id}
+                      active={active}
+                      changed={active !== current}
+                      disabled={busy !== null}
+                      item={item}
+                      onToggle={() => toggleDesiredItem(item, active)}
+                      runtimeServices={runtimeState.services}
+                    />
+                  )
+                })
+              )
             ) : (
               <div className="rounded-[1.35rem] bg-[#070b1b]/88 p-8 text-center text-white/60">
                 No supported items are available in this category yet.

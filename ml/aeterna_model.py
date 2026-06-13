@@ -11,17 +11,23 @@ import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.feature_selection import SelectFromModel
 from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    mean_absolute_error,
+    precision_score,
+    r2_score,
+    recall_score,
+)
 from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, cross_val_predict
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 
-from ml.dataset_loader import DatasetLoader, TARGET_COLUMNS
+from ml.dataset_loader import DatasetLoader, FEATURE_SCHEMA_VERSION, TARGET_COLUMNS
 
 
-MODEL_VERSION = "aeterna-fps-v1"
+MODEL_VERSION = "aeterna-fps-v2"
 
 RECOMMENDATION_REASONS = {
     "tweak_priority": "Foreground scheduling pressure is likely limiting frame delivery.",
@@ -54,18 +60,20 @@ class AeternaModel:
     def __init__(
         self,
         dataset_loader: DatasetLoader | None = None,
+        tweak_dataset_loader: DatasetLoader | None = None,
         confidence_threshold: float = 0.62,
         random_state: int = 17,
         regressor_kind: str = "lightgbm",
     ) -> None:
         self.dataset_loader = dataset_loader
+        self.tweak_dataset_loader = tweak_dataset_loader
         self.confidence_threshold = confidence_threshold
         self.random_state = random_state
         self.regressor_kind = regressor_kind
         self.regressor: Any | None = None
         self.regressor_family = "untrained"
         self.tweak_classifiers: dict[str, Any] = {}
-        self.tweak_selectors: dict[str, SelectFromModel | None] = {}
+        self.tweak_selectors: dict[str, None] = {}
         self.tweak_fallback_classifiers: dict[str, Any] = {}
         self.tweak_gain_priors: dict[str, float] = {}
         self.feature_names: list[str] = []
@@ -74,6 +82,9 @@ class AeternaModel:
         self.detailed_metrics: dict[str, dict[str, float]] = {}
         self.tweak_metrics: dict[str, dict[str, float]] = {}
         self.tweak_reliability: dict[str, list[dict[str, float | int]]] = {}
+        self.tweak_release_gates: dict[str, dict[str, Any]] = {}
+        self.training_data_origin = "unknown"
+        self.external_validation_present = False
         self.n_features_in_: int = 0
 
     def fit(
@@ -82,6 +93,7 @@ class AeternaModel:
         y_reg: pd.DataFrame | np.ndarray,
         y_tweak: pd.DataFrame | np.ndarray | None = None,
         tweak_gains: pd.DataFrame | None = None,
+        X_tweak: np.ndarray | None = None,
     ) -> "AeternaModel":
         X = np.asarray(X, dtype=np.float32)
         y_reg_array = np.asarray(y_reg, dtype=np.float32)
@@ -94,16 +106,29 @@ class AeternaModel:
 
         if y_tweak is not None:
             y_tweak_frame = self._as_tweak_frame(y_tweak)
+            tweak_matrix = np.asarray(X_tweak if X_tweak is not None else X, dtype=np.float32)
             for tweak in y_tweak_frame.columns:
-                y = y_tweak_frame[tweak].astype(int).to_numpy()
-                selector, classifier, fallback = self._fit_tweak_classifier(X, y)
+                valid = y_tweak_frame[tweak].notna().to_numpy()
+                if not valid.any():
+                    continue
+                gate = self.tweak_release_gates.get(
+                    tweak,
+                    {
+                        "enabled": False,
+                        "reason": "Classifier was not evaluated with out-of-fold predictions.",
+                    },
+                )
+                if not gate.get("enabled", False):
+                    continue
+                y = y_tweak_frame.loc[valid, tweak].astype(int).to_numpy()
+                selector, classifier, fallback = self._fit_tweak_classifier(tweak_matrix[valid], y)
                 self.tweak_selectors[tweak] = selector
                 self.tweak_classifiers[tweak] = classifier
                 self.tweak_fallback_classifiers[tweak] = fallback
                 if tweak_gains is not None and tweak in tweak_gains.columns:
-                    gains = tweak_gains.loc[y_tweak_frame.index, tweak].astype(float)
-                    positive_gains = gains[gains > 0]
-                    self.tweak_gain_priors[tweak] = float(positive_gains.mean()) if not positive_gains.empty else 0.0
+                    gains = tweak_gains.loc[valid, tweak].dropna().astype(float)
+                    positive_gains = gains[gains >= 0.0]
+                    self.tweak_gain_priors[tweak] = float(positive_gains.median()) if not positive_gains.empty else 0.0
                 else:
                     self.tweak_gain_priors[tweak] = float(y.mean()) * 0.08
         return self
@@ -142,7 +167,17 @@ class AeternaModel:
                 "abstained": True,
                 "reason": "No tweak classifiers are trained.",
             }
-        X = self._matrix(input_features)
+        released_tweaks = self._released_tweaks()
+        if not released_tweaks:
+            return {
+                "recommendations": [],
+                "confidence": 0.0,
+                "threshold": self.confidence_threshold,
+                "abstained": True,
+                "reason": "Tweak recommendations are not released without independent external validation.",
+                "model_version": MODEL_VERSION,
+            }
+        X = self._tweak_matrix(input_features)
         if X.shape[0] != 1:
             raise ValueError("recommend_tweaks() expects one configuration at a time.")
 
@@ -150,15 +185,14 @@ class AeternaModel:
         recommendations: list[dict[str, Any]] = []
         max_confidence = 0.0
         for tweak, classifier in self.tweak_classifiers.items():
+            if tweak not in released_tweaks:
+                continue
             if active_tweaks.get(tweak, 0) == 1:
                 continue
-            selector = self.tweak_selectors.get(tweak)
-            X_tweak = selector.transform(X) if selector is not None else X
-            probability = self._positive_probability(classifier, X_tweak)
-            model_quality = self.tweak_metrics.get(tweak, {}).get("accuracy", 0.72)
-            confidence = float(np.clip(0.15 + probability * 0.72 + model_quality * 0.13, 0.0, 0.97))
+            probability = self._positive_probability(classifier, X)
+            confidence = probability
             max_confidence = max(max_confidence, confidence)
-            if probability < self.confidence_threshold or confidence < self.confidence_threshold:
+            if probability < self.confidence_threshold:
                 continue
             recommendations.append(
                 {
@@ -184,27 +218,36 @@ class AeternaModel:
     ) -> pd.DataFrame:
         if not self.tweak_classifiers:
             return pd.DataFrame()
-        X = self._matrix(input_features)
+        X = self._tweak_matrix(input_features)
         values: dict[str, np.ndarray] = {}
         for tweak, classifier in self.tweak_classifiers.items():
-            selector = self.tweak_selectors.get(tweak)
-            X_tweak = selector.transform(X) if selector is not None else X
-            probabilities = classifier.predict_proba(X_tweak)
+            probabilities = classifier.predict_proba(X)
             values[tweak] = probabilities[:, 1] if probabilities.shape[1] > 1 else probabilities[:, 0]
         return pd.DataFrame(values)
 
     def evaluate_regression_cv(
         self,
-        X: np.ndarray,
+        X: pd.DataFrame | np.ndarray,
         y_reg: pd.DataFrame | np.ndarray,
         cv: int = 5,
         groups: np.ndarray | pd.Series | None = None,
     ) -> dict[str, dict[str, float]]:
-        X = np.asarray(X, dtype=np.float32)
         y = np.asarray(y_reg, dtype=np.float32)
         estimator, _ = self._build_regressor()
-        folds, groups_array = self._cv_splitter(cv, len(X), groups)
-        prediction = self._cross_val_predict(estimator, X, y, folds, groups_array)
+        if isinstance(X, pd.DataFrame):
+            if self.dataset_loader is None:
+                raise RuntimeError("Raw regression CV requires a DatasetLoader.")
+            estimator = Pipeline(
+                steps=[
+                    ("preprocessor", self.dataset_loader.make_preprocessor()),
+                    ("regressor", estimator),
+                ]
+            )
+            X_values: Any = X
+        else:
+            X_values = np.asarray(X, dtype=np.float32)
+        folds, groups_array = self._cv_splitter(cv, len(X_values), groups)
+        prediction = self._cross_val_predict(estimator, X_values, y, folds, groups_array)
         target_names = list(y_reg.columns) if isinstance(y_reg, pd.DataFrame) else TARGET_COLUMNS.copy()
         metrics: dict[str, dict[str, float]] = {}
         flat_metrics: dict[str, float] = {}
@@ -224,26 +267,41 @@ class AeternaModel:
 
     def evaluate_tweak_cv(
         self,
-        X: np.ndarray,
+        X: pd.DataFrame | np.ndarray,
         y_tweak: pd.DataFrame,
         cv: int = 5,
         groups: np.ndarray | pd.Series | None = None,
     ) -> dict[str, dict[str, float]]:
         from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
-        X = np.asarray(X, dtype=np.float32)
         metrics: dict[str, dict[str, float]] = {}
         reliability: dict[str, list[dict[str, float | int]]] = {}
+        release_gates: dict[str, dict[str, Any]] = {}
         for tweak in y_tweak.columns:
-            y = y_tweak[tweak].astype(int).to_numpy()
-            if len(np.unique(y)) < 2:
-                metrics[tweak] = {"accuracy": 1.0, "f1": 0.0, "roc_auc": 0.5, "positive_rate": float(y.mean())}
+            valid = y_tweak[tweak].notna().to_numpy()
+            valid_count = int(valid.sum())
+            if valid_count == 0:
+                metrics[tweak] = self._empty_tweak_metrics()
                 reliability[tweak] = []
+                release_gates[tweak] = self._tweak_release_gate(metrics[tweak])
+                continue
+            y = y_tweak.loc[valid, tweak].astype(int).to_numpy()
+            X_valid: Any
+            if isinstance(X, pd.DataFrame):
+                X_valid = X.loc[valid].reset_index(drop=True)
+            else:
+                X_valid = np.asarray(X, dtype=np.float32)[valid]
+            groups_valid = np.asarray(groups)[valid] if groups is not None else None
+            if len(np.unique(y)) < 2:
+                metrics[tweak] = self._empty_tweak_metrics(valid_count, int(y.sum()), float(y.mean()))
+                reliability[tweak] = []
+                release_gates[tweak] = self._tweak_release_gate(metrics[tweak])
                 continue
             min_class_count = int(np.bincount(y).min())
             if min_class_count < 2:
-                metrics[tweak] = {"accuracy": 1.0, "f1": 0.0, "roc_auc": 0.5, "positive_rate": float(y.mean())}
+                metrics[tweak] = self._empty_tweak_metrics(valid_count, int(y.sum()), float(y.mean()))
                 reliability[tweak] = []
+                release_gates[tweak] = self._tweak_release_gate(metrics[tweak])
                 continue
             base_classifier = RandomForestClassifier(
                 n_estimators=120,
@@ -252,23 +310,64 @@ class AeternaModel:
                 random_state=self.random_state,
                 n_jobs=-1,
             )
-            classifier = base_classifier
-            folds, groups_array = self._cv_splitter(min(cv, min_class_count), len(X), groups, stratified_target=y)
+            classifier: Any = base_classifier
+            if isinstance(X_valid, pd.DataFrame):
+                if self.tweak_dataset_loader is None:
+                    raise RuntimeError("Raw tweak CV requires a tweak DatasetLoader.")
+                classifier = Pipeline(
+                    steps=[
+                        ("preprocessor", self.tweak_dataset_loader.make_preprocessor()),
+                        ("classifier", base_classifier),
+                    ]
+                )
+            folds, groups_array = self._cv_splitter(
+                min(cv, min_class_count),
+                len(X_valid),
+                groups_valid,
+                stratified_target=y,
+            )
             try:
-                probabilities = self._cross_val_predict(classifier, X, y, folds, groups_array, method="predict_proba")[:, 1]
+                probabilities = self._cross_val_predict(
+                    classifier,
+                    X_valid,
+                    y,
+                    folds,
+                    groups_array,
+                    method="predict_proba",
+                )[:, 1]
             except ValueError:
-                folds, groups_array = self._cv_splitter(min(cv, min_class_count), len(X), None, stratified_target=y)
-                probabilities = self._cross_val_predict(classifier, X, y, folds, groups_array, method="predict_proba")[:, 1]
+                folds, groups_array = self._cv_splitter(
+                    min(cv, min_class_count),
+                    len(X_valid),
+                    None,
+                    stratified_target=y,
+                )
+                probabilities = self._cross_val_predict(
+                    classifier,
+                    X_valid,
+                    y,
+                    folds,
+                    groups_array,
+                    method="predict_proba",
+                )[:, 1]
             predicted = (probabilities >= self.confidence_threshold).astype(int)
             metrics[tweak] = {
                 "accuracy": round(float(accuracy_score(y, predicted)), 4),
                 "f1": round(float(f1_score(y, predicted, zero_division=0)), 4),
+                "precision": round(float(precision_score(y, predicted, zero_division=0)), 4),
+                "recall": round(float(recall_score(y, predicted, zero_division=0)), 4),
                 "roc_auc": round(float(roc_auc_score(y, probabilities)), 4),
+                "pr_auc": round(float(average_precision_score(y, probabilities)), 4),
+                "brier": round(float(brier_score_loss(y, probabilities)), 4),
                 "positive_rate": round(float(y.mean()), 4),
+                "valid_count": valid_count,
+                "positive_count": int(y.sum()),
             }
             reliability[tweak] = self._reliability_buckets(y, probabilities)
+            release_gates[tweak] = self._tweak_release_gate(metrics[tweak])
         self.tweak_metrics = metrics
         self.tweak_reliability = reliability
+        self.tweak_release_gates = release_gates
         return metrics
 
     def fit_incremental(
@@ -277,21 +376,36 @@ class AeternaModel:
         y_reg_new: pd.DataFrame | np.ndarray,
         y_tweak_new: pd.DataFrame | np.ndarray | None = None,
     ) -> "AeternaModel":
-        """Best-effort warm update; falls back to a bounded refit when needed."""
+        raise RuntimeError(
+            "Incremental updates are disabled. Build a versioned full training dataset "
+            "and run a complete refit so historical behavior is not forgotten."
+        )
 
-        if self.regressor is None:
-            return self.fit(X_new, y_reg_new, y_tweak_new)
-        if hasattr(self.regressor, "partial_fit"):
-            self.regressor.partial_fit(X_new, y_reg_new)
-            return self
-        if hasattr(self.regressor, "warm_start"):
-            try:
-                self.regressor.set_params(warm_start=True, n_estimators=getattr(self.regressor, "n_estimators", 200) + 40)
-                self.regressor.fit(X_new, y_reg_new)
-                return self
-            except Exception:
-                pass
-        return self.fit(X_new, y_reg_new, y_tweak_new)
+    def apply_external_tweak_validation(
+        self,
+        metrics: dict[str, dict[str, float]],
+    ) -> None:
+        self.external_validation_present = bool(metrics)
+        for tweak, internal_gate in self.tweak_release_gates.items():
+            external_metrics = metrics.get(tweak)
+            external_gate = (
+                self._tweak_release_gate(external_metrics)
+                if external_metrics is not None
+                else {
+                    "enabled": False,
+                    "checks": {},
+                    "failed_checks": ["missing_external_validation"],
+                    "reason": "No external validation rows were available.",
+                }
+            )
+            internal_gate["internal_enabled"] = bool(internal_gate.get("enabled", False))
+            internal_gate["external"] = external_gate
+            internal_gate["enabled"] = bool(internal_gate["internal_enabled"] and external_gate["enabled"])
+            if not internal_gate["enabled"]:
+                internal_gate["reason"] = (
+                    f"Internal: {internal_gate.get('reason', 'unknown')} "
+                    f"External: {external_gate.get('reason', 'unknown')}"
+                )
 
     def save_to_onnx(self, path: str | Path) -> dict[str, Any]:
         path = Path(path)
@@ -345,6 +459,13 @@ class AeternaModel:
             "numeric_columns": self.dataset_loader.numeric_columns_ if self.dataset_loader else [],
             "raw_feature_columns": self.dataset_loader.feature_columns_ if self.dataset_loader else [],
             "transformed_feature_names": self.feature_names,
+        }
+        metadata["feature_schema"] = {
+            "version": FEATURE_SCHEMA_VERSION,
+            "fps": self.dataset_loader.feature_schema() if self.dataset_loader else None,
+            "tweak_recommendation": (
+                self.tweak_dataset_loader.feature_schema() if self.tweak_dataset_loader else None
+            ),
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return metadata
@@ -444,21 +565,10 @@ class AeternaModel:
             "sklearn-random-forest",
         )
 
-    def _fit_tweak_classifier(self, X: np.ndarray, y: np.ndarray) -> tuple[SelectFromModel | None, Any, Any]:
+    def _fit_tweak_classifier(self, X: np.ndarray, y: np.ndarray) -> tuple[None, Any, Any]:
         if len(np.unique(y)) < 2:
             constant = ConstantBinaryClassifier(int(y[0]) if len(y) else 0)
             return None, constant, constant
-
-        selector_model = RandomForestClassifier(
-            n_estimators=100,
-            min_samples_leaf=3,
-            class_weight="balanced",
-            random_state=self.random_state,
-            n_jobs=-1,
-        )
-        selector = SelectFromModel(selector_model, threshold="median")
-        selector.fit(X, y)
-        X_selected = selector.transform(X)
 
         base_classifier = RandomForestClassifier(
             n_estimators=220,
@@ -476,11 +586,11 @@ class AeternaModel:
             )
         else:
             classifier = base_classifier
-        classifier.fit(X_selected, y)
+        classifier.fit(X, y)
 
         fallback = LogisticRegression(max_iter=600, class_weight="balanced", random_state=self.random_state)
-        fallback.fit(X_selected, y)
-        return selector, classifier, fallback
+        fallback.fit(X, y)
+        return None, classifier, fallback
 
     def _matrix(self, input_features: dict[str, Any] | list[dict[str, Any]] | pd.DataFrame | np.ndarray) -> np.ndarray:
         if isinstance(input_features, np.ndarray):
@@ -489,6 +599,17 @@ class AeternaModel:
             raise RuntimeError("Raw feature prediction requires a fitted DatasetLoader.")
         return self.dataset_loader.transform_features(input_features)
 
+    def _tweak_matrix(
+        self,
+        input_features: dict[str, Any] | list[dict[str, Any]] | pd.DataFrame | np.ndarray,
+    ) -> np.ndarray:
+        if isinstance(input_features, np.ndarray):
+            return np.asarray(input_features, dtype=np.float32)
+        loader = self.tweak_dataset_loader or self.dataset_loader
+        if loader is None:
+            raise RuntimeError("Raw tweak prediction requires a fitted DatasetLoader.")
+        return loader.transform_features(input_features)
+
     def _active_tweaks(self, input_features: Any) -> dict[str, int]:
         if isinstance(input_features, dict):
             return {key: int(input_features.get(key, 0) or 0) for key in self.tweak_classifiers}
@@ -496,6 +617,15 @@ class AeternaModel:
             row = input_features.iloc[0]
             return {key: int(row.get(key, 0) or 0) for key in self.tweak_classifiers}
         return {key: 0 for key in self.tweak_classifiers}
+
+    def _released_tweaks(self) -> set[str]:
+        if not self.external_validation_present:
+            return set()
+        return {
+            tweak
+            for tweak, gate in self.tweak_release_gates.items()
+            if bool(gate.get("enabled", False)) and tweak in self.tweak_classifiers
+        }
 
     def _as_tweak_frame(self, y_tweak: pd.DataFrame | np.ndarray) -> pd.DataFrame:
         if isinstance(y_tweak, pd.DataFrame):
@@ -543,23 +673,45 @@ class AeternaModel:
     def _metadata(self, onnx_path: Path, joblib_path: Path, onnx_saved: bool, onnx_error: str | None) -> dict[str, Any]:
         weights = self._feature_importance()
         top_features = list(weights)[:8]
-        model_source = "onnx" if onnx_saved else "joblib-fallback"
+        model_source = "onnx-artifact" if onnx_saved else "joblib-artifact"
+        released_tweaks = [
+            tweak
+            for tweak, gate in self.tweak_release_gates.items()
+            if gate.get("enabled", False)
+        ]
+        recommendation_release_enabled = self.external_validation_present and bool(released_tweaks)
         return {
             "version": MODEL_VERSION,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "model_source": model_source,
+            "runtime_capability": "artifact-validation-only",
+            "training_data_origin": self.training_data_origin,
             "metrics": self.metrics or {"mean_fps_mae": 0.0, "fps_1pct_mae": 0.0},
             "weights": weights,
             "intercept": 0.0,
-            "shap_preview": [f"{feature} is a top FPS feature." for feature in top_features[:4]],
+            "shap_preview": [f"Global feature importance: {feature}." for feature in top_features[:4]],
+            "explanation_type": "global_feature_importance_not_shap",
             "recommendation_map": {key: [value] for key, value in RECOMMENDATION_REASONS.items()},
             "targets": self.target_names,
             "regressor_family": self.regressor_family,
             "feature_names": self.feature_names,
-            "tweak_columns": list(self.tweak_classifiers),
+            "tweak_columns": list(self.tweak_metrics),
+            "trained_tweak_columns": list(self.tweak_classifiers),
             "tweak_gain_priors": self.tweak_gain_priors,
             "tweak_metrics": self.tweak_metrics,
             "tweak_reliability": self.tweak_reliability,
+            "tweak_release_gates": self.tweak_release_gates,
+            "recommendation_release": {
+                "enabled": recommendation_release_enabled,
+                "released_tweaks": released_tweaks if recommendation_release_enabled else [],
+                "requires_external_validation": True,
+                "external_validation_present": self.external_validation_present,
+                "reason": (
+                    "Externally validated classifiers passed release gates."
+                    if recommendation_release_enabled
+                    else "Synthetic or internally cross-validated priors are not released to runtime."
+                ),
+            },
             "detailed_metrics": self.detailed_metrics,
             "confidence_threshold": self.confidence_threshold,
             "artifacts": {
@@ -571,11 +723,12 @@ class AeternaModel:
             "fallback": {
                 "type": "logistic_regression_per_tweak",
                 "available": bool(self.tweak_fallback_classifiers),
-                "reason": "Used when ONNX runtime is absent or recommendation confidence is below threshold.",
+                "reason": "Stored for offline comparison; runtime release still requires external validation.",
             },
-            "incremental_learning": {
-                "strategy": "warm_start_when_supported_else_bounded_refit",
-                "entrypoint": "AeternaModel.fit_incremental",
+            "retraining": {
+                "strategy": "full versioned refit",
+                "incremental_learning_supported": False,
+                "reason": "Warm updates without a replay dataset are not considered safe model updates.",
             },
             "examples": [
                 {
@@ -586,6 +739,45 @@ class AeternaModel:
                     "tweak_power_plan": 0,
                 }
             ],
+        }
+
+    @staticmethod
+    def _empty_tweak_metrics(
+        valid_count: int = 0,
+        positive_count: int = 0,
+        positive_rate: float = 0.0,
+    ) -> dict[str, float]:
+        return {
+            "accuracy": 0.0,
+            "f1": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "roc_auc": 0.5,
+            "pr_auc": 0.0,
+            "brier": 1.0,
+            "positive_rate": round(float(positive_rate), 4),
+            "valid_count": valid_count,
+            "positive_count": positive_count,
+        }
+
+    @staticmethod
+    def _tweak_release_gate(metrics: dict[str, float]) -> dict[str, Any]:
+        checks = {
+            "valid_count": metrics.get("valid_count", 0) >= 80,
+            "positive_count": metrics.get("positive_count", 0) >= 8,
+            "precision": metrics.get("precision", 0.0) >= 0.4,
+            "recall": metrics.get("recall", 0.0) >= 0.25,
+            "f1": metrics.get("f1", 0.0) >= 0.3,
+            "roc_auc": metrics.get("roc_auc", 0.5) >= 0.65,
+            "pr_auc": metrics.get("pr_auc", 0.0)
+            >= max(0.2, metrics.get("positive_rate", 0.0) * 2.0),
+        }
+        failed = [name for name, passed in checks.items() if not passed]
+        return {
+            "enabled": not failed,
+            "checks": checks,
+            "failed_checks": failed,
+            "reason": "Passed internal quality gates." if not failed else f"Failed: {', '.join(failed)}.",
         }
 
     @staticmethod

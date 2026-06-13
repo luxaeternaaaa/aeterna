@@ -31,7 +31,9 @@ def write_report(
         f"- GPU models: {frame['gpu_model'].nunique()}",
         f"- Tweak columns: {', '.join(metadata.get('tweak_columns', []))}",
         "",
-        "The synthetic dataset is built as paired gameplay sessions. For each game, hardware profile, graphics preset, and telemetry context, the generator creates a no-tweak baseline and rows where one or more safe tweaks are enabled. A tweak recommendation label is positive when the paired session improves mean FPS by at least 5 percent.",
+        f"Training data origin: `{metadata.get('training_data_origin', 'unknown')}`.",
+        "",
+        "Tweak targets are created only for baseline rows with a measured matching counterfactual. Rows with an enabled target tweak or without a pair are excluded from that classifier rather than treated as negative examples.",
         "",
         f"Evaluation split: {metadata.get('evaluation_protocol', {}).get('split', 'KFold fallback')}",
         f"Positive tweak label: {metadata.get('evaluation_protocol', {}).get('positive_tweak_label', 'paired mean_fps gain >= 5%')}",
@@ -41,8 +43,9 @@ def write_report(
         "",
         "- Hardware: cpu_model, gpu_model, ram_gb, drive_type, laptop.",
         "- Game and graphics: game_id, resolution, graphics_preset, vsync, antialiasing, texture_quality, special_effects, npc_count, player_actions.",
-        "- Runtime signals: cpu_util, gpu_util, vram_util, temperature, background_process_count.",
-        "- Safe tweaks: process priority, CPU affinity, power plan, registry preset, safe service reduction, HAGS, Game Mode, recording off, low timer resolution.",
+        "- Pre-session context: background_process_count. Post-treatment CPU/GPU/VRAM utilization and temperature are excluded.",
+        "- FPS outcome model only: selected safe-tweak state.",
+        "- Tweak recommendation models: no tweak state columns are available to the classifier.",
         "",
         "## EDA Artifacts",
         "",
@@ -89,13 +92,18 @@ def write_report(
             "",
             "## Tweak Classifier Metrics",
             "",
-            "| Tweak | Accuracy | F1 | ROC AUC | Positive rate |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "| Tweak | Valid pairs | Positives | Precision | Recall | F1 | ROC AUC | PR AUC | Brier | Released internally |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         ]
     )
+    release_gates = metadata.get("tweak_release_gates", {})
     for tweak, values in tweak_metrics.items():
+        released = release_gates.get(tweak, {}).get("internal_enabled", release_gates.get(tweak, {}).get("enabled", False))
         lines.append(
-            f"| {tweak} | {values.get('accuracy', 0):.4f} | {values.get('f1', 0):.4f} | {values.get('roc_auc', 0):.4f} | {values.get('positive_rate', 0):.4f} |"
+            f"| {tweak} | {int(values.get('valid_count', 0))} | {int(values.get('positive_count', 0))} | "
+            f"{values.get('precision', 0):.4f} | {values.get('recall', 0):.4f} | "
+            f"{values.get('f1', 0):.4f} | {values.get('roc_auc', 0):.4f} | "
+            f"{values.get('pr_auc', 0):.4f} | {values.get('brier', 0):.4f} | {released} |"
         )
 
     if ablation_summary:
@@ -104,13 +112,13 @@ def write_report(
                 "",
                 "## Tweak Ablation",
                 "",
-                "| Tweak | Mean gain | Positive mean gain | P75 gain | Useful rate |",
-                "| --- | ---: | ---: | ---: | ---: |",
+                "| Tweak | Paired rows | Mean gain | Positive mean gain | P75 gain | Useful rate |",
+                "| --- | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for tweak, values in ablation_summary.items():
             lines.append(
-                f"| {tweak} | {values.get('mean_gain_pct', 0):.3f}% | {values.get('positive_mean_gain_pct', 0):.3f}% | {values.get('p75_gain_pct', 0):.3f}% | {values.get('useful_rate', 0):.4f} |"
+                f"| {tweak} | {int(values.get('paired_count', 0))} | {values.get('mean_gain_pct', 0):.3f}% | {values.get('positive_mean_gain_pct', 0):.3f}% | {values.get('p75_gain_pct', 0):.3f}% | {values.get('useful_rate', 0):.4f} |"
             )
 
     reliability = metadata.get("tweak_reliability", {})
@@ -153,14 +161,16 @@ def write_report(
             "## Safety Behavior",
             "",
             f"- Recommendation confidence threshold: {metadata.get('confidence_threshold', 0.62)}.",
-            "- A tweak is not recommended when the model probability or final confidence is below the threshold.",
+            "- Recommendation confidence is the classifier probability; it is not blended with accuracy heuristics.",
+            "- A tweak is not trained for recommendation unless its valid-pair count and out-of-fold precision, recall, F1, ROC-AUC, and PR-AUC pass release gates.",
+            "- Runtime metadata priors remain disabled without an independent external validation CSV.",
             "- Active tweaks are not recommended again.",
-            "- Joblib fallback remains available when ONNX export or runtime loading is unavailable.",
-            "- Per-tweak logistic-regression fallback classifiers are saved inside the model bundle.",
+            "- Missing required feature columns are rejected instead of silently replaced with zero.",
             "",
             "## Artifacts",
             "",
-            f"- Model source: `{metadata.get('model_source')}`",
+            f"- Model artifact source: `{metadata.get('model_source')}`",
+            f"- Runtime capability: `{metadata.get('runtime_capability')}`",
             f"- ONNX exported: `{metadata.get('artifacts', {}).get('onnx_exported')}`",
             f"- ONNX path: `{metadata.get('artifacts', {}).get('onnx_path')}`",
             f"- Joblib path: `{metadata.get('artifacts', {}).get('joblib_path')}`",
@@ -170,15 +180,15 @@ def write_report(
             "",
             "## Defense Position",
             "",
-            "The model is an advisory ranking system. It predicts FPS and ranks reversible safe tweaks for a selected session, but it does not claim universal FPS gains and does not bypass Aeterna safety policy. When confidence is insufficient, the correct behavior is abstention plus fallback.",
+            "The ONNX file is an offline FPS prediction artifact. Artifact validation is not runtime inference. Tweak priors are not released to the Rust recommendation path until independent validation exists and every released classifier passes its quality gate.",
             "",
             "## Further Improvements",
             "",
-            "- Replace synthetic rows with captured PresentMon sessions once enough local opt-in telemetry exists.",
-            "- Balance rare positive labels per tweak, especially affinity and low timer resolution.",
-            "- Calibrate recommendation probabilities with held-out real sessions.",
+            "- Replace synthetic rows with repeated randomized PresentMon A/B sessions across games and hardware.",
+            "- Add temporal, leave-game-out, and leave-hardware-out evaluation once enough real data exists.",
+            "- Calibrate recommendation probabilities only on held-out real sessions.",
             "- Add game-specific safety blocklists in the Rust sidecar before automated apply.",
-            "- Track per-hardware confidence drift and trigger warm-start refit only when data quality is sufficient.",
+            "- Track per-hardware confidence drift and use versioned full retraining with a replayable dataset.",
             "",
         ]
     )

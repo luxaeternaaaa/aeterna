@@ -28,7 +28,7 @@ def build_sidecar() -> None:
         "--noconfirm",
         "--clean",
         "--onefile",
-        "--noconsole",
+        "--console",
         "--name",
         "aeterna-core",
         "--distpath",

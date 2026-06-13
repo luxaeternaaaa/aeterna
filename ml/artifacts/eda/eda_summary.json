@@ -11,8 +11,8 @@
     "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\correlation.csv",
     "C:\\Users\\foxal.DESKTOP-N1GCIEU\\Desktop\\aeterna\\ml\\artifacts\\eda\\outliers.csv"
   ],
-  "outlier_count":138,
-  "rows":2048,
-  "mean_fps_mean":122.6902783203,
-  "fps_1pct_mean":96.2242529297
+  "outlier_count":273,
+  "rows":4096,
+  "mean_fps_mean":121.0163354492,
+  "fps_1pct_mean":94.8806103516
 }

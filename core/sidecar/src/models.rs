@@ -69,6 +69,13 @@ pub struct AutorunEntry {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+pub struct ServiceRuntimeSummary {
+    pub name: String,
+    pub startup_type: Option<u32>,
+    pub running: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct RegistryPresetSummary {
     pub id: String,
     pub title: String,
@@ -173,6 +180,8 @@ pub struct OptimizationStatePayload {
     pub power_plans: Vec<PowerPlanSummary>,
     #[serde(default)]
     pub autoruns: Vec<AutorunEntry>,
+    #[serde(default)]
+    pub services: Vec<ServiceRuntimeSummary>,
     #[serde(default)]
     pub registry_presets: Vec<RegistryPresetSummary>,
     pub activity: Vec<ActivityEntry>,

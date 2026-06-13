@@ -149,6 +149,7 @@ export default function App() {
       setSession(nextState.session)
       setLoaded((current) => ({ ...current, optimizationRuntime: true }))
     })
+    return nextState
   }, [])
 
   const loadSettingsData = useCallback(async () => {
@@ -448,7 +449,7 @@ export default function App() {
           onAttachSession={attachSession}
           onOpenLogs={() => setActivePage('history')}
           onOpenOptimization={() => setActivePage('optimize')}
-          onRefreshRuntime={() => loadOptimizationRuntime(selectedProcessId ?? undefined)}
+          onRefreshRuntime={() => loadOptimizationRuntime()}
           onOpenTests={() => setActivePage('tests')}
           onRollbackSnapshot={rollbackSnapshot}
           profiles={profiles}
@@ -504,7 +505,9 @@ export default function App() {
           onApplyRegistryPreset={applySystemPreset}
           onApplyTweak={applySessionTweak}
           onAttachSession={attachSession}
-          onRefresh={() => loadOptimizationRuntime(selectedProcessId ?? undefined)}
+          onRefresh={async () => {
+            await loadOptimizationRuntime(selectedProcessId ?? undefined)
+          }}
           onRequestRestart={restartWindowsNow}
           onRollbackSnapshot={rollbackSnapshot}
         />

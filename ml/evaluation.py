@@ -8,11 +8,22 @@ import pandas as pd
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    brier_score_loss,
+    f1_score,
+    mean_absolute_error,
+    precision_score,
+    r2_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
 
-from ml.dataset_loader import TARGET_COLUMNS
+from ml.dataset_loader import DatasetLoader, TARGET_COLUMNS
 
 
 def metric_table(y_true: pd.DataFrame | np.ndarray, y_pred: np.ndarray, target_names: list[str] | None = None) -> dict[str, dict[str, float]]:
@@ -31,11 +42,12 @@ def metric_table(y_true: pd.DataFrame | np.ndarray, y_pred: np.ndarray, target_n
 
 
 def benchmark_regressors(
-    X: np.ndarray,
+    X: pd.DataFrame | np.ndarray,
     y: pd.DataFrame,
     groups: pd.Series | np.ndarray | None,
     cv: int,
     random_state: int,
+    dataset_loader: DatasetLoader | None = None,
 ) -> dict[str, dict[str, dict[str, float]]]:
     estimators: dict[str, Any] = {
         "dummy_mean": DummyRegressor(strategy="mean"),
@@ -68,12 +80,28 @@ def benchmark_regressors(
     splitter, groups_array = _cv_splitter(cv, len(X), groups, random_state)
     results: dict[str, dict[str, dict[str, float]]] = {}
     for name, estimator in estimators.items():
+        candidate: Any = estimator
+        if isinstance(X, pd.DataFrame):
+            if dataset_loader is None:
+                raise ValueError("Raw feature benchmarking requires a DatasetLoader.")
+            candidate = Pipeline(
+                steps=[
+                    ("preprocessor", dataset_loader.make_preprocessor()),
+                    ("regressor", estimator),
+                ]
+            )
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="X does not have valid feature names")
             if groups_array is None:
-                prediction = cross_val_predict(estimator, X, y.to_numpy(dtype=float), cv=splitter)
+                prediction = cross_val_predict(candidate, X, y.to_numpy(dtype=float), cv=splitter)
             else:
-                prediction = cross_val_predict(estimator, X, y.to_numpy(dtype=float), cv=splitter, groups=groups_array)
+                prediction = cross_val_predict(
+                    candidate,
+                    X,
+                    y.to_numpy(dtype=float),
+                    cv=splitter,
+                    groups=groups_array,
+                )
         results[name] = metric_table(y, prediction, target_names=list(y.columns))
     return results
 
@@ -87,11 +115,32 @@ def select_best_regressor(
     candidates = {name: values for name, values in baseline_metrics.items() if name != "dummy_mean"}
     if not candidates:
         return "lightgbm"
-    ranked = sorted(
-        candidates.items(),
-        key=lambda item: float(np.mean([target_metrics.get("mape", 999.0) for target_metrics in item[1].values()])),
+    summaries = {
+        name: {
+            "mae": float(np.mean([target_metrics.get("mae", 999.0) for target_metrics in values.values()])),
+            "mape": float(np.mean([target_metrics.get("mape", 999.0) for target_metrics in values.values()])),
+            "r2": float(np.mean([target_metrics.get("r2", -999.0) for target_metrics in values.values()])),
+        }
+        for name, values in candidates.items()
+    }
+    rank_totals = {name: 0 for name in candidates}
+    for metric, reverse in (("mae", False), ("mape", False), ("r2", True)):
+        ordered = sorted(
+            summaries,
+            key=lambda name: summaries[name][metric],
+            reverse=reverse,
+        )
+        for rank, name in enumerate(ordered):
+            rank_totals[name] += rank
+    preference = {"ridge": 0, "lightgbm": 1, "catboost": 2, "random_forest": 3}
+    best = min(
+        candidates,
+        key=lambda name: (
+            rank_totals[name],
+            summaries[name]["mape"],
+            preference.get(name, 99),
+        ),
     )
-    best = ranked[0][0]
     if best == "random_forest":
         return "random_forest"
     if best == "ridge":
@@ -118,13 +167,22 @@ def evaluate_tweak_holdout(
     for tweak in y_tweak.columns:
         if tweak not in probabilities:
             continue
-        y = y_tweak[tweak].astype(int).to_numpy()
-        proba = probabilities[tweak].to_numpy(dtype=float)
+        valid = y_tweak[tweak].notna().to_numpy()
+        if not valid.any():
+            continue
+        y = y_tweak.loc[valid, tweak].astype(int).to_numpy()
+        proba = probabilities.loc[valid, tweak].to_numpy(dtype=float)
         predicted = (proba >= threshold).astype(int)
         values = {
             "accuracy": round(float(accuracy_score(y, predicted)), 4),
             "f1": round(float(f1_score(y, predicted, zero_division=0)), 4),
+            "precision": round(float(precision_score(y, predicted, zero_division=0)), 4),
+            "recall": round(float(recall_score(y, predicted, zero_division=0)), 4),
+            "pr_auc": round(float(average_precision_score(y, proba)), 4),
+            "brier": round(float(brier_score_loss(y, proba)), 4),
             "positive_rate": round(float(y.mean()), 4),
+            "valid_count": int(len(y)),
+            "positive_count": int(y.sum()),
         }
         if len(np.unique(y)) > 1:
             values["roc_auc"] = round(float(roc_auc_score(y, proba)), 4)
@@ -137,7 +195,16 @@ def evaluate_tweak_holdout(
 def tweak_ablation_summary(gains: pd.DataFrame) -> dict[str, dict[str, float]]:
     summary: dict[str, dict[str, float]] = {}
     for tweak in gains.columns:
-        series = gains[tweak].astype(float)
+        series = gains[tweak].dropna().astype(float)
+        if series.empty:
+            summary[tweak] = {
+                "mean_gain_pct": 0.0,
+                "positive_mean_gain_pct": 0.0,
+                "p75_gain_pct": 0.0,
+                "useful_rate": 0.0,
+                "paired_count": 0,
+            }
+            continue
         positive = series[series > 0]
         useful = series[series >= 0.05]
         summary[tweak] = {
@@ -145,6 +212,7 @@ def tweak_ablation_summary(gains: pd.DataFrame) -> dict[str, dict[str, float]]:
             "positive_mean_gain_pct": round(float(positive.mean() * 100.0), 3) if not positive.empty else 0.0,
             "p75_gain_pct": round(float(series.quantile(0.75) * 100.0), 3),
             "useful_rate": round(float(len(useful) / max(len(series), 1)), 4),
+            "paired_count": int(len(series)),
         }
     return dict(sorted(summary.items(), key=lambda item: item[1]["positive_mean_gain_pct"], reverse=True))
 

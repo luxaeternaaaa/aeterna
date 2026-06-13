@@ -31,8 +31,14 @@ export interface MlCoverageItem {
 }
 
 export interface ScanResult {
+  activeCoverageCount: number
   confidence: number
+  coveredFunctionCount: number
   coverage: MlCoverageItem[]
+  coveragePercent: number
+  eligibleFunctionCount: number
+  eligibleFunctionIds: string[]
+  minimumCoverageCount: number
   modelLabel: string
   plan: MlPlanItem[]
   rationale: string[]
@@ -46,7 +52,7 @@ interface AnalyzeMlSystemInput {
   profiles: GameProfile[]
   realtime?: TelemetryPoint | null
   runtimeState: OptimizationRuntimeState
-  selectedGame: ProcessSummary
+  selectedGame: ProcessSummary | null
 }
 
 const SAFE_FALLBACK_IDS = [
@@ -62,6 +68,31 @@ const SAFE_FALLBACK_IDS = [
   'advertising-id-off',
   'feedback-frequency-off',
   'app-launch-tracking-off',
+]
+
+const MINIMUM_ML_COVERAGE = 0.6
+
+const BALANCED_ML_CANDIDATE_IDS = [
+  'ultimate-power',
+  'game-mode-on',
+  'windowed-optimizations-on',
+  'turn-off-recordings',
+  'power-throttling-off',
+  'interrupt-affinity-lock',
+  'usb-selective-suspend-off',
+  'pcie-lspm-off',
+  'content-delivery-off',
+  'consumer-features-off',
+  'widgets-off',
+  'advertising-id-off',
+  'feedback-frequency-off',
+  'app-launch-tracking-off',
+  'background-apps-off',
+  'edge-background-off',
+  'process-qos-high',
+  'max-games',
+  'keep-cores',
+  'gpu-preference-high',
 ]
 
 const FUNCTION_REASONS: Record<string, string> = {
@@ -124,7 +155,7 @@ export function detectedGameProcesses(runtimeState: OptimizationRuntimeState, pr
   return gameCandidateProcesses(runtimeState, profiles)
 }
 
-function activeFunctionIds(runtimeState: OptimizationRuntimeState) {
+export function activeFunctionIds(runtimeState: OptimizationRuntimeState) {
   const active = new Set<string>()
   const performancePlan = runtimeState.power_plans.find((plan) => plan.active && /ultimate|high performance/i.test(plan.name))
   if (performancePlan) active.add('ultimate-power')
@@ -138,6 +169,33 @@ function activeFunctionIds(runtimeState: OptimizationRuntimeState) {
     if (mapped) active.add(mapped)
   }
   return active
+}
+
+export function isFunctionActive(runtimeState: OptimizationRuntimeState, functionId: string) {
+  return activeFunctionIds(runtimeState).has(functionId)
+}
+
+function processActionForFunction(functionId: string): string | null {
+  if (functionId === 'max-games') return 'process_priority'
+  if (functionId === 'keep-cores') return 'cpu_affinity'
+  if (functionId === 'ultimate-power') return 'power_plan'
+  return null
+}
+
+function gameProfileAllows(functionId: string, selectedProfile: GameProfile | null) {
+  const action = processActionForFunction(functionId)
+  return !action || !selectedProfile || selectedProfile.allowed_actions.includes(action)
+}
+
+function blockedPresetReason(item: MlPlanItem, runtimeState: OptimizationRuntimeState): string | null {
+  const request = item.request
+  if (request.kind !== 'preset') return null
+  const summary = runtimeState.registry_presets.find(
+    (preset) => preset.id === request.payload.preset_id,
+  )
+  if (!summary?.blocking_reason) return null
+  if (summary.blocking_reason.toLowerCase().includes('already active')) return null
+  return summary.blocking_reason
 }
 
 function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: TelemetryPoint | null): NonNullable<MlInferenceInput['system_profile']> {
@@ -160,7 +218,7 @@ function readSystemProfile(runtimeState: OptimizationRuntimeState, sample: Telem
 function buildInferenceInput(
   sample: TelemetryPoint | null,
   runtimeState: OptimizationRuntimeState,
-  selectedGame: ProcessSummary,
+  selectedGame: ProcessSummary | null,
   selectedProfile: GameProfile | null,
 ): MlInferenceInput {
   return {
@@ -168,20 +226,22 @@ function buildInferenceInput(
     frametime_avg_ms: sample?.frametime_avg_ms ?? 8.3,
     frametime_p95_ms: sample?.frametime_p95_ms ?? 13.6,
     frame_drop_ratio: sample?.frame_drop_ratio ?? 0.03,
-    cpu_process_pct: sample?.cpu_process_pct ?? 0,
+    cpu_process_pct: selectedGame ? (sample?.cpu_process_pct ?? 0) : 0,
     cpu_total_pct: sample?.cpu_total_pct ?? 35,
     gpu_usage_pct: sample?.gpu_usage_pct ?? 0,
     ram_working_set_mb: sample?.ram_working_set_mb ?? 0,
     background_process_count: sample?.background_process_count ?? runtimeState.processes.length,
     anomaly_score: sample?.anomaly_score ?? 0.18,
     system_profile: readSystemProfile(runtimeState, sample),
-    game_context: {
-      process_id: selectedGame.pid,
-      process_name: selectedGame.name,
-      profile_id: selectedProfile?.id ?? null,
-      profile_title: selectedProfile?.title ?? null,
-      allowed_actions: selectedProfile?.allowed_actions ?? [],
-    },
+    game_context: selectedGame
+      ? {
+          process_id: selectedGame.pid,
+          process_name: selectedGame.name,
+          profile_id: selectedProfile?.id ?? null,
+          profile_title: selectedProfile?.title ?? null,
+          allowed_actions: selectedProfile?.allowed_actions ?? [],
+        }
+      : undefined,
   }
 }
 
@@ -264,23 +324,30 @@ export function buildCoverage(
       detail: `${runtimeState.autoruns.length} autorun entries, ${runtimeState.activity.length} activity records`,
     },
     {
-      label: 'Game profile',
-      value: selectedProfile?.game ?? selectedGame?.name ?? 'No game selected',
-      detail: selectedProfile ? selectedProfile.title : `${profileCount} supported game profile(s) loaded`,
+      label: 'Optimization scope',
+      value: selectedProfile?.game ?? selectedGame?.name ?? 'Windows system',
+      detail: selectedProfile
+        ? selectedProfile.title
+        : selectedGame
+          ? 'Game process selected without a dedicated compatibility profile'
+          : `No game required; ${profileCount} optional game profile(s) available`,
     },
   ]
 }
 
 export async function analyzeMlSystem({ dashboard, profiles, realtime, runtimeState, selectedGame }: AnalyzeMlSystemInput): Promise<ScanResult> {
   const sample = latestSample(dashboard, realtime)
-  const selectedProfile = matchingGameProfile(selectedGame.name, profiles)
+  const selectedProfile = selectedGame ? matchingGameProfile(selectedGame.name, profiles) : null
   const inferenceInput = buildInferenceInput(sample, runtimeState, selectedGame, selectedProfile)
   const [runtimeTruth, inference] = await Promise.all([getMlRuntimeTruth(), runOptimizationInference(inferenceInput)])
   const denied = loadMlDenyFunctionList()
-  const processId = selectedGame.pid
+  const processId = selectedGame?.pid ?? null
   const alreadyActive = activeFunctionIds(runtimeState)
   const selectedIds = new Set<string>()
   const skipped: string[] = []
+  const addSkipped = (message: string) => {
+    if (!skipped.includes(message)) skipped.push(message)
+  }
 
   const modelFunctionIds = inference?.recommended_functions ?? []
   const scoreByFunction = new Map((inference?.function_scores ?? []).map((score) => [score.function_id, score]))
@@ -288,14 +355,14 @@ export async function analyzeMlSystem({ dashboard, profiles, realtime, runtimeSt
 
   for (const id of useFallbackPlan ? SAFE_FALLBACK_IDS : modelFunctionIds) selectedIds.add(id)
   if ((inference?.recommended_tweaks ?? []).includes('power_plan')) selectedIds.add('ultimate-power')
-  if ((inference?.recommended_tweaks ?? []).includes('cpu_affinity')) selectedIds.add('keep-cores')
-  if ((inference?.recommended_tweaks ?? []).includes('process_priority')) selectedIds.add('max-games')
+  if (selectedGame && (inference?.recommended_tweaks ?? []).includes('cpu_affinity')) selectedIds.add('keep-cores')
+  if (selectedGame && (inference?.recommended_tweaks ?? []).includes('process_priority')) selectedIds.add('max-games')
 
-  if (useFallbackPlan) {
+  if (useFallbackPlan && selectedGame) {
     selectedIds.add('process-qos-high')
     selectedIds.add('max-games')
   }
-  if (useFallbackPlan && (!selectedProfile || selectedProfile.allowed_actions.includes('cpu_affinity'))) {
+  if (useFallbackPlan && selectedGame && (!selectedProfile || selectedProfile.allowed_actions.includes('cpu_affinity'))) {
     selectedIds.add('keep-cores')
   }
   if (useFallbackPlan && ((sample?.background_cpu_pct ?? 0) >= 8 || (sample?.background_process_count ?? 0) >= 90)) {
@@ -316,50 +383,113 @@ export async function analyzeMlSystem({ dashboard, profiles, realtime, runtimeSt
   for (const id of HIGH_RISK_FUNCTION_IDS) {
     if (selectedIds.has(id)) selectedIds.delete(id)
     const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
-    if (definition) skipped.push(`${definition.title}: too risky for balanced ML mode.`)
+    if (definition) addSkipped(`${definition.title}: too risky for balanced ML mode.`)
+  }
+
+  const eligibleIds: string[] = []
+  const candidateItems = new Map<string, MlPlanItem>()
+  let activeCoverageCount = 0
+  for (const id of BALANCED_ML_CANDIDATE_IDS) {
+    const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+    if (!definition || HIGH_RISK_FUNCTION_IDS.has(id) || denied.has(id)) continue
+    if (!gameProfileAllows(id, selectedProfile)) {
+      addSkipped(`${definition.title}: not allowed by the selected game compatibility profile.`)
+      continue
+    }
+    if (alreadyActive.has(id)) {
+      eligibleIds.push(id)
+      activeCoverageCount += 1
+      continue
+    }
+    const item = makePlanItem(id, processId, runtimeState, scoreByFunction.get(id))
+    if (!item) continue
+    const blockingReason = blockedPresetReason(item, runtimeState)
+    if (blockingReason) {
+      addSkipped(`${definition.title}: ${blockingReason}`)
+      continue
+    }
+    eligibleIds.push(id)
+    candidateItems.set(id, item)
+  }
+
+  const minimumCoverageCount = Math.ceil(eligibleIds.length * MINIMUM_ML_COVERAGE)
+  let plannedCoverageCount = eligibleIds.filter((id) => !alreadyActive.has(id) && selectedIds.has(id)).length
+  for (const id of BALANCED_ML_CANDIDATE_IDS) {
+    if (activeCoverageCount + plannedCoverageCount >= minimumCoverageCount) break
+    if (!candidateItems.has(id) || selectedIds.has(id)) continue
+    selectedIds.add(id)
+    plannedCoverageCount += 1
   }
 
   const plan: MlPlanItem[] = []
   for (const id of selectedIds) {
     if (alreadyActive.has(id)) {
       const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
-      skipped.push(`${definition?.title ?? id}: already active on this system.`)
+      addSkipped(`${definition?.title ?? id}: already active on this system.`)
       continue
     }
     if (denied.has(id)) {
       const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
-      skipped.push(`${definition?.title ?? id}: blocked by ML deny list.`)
+      addSkipped(`${definition?.title ?? id}: blocked by ML deny list.`)
+      continue
+    }
+    if (!gameProfileAllows(id, selectedProfile)) {
+      const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
+      addSkipped(`${definition?.title ?? id}: not allowed by the selected game compatibility profile.`)
       continue
     }
     const definition = OPTIMIZATION_FUNCTIONS.find((item) => item.id === id)
     if (definition?.processRequired && !processId) {
-      skipped.push(`${definition.title}: waiting for a selected game session.`)
+      addSkipped(`${definition.title}: waiting for a selected game session.`)
       continue
     }
-    const item = makePlanItem(id, processId, runtimeState, scoreByFunction.get(id))
-    if (item) plan.push(item)
+    const item = candidateItems.get(id) ?? makePlanItem(id, processId, runtimeState, scoreByFunction.get(id))
+    if (!item) continue
+    const blockingReason = blockedPresetReason(item, runtimeState)
+    if (blockingReason) {
+      addSkipped(`${item.definition.title}: ${blockingReason}`)
+      continue
+    }
+    plan.push(item)
   }
   plan.sort((left, right) => (right.mlConfidence ?? 0) - (left.mlConfidence ?? 0))
 
+  const coveredFunctionCount =
+    activeCoverageCount + plan.filter((item) => eligibleIds.includes(item.definition.id)).length
+  const coveragePercent =
+    eligibleIds.length === 0 ? 100 : Math.round((coveredFunctionCount / eligibleIds.length) * 100)
   const rebootCount = plan.filter((item) => item.definition.requiresReboot).length
   const fallback = !inference || runtimeTruth?.runtime_mode === 'unavailable'
   const confidence = fallback ? 0.74 : inference.confidence
   const safetyScore = Math.max(70, Math.min(96, 94 - rebootCount * 7 - plan.filter((item) => item.tone === 'balanced').length * 2))
   const summary =
     useFallbackPlan
-      ? 'Runtime inference did not return a concrete function list, so Aeterna selected a conservative fallback plan from safe, reversible tuning rules.'
-      : 'ML selected a game-aware balanced plan that avoids high-risk boot and security downgrades, favors reversible system settings, and flags restart-only changes before they are trusted.'
+      ? selectedGame
+        ? 'Runtime inference did not return a concrete function list, so Aeterna selected a conservative game-aware fallback plan from safe, reversible tuning rules.'
+        : 'Runtime inference did not return a concrete function list, so Aeterna selected a conservative Windows optimization plan from safe, reversible system rules.'
+      : selectedGame
+        ? 'ML selected a game-aware balanced plan that avoids high-risk boot and security downgrades, favors reversible system settings, and flags restart-only changes before they are trusted.'
+        : 'ML selected a Windows-wide balanced plan from system, hardware, settings, autorun, service, and telemetry signals. Process-only game tweaks were excluded.'
   const rationale = [
     `Model path: ${runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'Runtime model')}.`,
-    `Selected game: ${selectedProfile?.title ?? selectedGame.name} (PID ${selectedGame.pid}).`,
+    selectedGame
+      ? `Optional game context: ${selectedProfile?.title ?? selectedGame.name} (PID ${selectedGame.pid}).`
+      : 'Optimization scope: Windows system; no game process is required.',
     `Function source: ${useFallbackPlan ? 'safe fallback rules' : `${modelFunctionIds.length} model-ranked function(s), ${scoreByFunction.size} scored action(s)`}.`,
     `Telemetry source: ${sample ? `${sample.capture_source}, ${sample.session_state}` : 'no live sample, system profile and process state only'}.`,
+    `Safe-function coverage: ${coveredFunctionCount}/${eligibleIds.length} (${coveragePercent}%), including ${activeCoverageCount} already active.`,
     `Balanced mode: ${plan.length} action(s), ${rebootCount} restart-required action(s), ${skipped.length} high-risk/blocked action(s) skipped.`,
   ]
 
   return {
+    activeCoverageCount,
     confidence,
+    coveredFunctionCount,
     coverage: buildCoverage(runtimeState, dashboard, sample, selectedGame, selectedProfile, profiles.length),
+    coveragePercent,
+    eligibleFunctionCount: eligibleIds.length,
+    eligibleFunctionIds: eligibleIds,
+    minimumCoverageCount,
     modelLabel: runtimeTruth?.active_label ?? (fallback ? 'Heuristic fallback' : 'ML runtime'),
     plan,
     rationale,

@@ -12,7 +12,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use crate::{
     activity,
     bootcfg,
-    models::{CaptureStatus, DetectedGame, SessionState},
+    models::{CaptureStatus, DetectedGame, SessionState, TweakSnapshot},
     paths::{feature_flags_path, live_telemetry_path, session_state_path, system_settings_path},
     presentmon::PresentMonSession,
     power, registry,
@@ -62,12 +62,7 @@ fn telemetry_enabled() -> bool {
 }
 
 fn recommended_profile(name: &str) -> Option<String> {
-    let value = name
-        .to_ascii_lowercase()
-        .trim_end_matches(".exe")
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>();
+    let value = normalized_process_name(name);
     if value.contains("valorant") {
         return Some("valorant-safe".into());
     }
@@ -84,6 +79,37 @@ fn recommended_profile(name: &str) -> Option<String> {
         return Some("warzone-balanced".into());
     }
     None
+}
+
+fn normalized_process_name(name: &str) -> String {
+    name
+        .to_ascii_lowercase()
+        .trim_end_matches(".exe")
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+}
+
+fn is_known_game_process(name: &str) -> bool {
+    let value = normalized_process_name(name);
+    recommended_profile(name).is_some()
+        || matches!(
+            value.as_str(),
+            "dota2"
+                | "leagueoflegends"
+                | "leagueoflegendsclient"
+                | "gta5"
+                | "gtasa"
+                | "gtaiv"
+                | "pubg"
+                | "tslgame"
+                | "destiny2"
+                | "rustclient"
+                | "eldenring"
+                | "cyberpunk2077"
+        )
+        || value.contains("tarkov")
+        || value.contains("overwatch")
 }
 
 pub fn read_session_state() -> SessionState {
@@ -200,19 +226,71 @@ pub fn track_tweak(snapshot_id: &str, tweak_kind: &str) {
     write_session_state(&session);
 }
 
+fn snapshot_track_kind(snapshot: &TweakSnapshot) -> Option<String> {
+    if let Some(value) = snapshot.extra.get("track_kind").and_then(Value::as_str) {
+        return Some(value.into());
+    }
+    if let Some(preset_id) = snapshot.registry_preset_id.as_deref() {
+        return Some(format!("registry:{preset_id}"));
+    }
+    match snapshot.kind.as_str() {
+        "process-priority" => Some("process_priority".into()),
+        "cpu-affinity" => Some("cpu_affinity".into()),
+        "process-qos" => Some("process_qos".into()),
+        "cpu-affinity-isolation" => Some("process_isolation".into()),
+        "power-plan" => Some("power_plan".into()),
+        "timer-resolution" => Some("timer_resolution_low".into()),
+        "autorun" => Some("autorun_disable".into()),
+        "boot-option" => match snapshot.extra.get("option_key").and_then(Value::as_str) {
+            Some("disabledynamictick") => Some("disable_dynamic_ticks".into()),
+            Some("useplatformclock") => Some("disable_hpet".into()),
+            _ => None,
+        },
+        "power-setting" => match snapshot.extra.get("setting_guid").and_then(Value::as_str) {
+            Some("2bfc24f9-5ea2-4801-8213-3dbae01aa39d") => {
+                Some("interrupt_affinity_lock".into())
+            }
+            Some("48e6b7a6-50f5-4782-a5d4-53bb8f07e226") => {
+                Some("usb_selective_suspend_off".into())
+            }
+            Some("ee12f906-d277-404b-b6da-e5fa1a576df5") => Some("pcie_lspm_off".into()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub fn untrack_snapshot(snapshot_id: &str) {
     let mut session = read_session_state();
     session.active_snapshot_ids.retain(|item| item != snapshot_id);
-    if session.active_snapshot_ids.is_empty() {
-        session.active_tweaks.clear();
-        session.auto_restore_pending = session.pending_registry_restore;
+    let mut active_tweaks = Vec::new();
+    for active_snapshot_id in &session.active_snapshot_ids {
+        let Some(track_kind) = snapshots::load_snapshot(active_snapshot_id)
+            .ok()
+            .and_then(|snapshot| snapshot_track_kind(&snapshot))
+        else {
+            continue;
+        };
+        if !active_tweaks.contains(&track_kind) {
+            active_tweaks.push(track_kind);
+        }
     }
+    session.active_tweaks = active_tweaks;
+    session.auto_restore_pending =
+        !session.active_snapshot_ids.is_empty() || session.pending_registry_restore;
     write_session_state(&session);
 }
 
 pub fn detected_game(session: &SessionState, helper_available: bool) -> Option<DetectedGame> {
     let pid = session.detected_candidate_pid?;
-    let name = session.detected_candidate_name.clone()?;
+    let stored_name = session.detected_candidate_name.as_deref()?;
+    let live_name = processes::process_name(pid)?;
+    if normalized_process_name(&live_name) != normalized_process_name(stored_name)
+        || !is_known_game_process(&live_name)
+    {
+        return None;
+    }
+    let name = live_name;
     Some(DetectedGame {
         exe_name: name.clone(),
         pid,
@@ -409,7 +487,9 @@ pub fn spawn_collector() {
             }
             let observed_at = Instant::now();
             let foreground_pid = processes::foreground_process_id();
-            let foreground_name = foreground_pid.and_then(processes::process_name).filter(|name| !ignored_process(name));
+            let foreground_name = foreground_pid
+                .and_then(processes::process_name)
+                .filter(|name| !ignored_process(name) && is_known_game_process(name));
 
             if session.process_id.is_none() {
                 presentmon.stop();
@@ -606,4 +686,29 @@ pub fn spawn_collector() {
             thread::sleep(Duration::from_secs(1));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_known_game_process, normalized_process_name};
+
+    #[test]
+    fn recognizes_games_without_treating_desktop_apps_as_games() {
+        assert!(is_known_game_process("cs2.exe"));
+        assert!(is_known_game_process("VALORANT-Win64-Shipping.exe"));
+        assert!(is_known_game_process("r5apex.exe"));
+        assert!(is_known_game_process("Overwatch.exe"));
+        assert!(!is_known_game_process("chrome.exe"));
+        assert!(!is_known_game_process("explorer.exe"));
+        assert!(!is_known_game_process("Code.exe"));
+    }
+
+    #[test]
+    fn normalizes_process_names_for_stale_pid_validation() {
+        assert_eq!(normalized_process_name("CS2.EXE"), "cs2");
+        assert_eq!(
+            normalized_process_name("VALORANT-Win64-Shipping.exe"),
+            "valorantwin64shipping"
+        );
+    }
 }
