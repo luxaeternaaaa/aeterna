@@ -81,17 +81,6 @@ fn managed_service_names() -> Vec<&'static str> {
     ]
 }
 
-fn snapshot_extra_u32(value: &Value, key: &str) -> Option<u32> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|raw| u32::try_from(raw).ok())
-}
-
-fn snapshot_extra_string(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
 fn now() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -193,11 +182,14 @@ fn inspect(process_id: Option<u32>) -> Result<OptimizationStatePayload, String> 
 }
 
 fn attach(request: AttachSessionRequest) -> Result<OptimizationStatePayload, String> {
-    let session = telemetry::attach_session(
+    let (session, created) = telemetry::attach_session(
         request.process_id,
         request.process_name.clone(),
         helper_available(),
-    );
+    )?;
+    if !created {
+        return inspect(Some(request.process_id));
+    }
     let settings = policy::system_settings();
     if policy::auto_apply_allowed("process_priority", &session) {
         let _ = apply(ApplyTweakRequest {
@@ -259,7 +251,7 @@ fn finish_tweak_apply(
     snapshots::set_snapshot_track_kind(&snapshot.id, track_kind)?;
     snapshots::mark_snapshot_applied(&snapshot.id)?;
     telemetry::track_tweak(&snapshot.id, track_kind);
-    let entry = activity::append(snapshots::activity(
+    let mut activity_entry = snapshots::activity(
         "tweak",
         action,
         detail,
@@ -267,7 +259,9 @@ fn finish_tweak_apply(
         Some(snapshot.id.clone()),
         session_id,
         true,
-    ))?;
+    );
+    activity_entry.action_key = Some(track_kind.into());
+    let entry = activity::append(activity_entry)?;
     Ok(ApplyTweakResponse {
         state: inspect(inspect_process_id)?,
         snapshot,
@@ -584,11 +578,11 @@ fn apply_registry_preset(
     if request.preset_id == "gpu_preference_high"
         || request.preset_id == "fullscreen_optimizations_off"
     {
-        policy::require_registry_preset_allowed(&session, false)?;
         let pid = request
             .process_id
             .or(session.process_id)
             .ok_or("Process id is required for per-app graphics preset.")?;
+        policy::require_registry_preset_allowed(&session, Some(pid), true)?;
         let process_path = processes::process_image_path(pid)
             .ok_or("Unable to resolve executable path for selected process.")?;
         let draft = if request.preset_id == "gpu_preference_high" {
@@ -606,10 +600,16 @@ fn apply_registry_preset(
         snapshots::mark_snapshot_applied(&snapshot.id)?;
         telemetry::track_tweak(&snapshot.id, &format!("registry:{}", request.preset_id));
         telemetry::sync_pending_restore_state();
-        let detail = if request.preset_id == "gpu_preference_high" {
-            "Applied per-app GPU preference (High performance).".to_string()
+        let (action, detail) = if request.preset_id == "gpu_preference_high" {
+            (
+                "GPU preference applied",
+                "Applied per-app GPU preference (High performance).".to_string(),
+            )
         } else {
-            "Disabled fullscreen optimizations for the selected executable.".to_string()
+            (
+                "Fullscreen optimizations disabled",
+                "Disabled fullscreen optimizations for the selected executable.".to_string(),
+            )
         };
         let entry = activity::append(models::ActivityEntry {
             id: format!(
@@ -618,12 +618,13 @@ fn apply_registry_preset(
             ),
             timestamp: now(),
             category: "registry".into(),
-            action: "System preset applied".into(),
+            action: action.into(),
             detail,
             risk: "low".into(),
             snapshot_id: Some(snapshot.id.clone()),
             session_id,
             action_id: Some(snapshot.id.clone()),
+            action_key: Some(format!("registry:{}", request.preset_id)),
             can_undo: true,
             proof_link: None,
             blocked_by_policy: false,
@@ -656,6 +657,7 @@ fn apply_registry_preset(
             snapshot_id: None,
             session_id: session_id.clone(),
             action_id: None,
+            action_key: Some(format!("registry:{}", request.preset_id)),
             can_undo: false,
             proof_link: None,
             blocked_by_policy: true,
@@ -669,7 +671,11 @@ fn apply_registry_preset(
             next_action: summary.next_action,
         });
     }
-    policy::require_registry_preset_allowed(&session, summary.requires_admin)?;
+    policy::require_registry_preset_allowed(
+        &session,
+        request.process_id,
+        summary.requires_baseline,
+    )?;
     let mut draft = if request.preset_id == "windowed_optimizations_on" {
         registry::build_windowed_optimizations_snapshot(session_id.clone())?
     } else {
@@ -712,12 +718,13 @@ fn apply_registry_preset(
         ),
         timestamp: now(),
         category: "registry".into(),
-        action: "System preset applied".into(),
+        action: format!("{} applied", summary.title),
         detail: format!("Applied {}.", summary.title),
         risk: summary.risk,
         snapshot_id: Some(snapshot.id.clone()),
         session_id,
         action_id: Some(snapshot.id.clone()),
+        action_key: Some(format!("registry:{}", request.preset_id)),
         can_undo: true,
         proof_link: None,
         blocked_by_policy: false,
@@ -734,69 +741,12 @@ fn apply_registry_preset(
 
 fn rollback(request: RollbackRequest) -> Result<RollbackResponse, String> {
     let snapshot = snapshots::load_snapshot(&request.snapshot_id)?;
-    if let Some(process) = snapshot.process.as_ref() {
-        processes::restore_process(process)?;
-    }
-    if let Some(guid) = snapshot.power_plan_guid.as_deref() {
-        power::set_active_power_plan(guid)?;
-    }
-    if !snapshot.registry_entries.is_empty() {
-        registry::restore_snapshot(&snapshot)?;
-    }
-    if snapshot.kind == "boot-option" {
-        if let Some(option_key) = snapshot_extra_string(&snapshot.extra, "option_key") {
-            let previous_value = snapshot.extra.get("previous_value").and_then(Value::as_str);
-            if let Some(value) = previous_value {
-                let _ = bootcfg::set_option(&option_key, value);
-            } else {
-                let _ = bootcfg::delete_option(&option_key);
-            }
-        }
-    }
-    if snapshot.kind == "power-setting" {
-        if let (Some(subgroup_guid), Some(setting_guid)) = (
-            snapshot_extra_string(&snapshot.extra, "subgroup_guid"),
-            snapshot_extra_string(&snapshot.extra, "setting_guid"),
-        ) {
-            let old_ac = snapshot_extra_u32(&snapshot.extra, "old_ac");
-            let old_dc = snapshot_extra_u32(&snapshot.extra, "old_dc");
-            let _ = power::set_setting_indices(&subgroup_guid, &setting_guid, old_ac, old_dc);
-        }
-    }
-    if snapshot.kind == "timer-resolution" {
-        if let Some(requested) = snapshot_extra_u32(&snapshot.extra, "requested_100ns") {
-            let _ = timer::disable_resolution(requested);
-        }
-    }
-    if snapshot.extra.get("kind").and_then(Value::as_str) == Some("service") {
-        if snapshot
-            .extra
-            .get("was_running")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            if let Some(service_name) = snapshot.extra.get("service_name").and_then(Value::as_str) {
-                let _ = services::start_service(service_name);
-            }
-        }
-    }
-    if snapshot.extra.get("kind").and_then(Value::as_str) == Some("services") {
-        if let Some(service_states) = snapshot.extra.get("services").and_then(Value::as_array) {
-            for service in service_states {
-                let was_running = service
-                    .get("was_running")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let service_name = service.get("name").and_then(Value::as_str);
-                if was_running {
-                    if let Some(service_name) = service_name {
-                        let _ = services::start_service(service_name);
-                    }
-                }
-            }
-        }
-    }
-    let _ = snapshots::mark_snapshot_restored(&request.snapshot_id);
+    let restore_process_state = snapshot
+        .process
+        .as_ref()
+        .is_some_and(|process| processes::process_exists(process.pid));
+    telemetry::restore_snapshot_state(&snapshot, restore_process_state)?;
+    snapshots::mark_snapshot_restored(&request.snapshot_id)?;
     telemetry::untrack_snapshot(&request.snapshot_id);
     telemetry::sync_pending_restore_state();
     let entry = activity::append(snapshots::activity(
@@ -846,6 +796,14 @@ fn dispatch(request: IpcRequest) -> Result<Value, String> {
             telemetry::end_session()?;
             Ok(json!(inspect(None)?))
         }
+        "start_capture" => {
+            let session = telemetry::start_capture()?;
+            Ok(json!(inspect(session.process_id)?))
+        }
+        "stop_capture" => {
+            let session = telemetry::stop_capture();
+            Ok(json!(inspect(session.process_id)?))
+        }
         "apply_tweak" => Ok(json!(apply(
             serde_json::from_value::<ApplyTweakRequest>(request.payload)
                 .map_err(|error| error.to_string())?
@@ -883,6 +841,7 @@ fn spawn_parent_watch(parent_pid: u32) {
         loop {
             if unsafe { WaitForSingleObject(handle, 0) } == 0 {
                 unsafe { CloseHandle(handle) };
+                let _ = telemetry::end_session();
                 std::process::exit(0);
             }
             thread::sleep(Duration::from_secs(2));
@@ -893,6 +852,7 @@ fn spawn_parent_watch(parent_pid: u32) {
 fn main() {
     let _ = paths::ensure_runtime_dirs();
     write_startup_diagnostics();
+    let _ = telemetry::recover_interrupted_session();
     telemetry::sync_pending_restore_state();
     telemetry::spawn_collector();
     if let Some(value) = std::env::args()

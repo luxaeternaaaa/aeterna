@@ -1099,12 +1099,14 @@ pub fn preset_summaries(session: &SessionState, show_advanced_details: bool) -> 
             {
                 Some("This preset is already active on the current machine state.".to_string())
             } else {
-                policy::registry_preset_block(session, preset.requires_admin).map(|block| block.reason)
+                policy::registry_preset_block(session, preset.requires_baseline)
+                    .map(|block| block.reason)
             };
             let next_action = if blocking_reason.as_deref() == Some("This preset is already active on the current machine state.") {
                 Some("Restore the active preset or choose another preset.".to_string())
             } else {
-                policy::registry_preset_block(session, preset.requires_admin).map(|block| block.next_action)
+                policy::registry_preset_block(session, preset.requires_baseline)
+                    .map(|block| block.next_action)
             };
             RegistryPresetSummary {
                 id: preset.id.into(),

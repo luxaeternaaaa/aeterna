@@ -12,6 +12,7 @@ import {
   UploadCloud,
 } from 'lucide-react'
 
+import { useConfirmDialog } from '../components/ConfirmDialogContext'
 import type { ActivityEntry, RollbackResponse, SnapshotRecord } from '../types'
 import { formatTimestamp } from '../lib/time'
 
@@ -95,6 +96,7 @@ export function BackupPage({
   onRollbackSnapshot,
   snapshots,
 }: BackupPageProps) {
+  const requestConfirmation = useConfirmDialog()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -129,6 +131,49 @@ export function BackupPage({
       'Backup profile imported.',
     )
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleDeleteSnapshot = async (snapshot: SnapshotRecord) => {
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Delete backup',
+      description: 'This removes the local backup profile. This action cannot be undone.',
+      eyebrow: 'Delete backup',
+      title: `Delete ${snapshot.note || snapshot.id}?`,
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    await run(`delete-${snapshot.id}`, () => onDeleteSnapshot(snapshot.id), 'Backup profile deleted.')
+  }
+
+  const handleRestoreSnapshot = async (snapshot: SnapshotRecord) => {
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Restore backup',
+      description: 'Aeterna will restore the Windows settings saved in this backup profile.',
+      eyebrow: 'Restore backup',
+      title: `Restore ${snapshot.note || snapshot.id}?`,
+      tone: 'warning',
+    })
+    if (!confirmed) return
+    await run(`restore-${snapshot.id}`, () => onRestoreSnapshot(snapshot.id), 'Backup profile restored.')
+  }
+
+  const handleRollback = async (entry: ActivityEntry) => {
+    if (!entry.snapshot_id) return
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Restore settings',
+      description: 'Aeterna will roll back the settings changed by this optimization action.',
+      eyebrow: 'Optimization rollback',
+      title: `Rollback ${entry.action}?`,
+      tone: 'warning',
+    })
+    if (!confirmed) return
+    await run(
+      `rollback-${entry.snapshot_id}`,
+      async () => {
+        await onRollbackSnapshot(entry.snapshot_id as string)
+      },
+      'Optimization rollback restored.',
+    )
   }
 
   return (
@@ -220,10 +265,7 @@ export function BackupPage({
                   <button
                     aria-label={`Delete ${snapshot.id}`}
                     className="grid h-10 w-10 place-items-center rounded-xl text-white/85 hover:bg-[#e93c41]/20 hover:text-[#ff6268]"
-                    onClick={() => {
-                      if (!window.confirm(`Delete backup profile ${snapshot.id}?`)) return
-                      void run(`delete-${snapshot.id}`, () => onDeleteSnapshot(snapshot.id), 'Backup profile deleted.')
-                    }}
+                    onClick={() => void handleDeleteSnapshot(snapshot)}
                     title="Delete"
                     type="button"
                   >
@@ -231,10 +273,7 @@ export function BackupPage({
                   </button>
                   <button
                     className="inline-flex h-10 items-center justify-center rounded-[0.9rem] bg-[#315cff] px-4 text-sm font-bold text-white hover:bg-[#416aff]"
-                    onClick={() => {
-                      if (!window.confirm(`Restore ${snapshot.note || snapshot.id}?`)) return
-                      void run(`restore-${snapshot.id}`, () => onRestoreSnapshot(snapshot.id), 'Backup profile restored.')
-                    }}
+                    onClick={() => void handleRestoreSnapshot(snapshot)}
                     type="button"
                   >
                     Open
@@ -261,16 +300,7 @@ export function BackupPage({
                 </div>
                 <button
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-[0.9rem] border border-[#315cff] px-4 text-sm font-bold text-white hover:bg-[#315cff]/18"
-                  onClick={() => {
-                    if (!entry.snapshot_id || !window.confirm(`Rollback ${entry.action}?`)) return
-                    void run(
-                      `rollback-${entry.snapshot_id}`,
-                      async () => {
-                        await onRollbackSnapshot(entry.snapshot_id as string)
-                      },
-                      'Optimization rollback restored.',
-                    )
-                  }}
+                  onClick={() => void handleRollback(entry)}
                   type="button"
                 >
                   <RotateCcw size={17} />

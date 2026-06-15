@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { Minus, MoonStar, RefreshCw, Square, SunMedium, X } from 'lucide-react'
 
+import { useConfirmDialog } from './components/ConfirmDialogContext'
 import { ConsentModal } from './components/ConsentModal'
 import { Sidebar } from './components/Sidebar'
 import { StartupSkeleton } from './components/StartupSkeleton'
@@ -27,6 +28,8 @@ import {
   inspectOptimization,
   requestWindowsRestart,
   rollbackOptimizationTweak,
+  startBenchmarkCapture,
+  stopBenchmarkCapture,
 } from './lib/sidecar'
 import { getInitialState, getStartupState } from './lib/startup'
 import { getWindowsUsername, saveTextFile } from './lib/system'
@@ -39,6 +42,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { TestsPage } from './pages/TestsPage'
 import type {
   BenchmarkReport,
+  BenchmarkEvidenceSummary,
   BenchmarkWindow,
   BootstrapPayload,
   BuildMetadata,
@@ -69,6 +73,7 @@ const REBOOT_PRESET_LABELS: Record<string, string> = {
 }
 
 export default function App() {
+  const requestConfirmation = useConfirmDialog()
   const cache = useRef(readStartupCache()).current
   const retryTimer = useRef<number | null>(null)
   const bootStarted = useRef(false)
@@ -85,6 +90,7 @@ export default function App() {
   const [build, setBuild] = useState<BuildMetadata>(cache?.bootstrap?.build ?? initialBuild)
   const [benchmarkBaseline, setBenchmarkBaseline] = useState<BenchmarkWindow | null>(cache?.bootstrap?.benchmark_baseline ?? null)
   const [latestBenchmark, setLatestBenchmark] = useState<BenchmarkReport | null>(cache?.bootstrap?.latest_benchmark ?? null)
+  const [benchmarkEvidence, setBenchmarkEvidence] = useState<BenchmarkEvidenceSummary[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>(cache?.bootstrap?.last_snapshot_meta ? [cache.bootstrap.last_snapshot_meta] : [])
   const [security, setSecurity] = useState<SecuritySummary>(initialSecurity)
   const [optimizationRuntime, setOptimizationRuntime] = useState<OptimizationRuntimeState>(initialOptimizationRuntime)
@@ -178,9 +184,14 @@ export default function App() {
 
   const loadBenchmarkState = useCallback(async () => {
     benchmarkLoaded.current = true
-    const [baseline, latest] = await Promise.all([api.benchmarkBaseline(), api.benchmarkLatest()])
+    const [baseline, latest, evidence] = await Promise.all([
+      api.benchmarkBaseline(),
+      api.benchmarkLatest(),
+      api.benchmarkEvidence(),
+    ])
     setBenchmarkBaseline(baseline)
     setLatestBenchmark(latest)
+    setBenchmarkEvidence(evidence)
     if (bootstrapRef.current) {
       const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline, latest_benchmark: latest }
       bootstrapRef.current = nextBootstrap
@@ -290,6 +301,9 @@ export default function App() {
   const toggleFlag = async (key: keyof FeatureFlags, value: boolean) => {
     await api.updateFeatureFlags({ ...featureFlags, [key]: value })
     await loadSettingsData()
+    if (key === 'network_optimizer') {
+      await loadOptimizationRuntime(selectedProcessId ?? undefined)
+    }
   }
 
   const requestFlagChange = (key: keyof FeatureFlags, value: boolean) => {
@@ -337,7 +351,7 @@ export default function App() {
     await Promise.all([loadSettingsData(), loadOptimizationRuntime(selectedProcessId ?? undefined)])
   }
 
-  const captureBaseline = async (sampleLimit = 60) => {
+  const captureBaseline = async (sampleLimit = 60, scenarioId?: string) => {
     setBenchmarkBusy(true)
     setBenchmarkBaseline(null)
     setLatestBenchmark(null)
@@ -347,7 +361,7 @@ export default function App() {
       writeStartupCache(nextBootstrap, dashboardRef.current)
     }
     try {
-      const baseline = await api.captureBenchmarkBaseline(sampleLimit)
+      const baseline = await api.captureBenchmarkBaseline(sampleLimit, scenarioId)
       setBenchmarkBaseline(baseline)
       if (bootstrapRef.current) {
         const nextBootstrap = { ...bootstrapRef.current, benchmark_baseline: baseline }
@@ -364,6 +378,7 @@ export default function App() {
     try {
       const report = await api.runBenchmark(profileId, sampleLimit)
       setLatestBenchmark(report)
+      setBenchmarkEvidence(await api.benchmarkEvidence())
       await loadOptimizationRuntime(selectedProcessId ?? undefined)
       if (bootstrapRef.current) {
         const nextBootstrap = { ...bootstrapRef.current, latest_benchmark: report }
@@ -384,6 +399,37 @@ export default function App() {
     return nextState
   }
 
+  const startTestCapture = async () => {
+    const nextState = await startBenchmarkCapture()
+    setOptimizationRuntime(nextState)
+    setSession(nextState.session)
+  }
+
+  const waitForTestCapture = async (processId: number) => {
+    let nextState = optimizationRuntime
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 500))
+      nextState = await inspectOptimization(processId)
+      setOptimizationRuntime(nextState)
+      setSession(nextState.session)
+      if (nextState.capture_status.source === 'presentmon') return
+      if (!nextState.session.capture_requested) {
+        throw new Error(nextState.session.capture_reason ?? 'PresentMon capture stopped before it became ready.')
+      }
+    }
+
+    throw new Error(
+      nextState.session.capture_reason ??
+        'PresentMon did not receive real frame events. Keep the game in the foreground and try again.',
+    )
+  }
+
+  const stopTestCapture = async () => {
+    const nextState = await stopBenchmarkCapture()
+    setOptimizationRuntime(nextState)
+    setSession(nextState.session)
+  }
+
   const saveBenchmarkCsv = async (csvId: string, suggestedName: string) => {
     const contents = await api.benchmarkCsvText(csvId)
     return saveTextFile(suggestedName, contents)
@@ -398,7 +444,13 @@ export default function App() {
 
   const restartWindowsNow = async () => {
     if (restartBusy) return
-    const confirmed = window.confirm('Windows will restart immediately. Continue?')
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Restart now',
+      description: 'Windows will restart immediately. Save open work before continuing.',
+      eyebrow: 'Restart required',
+      title: 'Restart Windows now?',
+      tone: 'warning',
+    })
     if (!confirmed) return
     setRestartBusy(true)
     try {
@@ -463,8 +515,12 @@ export default function App() {
         <TestsPage
           benchmarkBaseline={benchmarkBaseline}
           benchmarkBusy={benchmarkBusy}
+          benchmarkEvidence={benchmarkEvidence}
           latestBenchmark={latestBenchmark}
           onSaveBenchmarkCsv={saveBenchmarkCsv}
+          onStartCapture={startTestCapture}
+          onWaitForCapture={waitForTestCapture}
+          onStopCapture={stopTestCapture}
           onApplyRegistryPreset={applySystemPreset}
           onApplyTweak={applySessionTweak}
           onAttachSession={attachSession}
@@ -493,7 +549,9 @@ export default function App() {
           }}
           profiles={profiles}
           realtime={realtime}
+          registryPresetChangesEnabled={settings.registry_presets_enabled}
           runtimeState={optimizationRuntime}
+          safeChangesEnabled={featureFlags.network_optimizer}
         />
       )
     }

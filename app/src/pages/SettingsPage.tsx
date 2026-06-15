@@ -276,17 +276,6 @@ export function SettingsPage({
               onChange={(checked) => void updateSystem('advanced-details', { show_advanced_registry_details: checked })}
             />
           </SettingRow>
-          <SettingRow
-            description="Keeps unsupported or blocked Optimization entries visible with their reason."
-            icon={Info}
-            title="Show blocked optimization details"
-          >
-            <SwitchControl
-              checked={settings.registry_presets_enabled}
-              disabled={busy !== null}
-              onChange={(checked) => void updateSystem('preset-catalog', { registry_presets_enabled: checked })}
-            />
-          </SettingRow>
           <SettingRow description="Backend polling interval for local telemetry sampling." icon={RefreshCw} title="Sampling interval">
             <SettingSelect
               disabled={busy !== null}
@@ -353,6 +342,17 @@ export function SettingsPage({
               checked={featureFlags.network_optimizer}
               disabled={busy !== null}
               onChange={(checked) => void run('safe-actions', () => onToggleFlag('network_optimizer', checked))}
+            />
+          </SettingRow>
+          <SettingRow
+            description="Allows allowlisted registry presets after a game session is attached and policy requirements are satisfied."
+            icon={Shield}
+            title="Allow system preset changes"
+          >
+            <SwitchControl
+              checked={settings.registry_presets_enabled}
+              disabled={busy !== null}
+              onChange={(checked) => void updateSystem('preset-catalog', { registry_presets_enabled: checked })}
             />
           </SettingRow>
           <SettingRow description="Runs local checks before risky actions." icon={Shield} title="Pre-action safety scan">

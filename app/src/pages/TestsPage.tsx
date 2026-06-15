@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import {
   Activity,
   AlertTriangle,
@@ -11,7 +12,6 @@ import {
   Layers,
   MemoryStick,
   MonitorUp,
-  Network,
   Play,
   RefreshCw,
   RotateCcw,
@@ -25,6 +25,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 
 import {
+  evidenceKeyForOptimizationRequest,
   loadMlDenyFunctionList,
   OPTIMIZATION_FUNCTIONS,
   type OptimizationFunctionDefinition,
@@ -36,6 +37,7 @@ import type {
   ApplyTweakResponse,
   AttachSessionRequest,
   BenchmarkDelta,
+  BenchmarkEvidenceSummary,
   BenchmarkReport,
   BenchmarkWindow,
   GameProfile,
@@ -46,18 +48,19 @@ import type {
 } from '../types'
 
 type TestMode = 'baseline' | 'optimized'
-type TestPhase = 'idle' | 'ready' | 'running' | 'baseline_ready' | 'completed' | 'failed'
-type SetupStep = 'game' | 'duration' | 'confirm'
+type TestPhase = 'idle' | 'ready' | 'countdown' | 'running' | 'baseline_ready' | 'completed' | 'failed'
+type SetupStep = 'game' | 'duration'
 type DurationPreset = 15 | 30 | 45 | 60 | 'custom'
 
 interface TestsPageProps {
   benchmarkBaseline: BenchmarkWindow | null
   benchmarkBusy: boolean
+  benchmarkEvidence: BenchmarkEvidenceSummary[]
   latestBenchmark: BenchmarkReport | null
   onApplyRegistryPreset: (request: ApplyRegistryPresetRequest) => Promise<ApplyRegistryPresetResponse>
   onApplyTweak: (request: ApplyTweakRequest) => Promise<ApplyTweakResponse>
   onAttachSession: (request: AttachSessionRequest) => Promise<unknown> | void
-  onCaptureBaseline: (sampleLimit: number) => Promise<void>
+  onCaptureBaseline: (sampleLimit: number, scenarioId?: string) => Promise<void>
   onClearSessionSelection: () => void
   onEndSession: () => void
   onOpenLogs: () => void
@@ -67,17 +70,31 @@ interface TestsPageProps {
   onRunBenchmark: (profileId?: string, sampleLimit?: number) => Promise<void>
   onSaveBenchmarkCsv: (csvId: string, suggestedName: string) => Promise<string | null>
   onSelectProcess: (processId: number) => void
+  onStartCapture: () => Promise<void>
+  onWaitForCapture: (processId: number) => Promise<void>
+  onStopCapture: () => Promise<void>
   profiles: GameProfile[]
   realtime?: TelemetryPoint | null
+  registryPresetChangesEnabled: boolean
   runtimeState: OptimizationRuntimeState
+  safeChangesEnabled: boolean
 }
 
 const DURATION_PRESETS: DurationPreset[] = [15, 30, 45, 60, 'custom']
 const MAX_DURATION_SECONDS = 300
-const OPTIMIZED_PRESENTMON_WARMUP_SECONDS = 5
+const TEST_START_DELAY_SECONDS = 3
 const TESTABLE_FUNCTIONS = OPTIMIZATION_FUNCTIONS.filter((item) => !item.requiresReboot && item.benchmarkSafe)
-const TESTABLE_FUNCTION_IDS = new Set(TESTABLE_FUNCTIONS.map((item) => item.id))
-const DEFAULT_FUNCTIONS = new Set(TESTABLE_FUNCTIONS.filter((item) => item.mlDefault).map((item) => item.id))
+
+function formatUnknownError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  return fallback
+}
+
+function recommendedBenchmarkTweakId() {
+  const deny = loadMlDenyFunctionList()
+  return TESTABLE_FUNCTIONS.find((item) => item.mlDefault && !deny.has(item.id))?.id ?? null
+}
 
 const EXCLUDED_PROCESS_NAMES = new Set([
   'aeterna',
@@ -202,8 +219,7 @@ function waitForSeconds(seconds: number, onTick: (left: number) => void) {
 
 async function minimizeAppWindow() {
   if (typeof window === 'undefined' || !(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return
-  const { getCurrentWindow } = await import('@tauri-apps/api/window')
-  await getCurrentWindow().minimize()
+  await invoke('minimize_main_window')
 }
 
 function resolveProfileId(profiles: GameProfile[], selectedGame: ProcessSummary | null, runtimeState: OptimizationRuntimeState) {
@@ -407,7 +423,69 @@ function CsvDownloadLink({
   )
 }
 
+const EVIDENCE_METRIC_LABELS: Record<string, string> = {
+  fps_1pct: '1% Low FPS',
+  frametime_p95: 'P95 frame time',
+  frametime_p99: 'P99 frame time',
+}
+
+function signedPercent(value: number) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
+}
+
+function EvidenceCard({ evidence }: { evidence: BenchmarkEvidenceSummary }) {
+  const statusTone =
+    evidence.status === 'consistent-improvement'
+      ? 'text-[#4dff9b]'
+      : evidence.status === 'consistent-regression'
+        ? 'text-[#ff6268]'
+        : 'text-[#ffcf5a]'
+  return (
+    <article className="rounded-[1.35rem] bg-[#0d1530] px-5 py-4 ring-1 ring-[#315cff]/35">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-[#7ba2ff]">Repeated evidence</p>
+          <h3 className="mt-1 text-lg font-black text-white">{evidence.action_title}</h3>
+          <p className="mt-1 text-sm text-white/52">{evidence.game_name}</p>
+        </div>
+        <div className="text-right">
+          <p className={`text-sm font-black ${statusTone}`}>{evidence.status.replaceAll('-', ' ')}</p>
+          <p className="mt-1 text-xs font-bold text-white/46">
+            {evidence.trial_count}/{evidence.minimum_trials_required} A/B pairs · {evidence.window_seconds}s · {evidence.evidence_level}
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-white/66">{evidence.summary}</p>
+      <p className="mt-2 text-xs font-semibold text-white/42">
+        Scenario: {evidence.scenario_id} · protocol {evidence.protocol_version} · environment {evidence.environment_fingerprint}
+      </p>
+      <p className="mt-1 text-xs leading-5 text-white/36">
+        Environment fingerprint covers the local OS build and CPU architecture. GPU driver version and exact scene execution still require manual control.
+      </p>
+      <p className="mt-1 text-xs leading-5 text-white/36">
+        The Student-t interval assumes independent, comparable A/B pairs. It is local repeatability evidence, not proof for other systems.
+      </p>
+      <div className="mt-4 grid gap-2 lg:grid-cols-3">
+        {evidence.metrics.map((metric) => (
+          <div className="rounded-xl bg-[#070b1b]/88 px-3 py-3" key={metric.metric}>
+            <p className="text-xs font-bold uppercase text-white/38">{EVIDENCE_METRIC_LABELS[metric.metric] ?? metric.metric}</p>
+            <p className="mt-1 text-lg font-black text-white">{signedPercent(metric.mean_effect_pct)}</p>
+            <p className="mt-1 text-xs text-white/48">
+              {metric.ci95_low_pct == null || metric.ci95_high_pct == null
+                ? '95% CI after a second pair'
+                : `95% CI ${signedPercent(metric.ci95_low_pct)} to ${signedPercent(metric.ci95_high_pct)}`}
+            </p>
+            <p className="mt-1 text-xs font-semibold text-white/42">{metric.direction_consistency_pct.toFixed(0)}% direction consistency</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-white/48">{evidence.recommended_next_step}</p>
+    </article>
+  )
+}
+
 function phaseLabel(phase: TestPhase, activeMode: TestMode | null) {
+  if (phase === 'countdown') return 'Starting'
   if (phase === 'running') return activeMode === 'baseline' ? 'Baseline running' : 'Optimized running'
   if (phase === 'baseline_ready') return 'Baseline ready'
   if (phase === 'completed') return 'Comparison ready'
@@ -422,6 +500,7 @@ function isAlreadyActivePreset(reason?: string | null) {
 export function TestsPage({
   benchmarkBaseline,
   benchmarkBusy,
+  benchmarkEvidence,
   latestBenchmark,
   onApplyRegistryPreset,
   onApplyTweak,
@@ -436,9 +515,14 @@ export function TestsPage({
   onRunBenchmark,
   onSaveBenchmarkCsv,
   onSelectProcess,
+  onStartCapture,
+  onWaitForCapture,
+  onStopCapture,
   profiles,
   realtime,
+  registryPresetChangesEnabled,
   runtimeState,
+  safeChangesEnabled,
 }: TestsPageProps) {
   const gameProcesses = useMemo(() => gameCandidateProcesses(runtimeState, profiles), [profiles, runtimeState])
   const [activeMode, setActiveMode] = useState<TestMode | null>(null)
@@ -446,7 +530,7 @@ export function TestsPage({
   const [selectedPid, setSelectedPid] = useState<number | null>(null)
   const [durationPreset, setDurationPreset] = useState<DurationPreset>(60)
   const [customDuration, setCustomDuration] = useState('60')
-  const [selectedTweaks, setSelectedTweaks] = useState<Set<string>>(() => new Set(DEFAULT_FUNCTIONS))
+  const [selectedTweakId, setSelectedTweakId] = useState<string | null>(() => recommendedBenchmarkTweakId())
   const [phase, setPhase] = useState<TestPhase>('idle')
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [status, setStatus] = useState<string | null>(null)
@@ -459,21 +543,58 @@ export function TestsPage({
   const hasBaseline = baselineBelongsToGame(benchmarkBaseline, selectedGame)
   const hasRealBaseline = hasBaseline && benchmarkBaseline?.capture_source === 'presentmon'
   const reportBaseline = hasRealBaseline ? benchmarkBaseline : null
-  const isRunning = phase === 'running' || benchmarkBusy
+  const isRunning = phase === 'countdown' || phase === 'running' || benchmarkBusy
   const canCaptureRealFps = runtimeState.capture_status.helper_available
-  const selectedBenchmarkTweakCount = useMemo(
-    () => Array.from(selectedTweaks).filter((id) => TESTABLE_FUNCTION_IDS.has(id)).length,
-    [selectedTweaks],
-  )
+  const baselineSessionMatches =
+    hasRealBaseline &&
+    Boolean(benchmarkBaseline?.session_id) &&
+    benchmarkBaseline?.session_id === runtimeState.session.session_id &&
+    benchmarkBaseline?.process_id === runtimeState.session.process_id
+  const baselineDurationMatches = benchmarkBaseline?.requested_window_seconds === durationSeconds
+  const selectedDefinition = TESTABLE_FUNCTIONS.find((item) => item.id === selectedTweakId) ?? null
+  const selectedRequest = selectedDefinition && selectedGame
+    ? selectedDefinition.buildRequest({ processId: selectedGame.pid, runtimeState })
+    : null
+  const selectedPresetSummary =
+    selectedRequest?.kind === 'preset'
+      ? runtimeState.registry_presets.find((preset) => preset.id === selectedRequest.payload.preset_id) ?? null
+      : null
+  const selectedActionKey = evidenceKeyForOptimizationRequest(selectedRequest)
+  const activeScenarioId = benchmarkBaseline?.scenario_id ?? ''
+  const selectedEvidence =
+    selectedGame && selectedActionKey
+      ? benchmarkEvidence.filter(
+          (item) =>
+            item.action_key === selectedActionKey &&
+            item.game_name.trim().toLowerCase() === selectedGame.name.trim().toLowerCase() &&
+            item.scenario_id.trim().toLowerCase() === activeScenarioId.trim().toLowerCase() &&
+            (!profileId || !item.profile_id || item.profile_id === profileId),
+        )
+      : []
+  const selectedPolicyBlock = !safeChangesEnabled
+    ? 'Safe optimization changes are disabled in Settings.'
+    : selectedRequest?.kind === 'preset' && !registryPresetChangesEnabled
+      ? 'System preset changes are disabled in Settings.'
+      : selectedPresetSummary?.blocking_reason ?? null
   const canStart =
     activeMode === 'baseline'
       ? Boolean(selectedGame && canCaptureRealFps && !isRunning)
-      : Boolean(selectedGame && canCaptureRealFps && hasRealBaseline && selectedBenchmarkTweakCount > 0 && !isRunning)
+      : Boolean(
+          selectedGame &&
+            canCaptureRealFps &&
+            baselineSessionMatches &&
+            baselineDurationMatches &&
+            selectedTweakId &&
+            !selectedPolicyBlock &&
+            !isRunning,
+        )
   const latestForSelectedGame =
     selectedGame &&
     latestBenchmark &&
     reportBaseline &&
-    (latestBenchmark.baseline.captured_at === reportBaseline.captured_at || latestBenchmark.baseline.process_id === reportBaseline.process_id)
+    (latestBenchmark.baseline.csv_id && reportBaseline.csv_id
+      ? latestBenchmark.baseline.csv_id === reportBaseline.csv_id
+      : latestBenchmark.baseline.captured_at === reportBaseline.captured_at)
       ? latestBenchmark
       : null
   const currentWindow = latestForSelectedGame?.current ?? reportBaseline
@@ -505,63 +626,87 @@ export function TestsPage({
     return selectedGame
   }
 
+  const startCountdown = async () => {
+    setPhase('countdown')
+    setStatus('Switch to the game now. The test will start automatically in 3 seconds.')
+    await waitForSeconds(TEST_START_DELAY_SECONDS, setSecondsLeft)
+    await minimizeAppWindow()
+    setPhase('running')
+  }
+
   const runBaseline = async () => {
     if (!selectedGame || isRunning) return
     setErrorText(null)
+    let captureStarted = false
     try {
       const game = await attachSelectedGame()
-      setPhase('running')
-      setStatus('Test started correctly. Minimize Aeterna and stay in the game until the timer ends.')
-      void minimizeAppWindow()
+      await onStartCapture()
+      captureStarted = true
+      await startCountdown()
+      setStatus('Waiting for PresentMon to receive real frames from the game.')
+      await onWaitForCapture(game.pid)
+      setStatus('Baseline capture is running. Stay in the same game scene until the timer ends.')
       await waitForSeconds(durationSeconds, setSecondsLeft)
       setStatus('Saving baseline metrics.')
-      await onCaptureBaseline(durationSeconds)
+      await onCaptureBaseline(durationSeconds, `Quick test ${game.name} ${new Date().toISOString()}`)
       setPhase('baseline_ready')
       setStatus(`Baseline saved for ${game.name}. Now run the optimized test for a comparison report.`)
     } catch (error) {
       setPhase('failed')
-      setErrorText(error instanceof Error ? error.message : 'Baseline test failed.')
+      setErrorText(formatUnknownError(error, 'Baseline test failed.'))
+    } finally {
+      if (captureStarted) {
+        try {
+          await onStopCapture()
+        } catch {
+          setErrorText((current) => current ?? 'The test finished, but PresentMon could not be stopped cleanly.')
+        }
+      }
     }
   }
 
-  const applySelectedTweaks = async (game: ProcessSummary) => {
-    const snapshots: Array<{ id: string; title: string }> = []
-    let skippedAlreadyActive = 0
-    for (const functionId of selectedTweaks) {
-      const item = TESTABLE_FUNCTIONS.find((definition) => definition.id === functionId)
-      if (!item) continue
-      const request = item.buildRequest({ processId: game.pid, runtimeState })
-      if (!request) continue
-      if (request.kind === 'tweak') {
-        const result = await onApplyTweak(request.payload)
-        snapshots.push({ id: result.snapshot.id, title: item.title })
-      } else {
-        const result = await onApplyRegistryPreset(request.payload)
-        if (result.status !== 'applied' || !result.snapshot) {
-          if (isAlreadyActivePreset(result.blocking_reason)) {
-            skippedAlreadyActive += 1
-            continue
-          }
-          throw new Error(result.blocking_reason ?? `Failed to apply ${item.title}.`)
+  const applySelectedTweak = async (game: ProcessSummary) => {
+    if (!selectedTweakId) throw new Error('Select exactly one change to test.')
+    const item = TESTABLE_FUNCTIONS.find((definition) => definition.id === selectedTweakId)
+    if (!item) throw new Error('The selected test change is unavailable.')
+    const request = item.buildRequest({ processId: game.pid, runtimeState })
+    if (!request) throw new Error(`${item.title} is not applicable to this game session.`)
+
+    let snapshotId: string
+    if (request.kind === 'tweak') {
+      const result = await onApplyTweak(request.payload)
+      snapshotId = result.snapshot.id
+    } else {
+      const result = await onApplyRegistryPreset(request.payload)
+      if (result.status !== 'applied' || !result.snapshot) {
+        if (isAlreadyActivePreset(result.blocking_reason)) {
+          throw new Error(`${item.title} is already active. Roll it back before capturing a proof baseline.`)
         }
-        snapshots.push({ id: result.snapshot.id, title: item.title })
+        throw new Error(result.blocking_reason ?? `Failed to apply ${item.title}.`)
       }
+      snapshotId = result.snapshot.id
     }
-    setAppliedSnapshots((current) => [...current, ...snapshots])
-    return { applied: snapshots.length, skippedAlreadyActive }
+
+    const snapshot = { id: snapshotId, title: item.title }
+    setAppliedSnapshots((current) => [...current, snapshot])
+    return snapshot
   }
 
   const runOptimized = async () => {
     if (!canStart || !selectedGame) return
     setErrorText(null)
+    let captureStarted = false
     try {
-      const game = await attachSelectedGame()
-      const tweakResult = await applySelectedTweaks(game)
-      setPhase('running')
-      const skippedText = tweakResult.skippedAlreadyActive > 0 ? ` ${tweakResult.skippedAlreadyActive} already active tweak(s) skipped.` : ''
-      setStatus(`Applied ${tweakResult.applied} benchmark-safe tweak(s).${skippedText} Minimize Aeterna and stay in the game while PresentMon warms up.`)
-      void minimizeAppWindow()
-      await waitForSeconds(OPTIMIZED_PRESENTMON_WARMUP_SECONDS, setSecondsLeft)
+      if (!baselineSessionMatches) {
+        throw new Error('The baseline session is no longer active. Capture a new baseline before testing a change.')
+      }
+      const game = selectedGame
+      const testedTweak = await applySelectedTweak(game)
+      await onStartCapture()
+      captureStarted = true
+      await startCountdown()
+      setStatus(`Applied ${testedTweak.title}. Waiting for PresentMon to receive real frames.`)
+      await onWaitForCapture(game.pid)
       setStatus('Capturing optimized metrics. Stay in the same game scene until the timer ends.')
       await waitForSeconds(durationSeconds, setSecondsLeft)
       setStatus('Saving optimized metrics and comparison.')
@@ -570,7 +715,15 @@ export function TestsPage({
       setStatus('Comparison report is ready.')
     } catch (error) {
       setPhase('failed')
-      setErrorText(error instanceof Error ? error.message : 'Optimized test failed.')
+      setErrorText(formatUnknownError(error, 'Optimized test failed.'))
+    } finally {
+      if (captureStarted) {
+        try {
+          await onStopCapture()
+        } catch {
+          setErrorText((current) => current ?? 'The test finished, but PresentMon could not be stopped cleanly.')
+        }
+      }
     }
   }
 
@@ -594,10 +747,7 @@ export function TestsPage({
     }
   }
 
-  const selectRecommendedTweaks = () => {
-    const deny = loadMlDenyFunctionList()
-    setSelectedTweaks(new Set(TESTABLE_FUNCTIONS.filter((item) => item.mlDefault && !deny.has(item.id)).map((item) => item.id)))
-  }
+  const selectRecommendedTweak = () => setSelectedTweakId(recommendedBenchmarkTweakId())
 
   const stopSession = () => {
     onEndSession()
@@ -640,14 +790,12 @@ export function TestsPage({
                   {activeMode === 'baseline' ? 'Baseline test' : 'Optimized test'}
                 </p>
                 <h2 className="mt-2 text-2xl font-black">
-                  {setupStep === 'game' ? 'Select running game' : setupStep === 'duration' ? 'Select capture duration' : 'Confirm test start'}
+                  {setupStep === 'game' ? 'Select running game' : 'Select capture duration'}
                 </h2>
                 <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-white/54">
                   {setupStep === 'game'
                     ? 'Only real game processes are shown. Start CS2 or another game, then press Update if the list is empty.'
-                    : setupStep === 'duration'
-                      ? 'The default window is 60 seconds. Custom duration is capped at 300 seconds.'
-                      : 'After confirmation Aeterna will minimize. Stay in the selected in-game scene until the timer ends.'}
+                    : 'Choose the capture time. After you press Start, you will have 3 seconds to switch to the game.'}
                 </p>
               </div>
               <button
@@ -724,54 +872,11 @@ export function TestsPage({
                     />
                   </label>
                 ) : null}
+                <p className="mt-4 rounded-xl bg-[#152b5c] px-4 py-3 text-sm font-semibold leading-6 text-[#9bb7ff]">
+                  After pressing Start, switch to the game immediately. Capture begins automatically after a 3-second countdown.
+                </p>
                 <div className="mt-5 flex justify-between gap-2">
                   <button className="min-h-11 rounded-xl bg-[#202942] px-5 text-sm font-black" onClick={() => setSetupStep('game')} type="button">
-                    Back
-                  </button>
-                  <button
-                    className="min-h-11 rounded-xl bg-[#315cff] px-6 text-sm font-black disabled:cursor-not-allowed disabled:bg-white/25"
-                    disabled={!selectedGame}
-                    onClick={() => setSetupStep('confirm')}
-                    type="button"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {setupStep === 'confirm' ? (
-              <div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
-                    <p className="text-xs font-black uppercase text-white/38">Pass</p>
-                    <p className="mt-2 text-xl font-black">{activeMode === 'baseline' ? 'Baseline' : 'Optimized'}</p>
-                  </article>
-                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
-                    <p className="text-xs font-black uppercase text-white/38">Game</p>
-                    <p className="mt-2 truncate text-xl font-black">{selectedGame?.name ?? 'Not selected'}</p>
-                  </article>
-                  <article className="rounded-[1rem] bg-[#111936] px-4 py-4">
-                    <p className="text-xs font-black uppercase text-white/38">Duration</p>
-                    <p className="mt-2 text-xl font-black">{durationSeconds}s</p>
-                  </article>
-                </div>
-                {activeMode === 'optimized' && !hasRealBaseline ? (
-                  <p className="mt-4 rounded-xl bg-[#3d1218]/70 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
-                    Capture a real PresentMon baseline for this exact game before running the optimized comparison.
-                  </p>
-                ) : null}
-                {!runtimeState.capture_status.helper_available ? (
-                  <p className="mt-4 rounded-xl bg-[#3d2512]/80 px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
-                    Real FPS capture requires Aeterna to run as administrator. Restart the app and accept UAC before starting the test.
-                  </p>
-                ) : runtimeState.capture_status.source !== 'presentmon' ? (
-                  <p className="mt-4 rounded-xl bg-[#3d2512]/80 px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
-                    PresentMon will start after confirmation. If capture fails, restart Aeterna as administrator.
-                  </p>
-                ) : null}
-                <div className="mt-5 flex justify-between gap-2">
-                  <button className="min-h-11 rounded-xl bg-[#202942] px-5 text-sm font-black" onClick={() => setSetupStep('duration')} type="button">
                     Back
                   </button>
                   <button
@@ -785,6 +890,22 @@ export function TestsPage({
                 </div>
               </div>
             ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {phase === 'countdown' ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#020617]/92 px-5 backdrop-blur-md">
+          <section
+            aria-live="assertive"
+            className="w-full max-w-xl rounded-[2rem] bg-[#070b1b] px-8 py-10 text-center shadow-[0_28px_90px_rgba(0,0,0,0.65),inset_0_0_0_1px_rgba(123,162,255,0.18)]"
+          >
+            <p className="text-sm font-black uppercase tracking-[0.16em] text-[#7ba2ff]">Test starts soon</p>
+            <p className="mt-5 text-8xl font-black leading-none text-white">{secondsLeft}</p>
+            <h2 className="mt-6 text-3xl font-black text-white">Switch to the game now</h2>
+            <p className="mx-auto mt-3 max-w-md text-base font-semibold leading-7 text-white/62">
+              Stay in the selected game scene. Aeterna will minimize automatically and start capture when the countdown ends.
+            </p>
           </section>
         </div>
       ) : null}
@@ -862,13 +983,13 @@ export function TestsPage({
               <section className="rounded-[1.35rem] bg-[#070b1b]/86 p-4">
                 <p className="text-xs font-bold uppercase text-white/38">Capture engine</p>
                 <p className="mt-2 text-lg font-black text-white">
-                  {runtimeState.capture_status.source === 'presentmon' ? 'PresentMon' : 'Waiting for PresentMon'}
+                  {runtimeState.capture_status.helper_available ? 'PresentMon' : 'PresentMon unavailable'}
                 </p>
                 <p className={`mt-1 text-sm font-semibold ${runtimeState.capture_status.source === 'presentmon' ? 'text-[#7ba2ff]' : 'text-[#ffcf5a]'}`}>
                   {runtimeState.capture_status.source === 'presentmon'
-                    ? 'Real FPS and frame-time capture'
+                    ? 'Real FPS and frame-time capture is active'
                     : runtimeState.capture_status.helper_available
-                      ? 'Attach the game and keep it foreground until real frame rows appear'
+                      ? 'Ready. PresentMon starts only for the 3-second countdown and test'
                       : 'Run Aeterna as administrator for real FPS capture'}
                 </p>
                 {runtimeState.capture_status.note ? <p className="mt-2 text-xs leading-5 text-white/48">{runtimeState.capture_status.note}</p> : null}
@@ -905,11 +1026,29 @@ export function TestsPage({
                   Capture a real PresentMon baseline for this game before running the optimized comparison.
                 </p>
               ) : null}
+              {activeMode === 'optimized' && hasRealBaseline && !baselineSessionMatches ? (
+                <p className="mt-4 rounded-xl bg-[#3d1218]/70 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
+                  The original baseline session ended or changed. Capture a fresh baseline without reattaching the game.
+                </p>
+              ) : null}
+              {activeMode === 'optimized' && hasRealBaseline && benchmarkBaseline?.scenario_id && !baselineDurationMatches ? (
+                <p className="mt-4 rounded-xl bg-[#3d1218]/70 px-4 py-3 text-sm font-semibold text-[#ff8a8f]">
+                  Use the same {benchmarkBaseline.requested_window_seconds ?? 'baseline'}s window for the optimized half of this pair.
+                </p>
+              ) : null}
+              {activeMode === 'optimized' && selectedPolicyBlock ? (
+                <p className="mt-4 rounded-xl bg-[#3d2512]/80 px-4 py-3 text-sm font-semibold text-[#ffcf5a]">
+                  {selectedPolicyBlock} Resolve this requirement, then refresh the runtime state.
+                </p>
+              ) : null}
 
               <button
                 className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#315cff] px-4 text-base font-bold disabled:cursor-not-allowed disabled:bg-white/30"
                 disabled={!canStart}
-                onClick={() => setSetupStep(selectedGame ? 'confirm' : 'game')}
+                onClick={() => {
+                  if (selectedGame) startSelectedMode()
+                  else setSetupStep('game')
+                }}
                 type="button"
               >
                 {activeMode === 'baseline' ? <Timer size={19} /> : <Play size={19} />}
@@ -967,22 +1106,14 @@ export function TestsPage({
                 <div>
                   <h2 className="text-xl font-black">Tweaks for optimized pass</h2>
                   <p className="mt-1 text-sm text-white/48">
-                    Only benchmark-safe live tweaks are shown. Service, telemetry, and reboot-required tweaks are hidden so PresentMon stays stable.
+                    Select exactly one change. Testing a bundle cannot identify which action caused the result.
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold" disabled={isRunning} onClick={selectRecommendedTweaks} type="button">
-                    Recommended
+                  <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold" disabled={isRunning} onClick={selectRecommendedTweak} type="button">
+                    Recommended candidate
                   </button>
-                  <button
-                    className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold"
-                    disabled={isRunning}
-                    onClick={() => setSelectedTweaks(new Set(TESTABLE_FUNCTIONS.map((item) => item.id)))}
-                    type="button"
-                  >
-                    All
-                  </button>
-                  <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold" disabled={isRunning} onClick={() => setSelectedTweaks(new Set())} type="button">
+                  <button className="rounded-xl bg-[#202942] px-4 py-2 text-sm font-bold" disabled={isRunning} onClick={() => setSelectedTweakId(null)} type="button">
                     Clear
                   </button>
                 </div>
@@ -991,21 +1122,32 @@ export function TestsPage({
                 {TESTABLE_FUNCTIONS.map((item) => (
                   <TweakRow
                     key={item.id}
-                    active={selectedTweaks.has(item.id)}
+                    active={selectedTweakId === item.id}
                     disabled={isRunning}
                     item={item}
-                    onToggle={() => {
-                      setSelectedTweaks((current) => {
-                        const next = new Set(current)
-                        if (next.has(item.id)) next.delete(item.id)
-                        else next.add(item.id)
-                        return next
-                      })
-                    }}
+                    onToggle={() => setSelectedTweakId((current) => (current === item.id ? null : item.id))}
                   />
                 ))}
               </div>
             </section>
+          ) : null}
+
+          {activeMode === 'optimized' && selectedGame && selectedDefinition ? (
+            selectedEvidence.length > 0 ? (
+              <div className="grid gap-3">
+                {selectedEvidence.map((evidence) => (
+                  <EvidenceCard evidence={evidence} key={`${evidence.action_key}-${evidence.scenario_id}-${evidence.environment_fingerprint}`} />
+                ))}
+              </div>
+            ) : (
+              <article className="rounded-[1.35rem] bg-[#0d1530] px-5 py-4 ring-1 ring-[#315cff]/25">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-[#7ba2ff]">Repeated evidence</p>
+                <h3 className="mt-1 text-lg font-black text-white">{selectedDefinition.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-white/60">
+                  No comparable live A/B pairs are stored for this game. Complete a baseline and optimized pass to create the first local evidence point.
+                </p>
+              </article>
+            )
           ) : null}
 
           {isRunning || status || errorText ? (
@@ -1019,8 +1161,12 @@ export function TestsPage({
                   <div className="flex items-center gap-3">
                     <Timer size={22} className="text-[#7ba2ff]" />
                     <div>
-                      <p className="text-lg font-black">Test started correctly</p>
-                      <p className="mt-1 text-sm font-semibold text-white/68">Minimize Aeterna and stay in the game until the timer ends.</p>
+                      <p className="text-lg font-black">{phase === 'countdown' ? 'Test starts in 3 seconds' : 'Test is running'}</p>
+                      <p className="mt-1 text-sm font-semibold text-white/68">
+                        {phase === 'countdown'
+                          ? 'Switch to the game now. Capture starts automatically when the countdown ends.'
+                          : 'Stay in the selected game scene until the timer ends.'}
+                      </p>
                     </div>
                   </div>
                   <span className="rounded-full bg-[#315cff] px-5 py-2 text-xl font-black">{secondsLeft > 0 ? `${secondsLeft}s` : 'Saving'}</span>
@@ -1091,6 +1237,19 @@ export function TestsPage({
                     <p className="mt-1 text-sm text-white/50">
                       {latestForSelectedGame?.summary ?? 'Run the optimized test after selecting tweaks.'}
                     </p>
+                    {latestForSelectedGame ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="rounded-full bg-[#202942] px-3 py-1 text-xs font-black text-[#8fb0ff]">
+                          {latestForSelectedGame.evidence_level ?? 'Legacy report'}
+                        </span>
+                        <span className="rounded-full bg-[#202942] px-3 py-1 text-xs font-black text-white/65">
+                          {latestForSelectedGame.evidence_status ?? latestForSelectedGame.evidence_quality}
+                        </span>
+                        <span className="rounded-full bg-[#202942] px-3 py-1 text-xs font-black text-white/65">
+                          {latestForSelectedGame.tested_action_count ?? 0} tested action
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="mt-3">
                       <CsvDownloadLink
                         csvId={latestForSelectedGame?.csv_id ?? latestForSelectedGame?.current.csv_id}
@@ -1148,9 +1307,6 @@ export function TestsPage({
                   <MetricCard baseline={reportBaseline.cpu_total_pct} current={currentWindow.cpu_total_pct ?? realtime?.cpu_total_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Total CPU" unit="%" />
                   <MetricCard baseline={reportBaseline.gpu_usage_pct} current={currentWindow.gpu_usage_pct ?? realtime?.gpu_usage_pct} delta={delta} higherIsBetter={false} icon={Gauge} label="GPU load" unit="%" />
                   <MetricCard baseline={reportBaseline.ram_working_set_mb} current={currentWindow.ram_working_set_mb ?? realtime?.ram_working_set_mb} delta={delta} higherIsBetter={false} icon={MemoryStick} label="RAM working set" unit=" MB" digits={0} />
-                  <MetricCard baseline={reportBaseline.ping} current={currentWindow.ping ?? realtime?.ping} delta={delta} higherIsBetter={false} icon={Network} label="Latency" unit=" ms" />
-                  <MetricCard baseline={reportBaseline.jitter} current={currentWindow.jitter ?? realtime?.jitter} delta={delta} higherIsBetter={false} icon={Network} label="Jitter" unit=" ms" />
-                  <MetricCard baseline={reportBaseline.packet_loss} current={currentWindow.packet_loss ?? realtime?.packet_loss} delta={delta} higherIsBetter={false} icon={Network} label="Packet loss" unit="%" digits={2} />
                   <MetricCard baseline={reportBaseline.background_cpu_pct} current={currentWindow.background_cpu_pct ?? realtime?.background_cpu_pct} delta={delta} higherIsBetter={false} icon={Cpu} label="Background CPU" unit="%" />
                 </div>
 

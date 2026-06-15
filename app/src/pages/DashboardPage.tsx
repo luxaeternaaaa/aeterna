@@ -14,6 +14,10 @@ import {
   Sparkles,
 } from 'lucide-react'
 
+import {
+  useConfirmDialog,
+  type ConfirmDialogOptions,
+} from '../components/ConfirmDialogContext'
 import { requestWindowsRestart } from '../lib/sidecar'
 import { matchingGameProfile } from '../lib/gameDetection'
 import {
@@ -96,20 +100,27 @@ function StatusBadge({ children, tone }: { children: string; tone: PlanTone }) {
   return <span className={`rounded-full px-3 py-1 text-xs font-black ${toneClass(tone)}`}>{children}</span>
 }
 
-function confirmDangerousMlApply(items: MlPlanItem[]): boolean {
+function dangerousMlApplyConfirmation(items: MlPlanItem[]): ConfirmDialogOptions | null {
   const risky = items.filter((item) => isDangerousOptimizationFunctionId(item.definition.id))
-  if (risky.length === 0) return true
-  const labels = risky.map((item) => `- ${item.definition.title}`).join('\n')
+  if (risky.length === 0) return null
   const details = risky
     .slice(0, 3)
     .map((item) => dangerWarningForOptimizationFunction(item.definition))
-    .join('\n\n')
-  return window.confirm(
-    `Dangerous tweak warning\n\nYou are about to apply ${risky.length} selected risky function(s):\n${labels}\n\nContinue only if you understand what each function does, what can stop working, and how rollback/restart affects the system.\n\n${details}`,
-  )
+  return {
+    acknowledgement:
+      'I understand what these functions change, what can stop working, and how rollback or restart affects the system.',
+    confirmLabel: 'Apply risky functions',
+    description: `You are about to apply ${risky.length} selected risky function(s). Review the affected functions before continuing.`,
+    details,
+    eyebrow: 'Dangerous tweak warning',
+    items: risky.map((item) => item.definition.title),
+    title: 'Confirm risky optimization',
+    tone: 'danger',
+  }
 }
 
 export function DashboardPage(props: DashboardPageProps) {
+  const requestConfirmation = useConfirmDialog()
   const sample = latestSample(props.dashboard, props.realtime)
   const gameProcesses = useMemo(() => detectedGameProcesses(props.runtimeState, props.profiles), [props.profiles, props.runtimeState])
   const [selectedGamePid, setSelectedGamePid] = useState<number | null>(null)
@@ -238,7 +249,8 @@ export function DashboardPage(props: DashboardPageProps) {
       activeApplied.length > 0
     )
       return
-    if (!confirmDangerousMlApply(selectedPlan)) return
+    const confirmation = dangerousMlApplyConfirmation(selectedPlan)
+    if (confirmation && !(await requestConfirmation(confirmation))) return
     setScanState('applying')
     setErrorText(null)
     const nextApplied: AppliedPlanItem[] = []
@@ -362,7 +374,13 @@ export function DashboardPage(props: DashboardPageProps) {
 
   const restartNow = async () => {
     if (restartBusy) return
-    const confirmed = window.confirm('Windows will restart immediately. Continue?')
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Restart now',
+      description: 'Windows will restart immediately. Save open work before continuing.',
+      eyebrow: 'Restart required',
+      title: 'Restart Windows now?',
+      tone: 'warning',
+    })
     if (!confirmed) return
     setRestartBusy(true)
     try {

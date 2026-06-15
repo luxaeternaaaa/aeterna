@@ -1,5 +1,6 @@
 import type {
   BenchmarkReport,
+  BenchmarkEvidenceSummary,
   BenchmarkWindow,
   BootstrapPayload,
   DashboardPayload,
@@ -47,8 +48,12 @@ export const api = {
     return response.text()
   },
   benchmarkLatest: () => request<BenchmarkReport | null>('/api/benchmark/latest'),
-  captureBenchmarkBaseline: (sampleLimit = 60) =>
-    request<BenchmarkWindow>(`/api/benchmark/capture-baseline?sample_limit=${sampleLimit}`, { method: 'POST' }),
+  benchmarkEvidence: () => request<BenchmarkEvidenceSummary[]>('/api/benchmark/evidence'),
+  captureBenchmarkBaseline: (sampleLimit = 60, scenarioId?: string) => {
+    const query = new URLSearchParams({ sample_limit: String(sampleLimit) })
+    if (scenarioId) query.set('scenario_id', scenarioId)
+    return request<BenchmarkWindow>(`/api/benchmark/capture-baseline?${query.toString()}`, { method: 'POST' })
+  },
   runBenchmark: (profileId?: string, sampleLimit = 60) => {
     const query = new URLSearchParams()
     query.set('sample_limit', String(sampleLimit))

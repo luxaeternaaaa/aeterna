@@ -91,6 +91,14 @@ export async function endOptimizationSession(): Promise<OptimizationRuntimeState
   return invoke<OptimizationRuntimeState>('end_session')
 }
 
+export async function startBenchmarkCapture(): Promise<OptimizationRuntimeState> {
+  return invoke<OptimizationRuntimeState>('start_capture')
+}
+
+export async function stopBenchmarkCapture(): Promise<OptimizationRuntimeState> {
+  return invoke<OptimizationRuntimeState>('stop_capture')
+}
+
 export async function applyOptimizationTweak(request: ApplyTweakRequest): Promise<ApplyTweakResponse> {
   return invoke<ApplyTweakResponse>('apply_tweak', { request })
 }

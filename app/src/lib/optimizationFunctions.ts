@@ -487,6 +487,13 @@ export function getOptimizationFunctionById(id: string): OptimizationFunctionDef
   return FUNCTION_BY_ID.get(id) ?? null
 }
 
+export function evidenceKeyForOptimizationRequest(request: OptimizationFunctionRequest | null): string | null {
+  if (!request) return null
+  if (request.kind === 'preset') return `registry:${request.payload.preset_id}`
+  if (request.payload.kind === 'low_timer_resolution') return 'timer_resolution_low'
+  return request.payload.kind
+}
+
 export function isDangerousOptimizationFunctionId(id: string): boolean {
   const definition = FUNCTION_BY_ID.get(id)
   return DANGEROUS_OPTIMIZATION_FUNCTION_IDS.has(id) || definition?.risk === 'high' || Boolean(definition?.requiresReboot)

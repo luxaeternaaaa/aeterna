@@ -36,6 +36,10 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
+import {
+  useConfirmDialog,
+  type ConfirmDialogOptions,
+} from '../components/ConfirmDialogContext'
 import type {
   ActivityEntry,
   ApplyRegistryPresetRequest,
@@ -423,17 +427,23 @@ function guidanceForOptimizerItem(item: OptimizerItem): { recommendation: string
   }
 }
 
-function confirmDangerousOptimizerItems(items: OptimizerItem[], action: string): boolean {
+function dangerousOptimizerConfirmation(items: OptimizerItem[], action: string): ConfirmDialogOptions | null {
   const risky = items.filter(isDangerousOptimizerItem)
-  if (risky.length === 0) return true
-  const labels = risky.map((item) => `- ${item.title}`).join('\n')
+  if (risky.length === 0) return null
   const details = risky
     .slice(0, 3)
     .map(dangerWarningForOptimizerItem)
-    .join('\n\n')
-  return window.confirm(
-    `Dangerous tweak warning\n\nYou are about to ${action} ${risky.length} risky function(s):\n${labels}\n\nContinue only if you understand what each function does, what can stop working, and how rollback/restart affects the system.\n\n${details}`,
-  )
+  return {
+    acknowledgement:
+      'I understand what these functions change, what can stop working, and how rollback or restart affects the system.',
+    confirmLabel: action === 'apply' ? 'Apply risky functions' : 'Enable risky functions',
+    description: `You are about to ${action} ${risky.length} risky function(s). Review the affected functions before continuing.`,
+    details,
+    eyebrow: 'Dangerous tweak warning',
+    items: risky.map((item) => item.title),
+    title: 'Confirm risky optimization',
+    tone: 'danger',
+  }
 }
 
 function staticItems(): OptimizerItem[] {
@@ -1644,6 +1654,7 @@ export function OptimizationPage({
   onRequestRestart,
   onRollbackSnapshot,
 }: OptimizationPageProps) {
+  const requestConfirmation = useConfirmDialog()
   const [category, setCategory] = useState<CategoryId>('basic')
   const [mode, setMode] = useState<MethodMode>('default')
   const [desired, setDesired] = useState<Set<string>>(() => new Set())
@@ -1682,7 +1693,12 @@ export function OptimizationPage({
   const contentTitle = category === 'basic' ? 'Basic settings' : selectedCategory.label
   const latestSample = dashboard.history.at(-1) ?? null
 
-  const setCategoryMode = (nextMode: MethodMode, targetCategory = category) => {
+  const confirmDangerousItems = async (itemsToConfirm: OptimizerItem[], action: string) => {
+    const confirmation = dangerousOptimizerConfirmation(itemsToConfirm, action)
+    return !confirmation || requestConfirmation(confirmation)
+  }
+
+  const setCategoryMode = async (nextMode: MethodMode, targetCategory = category) => {
     const categoryItems = itemsForCategory(items, targetCategory)
     const targets = categoryItems.filter((row) => {
       if (row.supported === false) return false
@@ -1691,7 +1707,7 @@ export function OptimizationPage({
       return false
     })
     const newlyEnabledRisky = targets.filter((item) => !desired.has(item.id) && isDangerousOptimizerItem(item))
-    if (newlyEnabledRisky.length > 0 && !confirmDangerousOptimizerItems(newlyEnabledRisky, 'enable')) return
+    if (newlyEnabledRisky.length > 0 && !(await confirmDangerousItems(newlyEnabledRisky, 'enable'))) return
     setMode(nextMode)
     setDirty(true)
     setDesired((current) => {
@@ -1706,9 +1722,9 @@ export function OptimizationPage({
     })
   }
 
-  const toggleDesiredItem = (item: OptimizerItem, active: boolean) => {
+  const toggleDesiredItem = async (item: OptimizerItem, active: boolean) => {
     const enabling = !active
-    if (enabling && !confirmDangerousOptimizerItems([item], 'enable')) return
+    if (enabling && !(await confirmDangerousItems([item], 'enable'))) return
     setDirty(true)
     setDesired((currentSet) => {
       const next = new Set(currentSet)
@@ -1787,12 +1803,17 @@ export function OptimizationPage({
   const applyChanges = async () => {
     if (busy || changedItems.length === 0) return
     const riskyItems = changedItems.filter((item) => desired.has(item.id) && isDangerousOptimizerItem(item))
-    if (riskyItems.length > 0 && !confirmDangerousOptimizerItems(riskyItems, 'apply')) return
+    if (riskyItems.length > 0 && !(await confirmDangerousItems(riskyItems, 'apply'))) return
     const rebootItems = changedItems.filter((item) => desired.has(item.id) && item.requiresReboot)
     if (rebootItems.length > 0) {
-      const confirmed = window.confirm(
-        `${rebootItems.length} selected function(s) require Windows restart to finish.\n\nApply and create rollback snapshots?`,
-      )
+      const confirmed = await requestConfirmation({
+        confirmLabel: 'Apply changes',
+        description: `${rebootItems.length} selected function(s) require a Windows restart to finish. Aeterna will create rollback snapshots before applying them.`,
+        eyebrow: 'Restart required',
+        items: rebootItems.map((item) => item.title),
+        title: 'Apply restart-required changes?',
+        tone: 'warning',
+      })
       if (!confirmed) return
     }
     const queuedChanges = [...changedItems]

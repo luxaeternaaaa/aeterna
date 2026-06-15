@@ -3,7 +3,7 @@ use std::{
     fs,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::{Child, ChildStdout, Command, Stdio},
+    process::{Child, ChildStderr, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::Instant,
@@ -54,6 +54,7 @@ pub struct PresentMonSession {
     frames: Arc<Mutex<VecDeque<FrameSample>>>,
     reader_note: Arc<Mutex<Option<String>>>,
     reader: Option<JoinHandle<()>>,
+    diagnostic_reader: Option<JoinHandle<()>>,
     note: Option<String>,
 }
 
@@ -67,6 +68,7 @@ impl Default for PresentMonSession {
             frames: Arc::new(Mutex::new(VecDeque::with_capacity(2400))),
             reader_note: Arc::new(Mutex::new(None)),
             reader: None,
+            diagnostic_reader: None,
             note: None,
         }
     }
@@ -95,7 +97,9 @@ impl PresentMonSession {
             return Ok(());
         }
         self.stop();
-        let helper = self.helper_path().ok_or("Official Intel PresentMon CLI is unavailable. Install Intel PresentMon.")?;
+        let helper = self
+            .helper_path()
+            .ok_or("Official Intel PresentMon CLI is unavailable. Install Intel PresentMon.")?;
         if let Ok(mut frames) = self.frames.lock() {
             frames.clear();
         }
@@ -110,19 +114,40 @@ impl PresentMonSession {
             .arg(process_id.to_string())
             .arg("--output_stdout")
             .arg("--qpc_time_ms")
-            .arg("--terminate_on_proc_exit")
             .arg("--stop_existing_session")
             .arg("--session_name")
             .arg(PRESENTMON_SESSION_NAME)
             .arg("--v1_metrics")
             .arg("--no_console_stats")
+            .arg("--no_track_display")
+            .arg("--no_track_input")
+            .arg("--no_track_gpu")
+            .arg("--set_circular_buffer_size")
+            .arg("131072")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         command.creation_flags(NO_WINDOW_FLAG);
-        let mut child = command.spawn().map_err(|error| format!("Unable to launch PresentMon: {error}"))?;
-        let stdout = child.stdout.take().ok_or("Unable to read PresentMon stdout.")?;
-        self.reader = Some(spawn_stdout_reader(stdout, Arc::clone(&self.frames), Arc::clone(&self.reader_note)));
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Unable to launch PresentMon: {error}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Unable to read PresentMon stdout.")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Unable to read PresentMon diagnostics.")?;
+        self.reader = Some(spawn_stdout_reader(
+            stdout,
+            Arc::clone(&self.frames),
+            Arc::clone(&self.reader_note),
+        ));
+        self.diagnostic_reader = Some(spawn_diagnostic_reader(
+            stderr,
+            Arc::clone(&self.reader_note),
+        ));
         self.child = Some(child);
         self.process_id = Some(process_id);
         self.session_id = Some(session_id.to_string());
@@ -140,6 +165,7 @@ impl PresentMonSession {
         self.session_id = None;
         self.started_at = None;
         self.reader = None;
+        self.diagnostic_reader = None;
         if let Ok(mut frames) = self.frames.lock() {
             frames.clear();
         }
@@ -180,7 +206,8 @@ impl PresentMonSession {
                 .filter(|value| **value > (frametime_avg_ms * 2.0).max(33.3))
                 .count() as f64
                 / frames.len() as f64,
-            gpu_usage_pct: (!gpu_values.is_empty()).then_some(gpu_values.iter().sum::<f64>() / gpu_values.len() as f64),
+            gpu_usage_pct: (!gpu_values.is_empty())
+                .then_some(gpu_values.iter().sum::<f64>() / gpu_values.len() as f64),
             frame_count,
         })
     }
@@ -198,16 +225,28 @@ impl PresentMonSession {
         }
         let running = self.child_running();
         CaptureStatus {
-            source: if running { "presentmon".into() } else { "counters-fallback".into() },
+            source: if running {
+                "presentmon".into()
+            } else {
+                "counters-fallback".into()
+            },
             available: true,
-            quality: if running { "high".into() } else { "degraded".into() },
+            quality: if running {
+                "high".into()
+            } else {
+                "degraded".into()
+            },
             helper_available: true,
             note: self.note(),
         }
     }
 
     pub fn note(&self) -> Option<String> {
-        self.reader_note.lock().ok().and_then(|note| note.clone()).or_else(|| self.note.clone())
+        self.reader_note
+            .lock()
+            .ok()
+            .and_then(|note| note.clone())
+            .or_else(|| self.note.clone())
     }
 
     fn child_running(&mut self) -> bool {
@@ -227,7 +266,9 @@ impl PresentMonSession {
     }
 
     fn capture_stalled(&self) -> bool {
-        self.reader.as_ref().is_some_and(|reader| reader.is_finished())
+        self.reader
+            .as_ref()
+            .is_some_and(|reader| reader.is_finished())
     }
 }
 
@@ -321,7 +362,10 @@ fn spawn_stdout_reader(
                         capture_presentmon_note(&reader_note, trimmed);
                         continue;
                     };
-                    let gpu_idx = find_header(&index, &["MsGPUBusy", "MsGPUActive", "GpuBusyMs", "msGPUActive"]);
+                    let gpu_idx = find_header(
+                        &index,
+                        &["MsGPUBusy", "MsGPUActive", "GpuBusyMs", "msGPUActive"],
+                    );
                     columns = Some((between_idx, gpu_idx));
                     continue;
                 }
@@ -332,13 +376,32 @@ fn spawn_stdout_reader(
             }
             let gpu_pct = gpu_idx.and_then(|idx| {
                 let gpu_busy = parse_float(record.get(idx));
-                (gpu_busy.is_finite() && gpu_busy >= 0.0).then_some((gpu_busy / between * 100.0).clamp(0.0, 100.0))
+                (gpu_busy.is_finite() && gpu_busy >= 0.0)
+                    .then_some((gpu_busy / between * 100.0).clamp(0.0, 100.0))
             });
             if let Ok(mut samples) = frames.lock() {
                 if samples.len() >= 2400 {
                     samples.pop_front();
                 }
-                samples.push_back(FrameSample { between_ms: between, gpu_pct });
+                samples.push_back(FrameSample {
+                    between_ms: between,
+                    gpu_pct,
+                });
+            }
+        }
+    })
+}
+
+fn spawn_diagnostic_reader(
+    stderr: ChildStderr,
+    reader_note: Arc<Mutex<Option<String>>>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                capture_presentmon_note(&reader_note, trimmed);
             }
         }
     })
@@ -367,9 +430,17 @@ fn parse_csv_line(line: &str) -> Option<StringRecord> {
 
 fn capture_presentmon_note(reader_note: &Arc<Mutex<Option<String>>>, line: &str) {
     let lowered = line.to_ascii_lowercase();
-    let is_diagnostic = ["warning", "error", "failed", "denied", "elevat", "privilege", "access"]
-        .iter()
-        .any(|needle| lowered.contains(needle));
+    let is_diagnostic = [
+        "warning",
+        "error",
+        "failed",
+        "denied",
+        "elevat",
+        "privilege",
+        "access",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle));
     if !is_diagnostic {
         return;
     }
@@ -397,9 +468,12 @@ fn normalize_header(value: &str) -> String {
 }
 
 fn find_header(index: &HashMap<String, usize>, names: &[&str]) -> Option<usize> {
-    names
-        .iter()
-        .find_map(|name| index.get(*name).copied().or_else(|| index.get(&normalize_header(name)).copied()))
+    names.iter().find_map(|name| {
+        index
+            .get(*name)
+            .copied()
+            .or_else(|| index.get(&normalize_header(name)).copied())
+    })
 }
 
 fn percentile(sorted: &[f64], fraction: f64) -> f64 {
@@ -411,5 +485,7 @@ fn percentile(sorted: &[f64], fraction: f64) -> f64 {
 }
 
 fn parse_float(value: Option<&str>) -> f64 {
-    value.and_then(|item| item.parse::<f64>().ok()).unwrap_or(0.0)
+    value
+        .and_then(|item| item.parse::<f64>().ok())
+        .unwrap_or(0.0)
 }

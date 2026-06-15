@@ -64,5 +64,8 @@ pub fn stop_service(service_name: &str) -> Result<(), String> {
 }
 
 pub fn start_service(service_name: &str) -> Result<(), String> {
-    run_command("sc", &["start", service_name], true).map(|_| ())
+    if is_service_running(service_name)? {
+        return Ok(());
+    }
+    run_command("sc", &["start", service_name], false).map(|_| ())
 }

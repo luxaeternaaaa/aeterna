@@ -109,6 +109,8 @@ pub struct ActivityEntry {
     pub session_id: Option<String>,
     #[serde(default)]
     pub action_id: Option<String>,
+    #[serde(default)]
+    pub action_key: Option<String>,
     pub can_undo: bool,
     #[serde(default)]
     pub proof_link: Option<String>,
@@ -170,6 +172,8 @@ pub struct SessionState {
     pub capture_quality: String,
     #[serde(default)]
     pub capture_reason: Option<String>,
+    #[serde(default)]
+    pub capture_requested: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

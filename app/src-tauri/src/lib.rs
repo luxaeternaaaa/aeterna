@@ -8,8 +8,8 @@ use tauri::{Manager, RunEvent};
 use backend::{backend_status, shutdown_backend, start_backend, stop_backend, BackendState};
 use sidecar::{
     apply_registry_preset, apply_tweak, attach_session, end_session, inspect_optimization, rollback_tweak,
-    ml_runtime_truth, run_ml_inference, shutdown_sidecar, sidecar_status, start_sidecar, warm_sidecar,
-    SidecarState,
+    ml_runtime_truth, run_ml_inference, shutdown_sidecar, sidecar_status, start_capture, start_sidecar,
+    stop_capture, warm_sidecar, SidecarState,
 };
 use startup::{
     initialize_startup, mark_bootstrap_loaded, mark_window_visible, startup_diagnostics, StartupState,
@@ -124,6 +124,8 @@ pub fn run() {
             inspect_optimization,
             attach_session,
             end_session,
+            start_capture,
+            stop_capture,
             apply_tweak,
             apply_registry_preset,
             rollback_tweak,

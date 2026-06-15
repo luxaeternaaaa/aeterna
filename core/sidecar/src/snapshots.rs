@@ -137,6 +137,7 @@ pub fn activity(
         detail,
         risk: risk.into(),
         action_id: snapshot_id.clone(),
+        action_key: None,
         snapshot_id,
         session_id,
         can_undo,

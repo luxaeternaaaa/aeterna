@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
+import { useConfirmDialog } from '../components/ConfirmDialogContext'
 import { requestWindowsRestart } from '../lib/sidecar'
 import type { SecurityCheck, SecuritySummary } from '../types'
 
@@ -191,6 +192,7 @@ export function SecurityPage({
   onOpenSettings,
   onVerify,
 }: SecurityPageProps) {
+  const requestConfirmation = useConfirmDialog()
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [rebootBusy, setRebootBusy] = useState(false)
   const posture = postureFromSecurity(security)
@@ -210,7 +212,13 @@ export function SecurityPage({
 
   const handleRebootNow = async () => {
     if (rebootBusy) return
-    const confirmed = window.confirm('Windows will restart immediately. Continue?')
+    const confirmed = await requestConfirmation({
+      confirmLabel: 'Restart now',
+      description: 'Windows will restart immediately. Save open work before continuing.',
+      eyebrow: 'Restart required',
+      title: 'Restart Windows now?',
+      tone: 'warning',
+    })
     if (!confirmed) return
     setRebootBusy(true)
     try {

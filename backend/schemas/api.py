@@ -82,12 +82,16 @@ class GameProfile(BaseModel):
 
 class BenchmarkWindow(BaseModel):
     captured_at: str
+    recorded_at: str | None = None
     sample_count: int
     mode: Literal["demo", "live", "disabled"]
     capture_source: str
     game_name: str
     process_id: int | None = None
     session_id: str | None = None
+    scenario_id: str | None = None
+    environment_fingerprint: str | None = None
+    requested_window_seconds: int | None = None
     csv_id: str | None = None
     csv_path: str | None = None
     fps_avg: float
@@ -130,23 +134,73 @@ class BenchmarkDelta(BaseModel):
     anomaly_score: float
 
 
+class BenchmarkMetricEvidence(BaseModel):
+    metric: Literal["fps_1pct", "frametime_p95", "frametime_p99"]
+    trial_count: int
+    mean_effect_pct: float
+    ci95_low_pct: float | None = None
+    ci95_high_pct: float | None = None
+    improved_trials: int = 0
+    regressed_trials: int = 0
+    neutral_trials: int = 0
+    direction_consistency_pct: float = 0
+
+
+class BenchmarkEvidenceSummary(BaseModel):
+    action_key: str
+    action_title: str
+    game_name: str
+    profile_id: str | None = None
+    scenario_id: str
+    environment_fingerprint: str
+    protocol_version: str = "paired-ab-v1"
+    window_seconds: int
+    trial_count: int
+    minimum_trials_required: int = 3
+    confidence_method: Literal["none", "student-t-95"] = "none"
+    status: Literal[
+        "insufficient",
+        "directional",
+        "consistent-improvement",
+        "consistent-regression",
+        "mixed",
+    ] = "insufficient"
+    evidence_level: Literal["S2-local-single-pass", "S3-local-repeated"] = "S2-local-single-pass"
+    overall_consistency_pct: float = 0
+    metrics: list[BenchmarkMetricEvidence] = Field(default_factory=list)
+    summary: str
+    recommended_next_step: str
+
+
 class BenchmarkReport(BaseModel):
     id: str
     created_at: str
     profile_id: str | None = None
     game_name: str
     session_id: str | None = None
+    scenario_id: str | None = None
+    environment_fingerprint: str | None = None
+    protocol_version: str = "paired-ab-v1"
+    window_seconds: int | None = None
     action_id: str | None = None
+    action_key: str | None = None
+    action_title: str | None = None
     snapshot_id: str | None = None
     csv_id: str | None = None
     csv_path: str | None = None
     evidence_quality: Literal["live", "degraded", "demo", "disabled"] = "demo"
+    evidence_status: Literal["single-pass", "repeated", "demo", "degraded", "inconclusive"] = "inconclusive"
+    evidence_level: Literal["S0-hypothesis", "S1-simulation", "S2-local-single-pass", "S3-local-repeated"] = "S0-hypothesis"
+    tested_action_count: int = 0
+    minimum_effect_pct: float = 1.0
+    primary_effect_pct: dict[str, float] = Field(default_factory=dict)
     baseline: BenchmarkWindow
     current: BenchmarkWindow
     delta: BenchmarkDelta
     verdict: Literal["better", "mixed", "worse", "inconclusive"]
     summary: str
     recommended_next_step: str
+    evidence_summary: BenchmarkEvidenceSummary | None = None
 
 
 class FeatureFlags(BaseModel):
@@ -213,6 +267,7 @@ class ActivityEntry(BaseModel):
     snapshot_id: str | None = None
     session_id: str | None = None
     action_id: str | None = None
+    action_key: str | None = None
     can_undo: bool
     proof_link: str | None = None
     blocked_by_policy: bool = False

@@ -145,6 +145,8 @@ pub struct SessionState {
     pub capture_source: String,
     pub capture_quality: String,
     pub capture_reason: Option<String>,
+    #[serde(default)]
+    pub capture_requested: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

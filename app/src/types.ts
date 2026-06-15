@@ -83,12 +83,16 @@ export interface GameProfile {
 
 export interface BenchmarkWindow {
   captured_at: string
+  recorded_at?: string | null
   sample_count: number
   mode: 'demo' | 'live' | 'disabled'
   capture_source: string
   game_name: string
   process_id?: number | null
   session_id?: string | null
+  scenario_id?: string | null
+  environment_fingerprint?: string | null
+  requested_window_seconds?: number | null
   csv_id?: string | null
   csv_path?: string | null
   fps_avg: number
@@ -131,23 +135,67 @@ export interface BenchmarkDelta {
   anomaly_score: number
 }
 
+export interface BenchmarkMetricEvidence {
+  metric: 'fps_1pct' | 'frametime_p95' | 'frametime_p99'
+  trial_count: number
+  mean_effect_pct: number
+  ci95_low_pct?: number | null
+  ci95_high_pct?: number | null
+  improved_trials: number
+  regressed_trials: number
+  neutral_trials: number
+  direction_consistency_pct: number
+}
+
+export interface BenchmarkEvidenceSummary {
+  action_key: string
+  action_title: string
+  game_name: string
+  profile_id?: string | null
+  scenario_id: string
+  environment_fingerprint: string
+  protocol_version: string
+  window_seconds: number
+  trial_count: number
+  minimum_trials_required: number
+  confidence_method: 'none' | 'student-t-95'
+  status: 'insufficient' | 'directional' | 'consistent-improvement' | 'consistent-regression' | 'mixed'
+  evidence_level: 'S2-local-single-pass' | 'S3-local-repeated'
+  overall_consistency_pct: number
+  metrics: BenchmarkMetricEvidence[]
+  summary: string
+  recommended_next_step: string
+}
+
 export interface BenchmarkReport {
   id: string
   created_at: string
   profile_id?: string | null
   game_name: string
   session_id?: string | null
+  scenario_id?: string | null
+  environment_fingerprint?: string | null
+  protocol_version?: string
+  window_seconds?: number | null
   action_id?: string | null
+  action_key?: string | null
+  action_title?: string | null
   snapshot_id?: string | null
   csv_id?: string | null
   csv_path?: string | null
   evidence_quality: 'live' | 'degraded' | 'demo' | 'disabled'
+  evidence_status?: 'single-pass' | 'repeated' | 'demo' | 'degraded' | 'inconclusive'
+  evidence_level?: 'S0-hypothesis' | 'S1-simulation' | 'S2-local-single-pass' | 'S3-local-repeated'
+  tested_action_count?: number
+  minimum_effect_pct?: number
+  primary_effect_pct?: Record<string, number>
   baseline: BenchmarkWindow
   current: BenchmarkWindow
   delta: BenchmarkDelta
   verdict: 'better' | 'mixed' | 'worse' | 'inconclusive'
   summary: string
   recommended_next_step: string
+  evidence_summary?: BenchmarkEvidenceSummary | null
 }
 
 export interface FeatureFlags {
@@ -293,6 +341,7 @@ export interface SessionState {
   capture_source: string
   capture_quality: string
   capture_reason?: string | null
+  capture_requested?: boolean
 }
 
 export interface DetectedGame {
@@ -391,6 +440,7 @@ export interface ActivityEntry {
   snapshot_id: string | null
   session_id: string | null
   action_id?: string | null
+  action_key?: string | null
   can_undo: boolean
   proof_link?: string | null
   blocked_by_policy: boolean

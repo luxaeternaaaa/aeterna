@@ -32,7 +32,7 @@ export function ModelsPage({ inference, models, onActivate, onRollback, runtimeT
             <p className="text-xs uppercase tracking-[0.18em] text-muted">Recommendations</p>
             <h3 className="mt-3 text-3xl font-semibold tracking-tight text-text md:text-[2.4rem]">{posture.label}</h3>
             <p className="mt-3 max-w-2xl text-base leading-7 text-muted">
-              Use model advice to choose what to test next. Trust the benchmark, not the confidence score.
+              Use model advice to choose what to test next. The advisory score is a ranking hint, not measured evidence.
             </p>
           </div>
 
@@ -51,9 +51,10 @@ export function ModelsPage({ inference, models, onActivate, onRollback, runtimeT
               <p className="text-xs uppercase tracking-[0.18em] text-muted">Latest hint</p>
               <p className="mt-2 text-sm leading-6 text-muted">
                 {inference
-                  ? `Confidence ${(inference.confidence * 100).toFixed(0)}%. Use it as a hint for the next test, not as proof that a tweak helped.`
+                  ? `Advisory score ${(inference.confidence * 100).toFixed(0)}%. Only a controlled local benchmark can confirm that a tweak helped.`
                   : 'No active recommendation right now. The safe-test loop still works without the model layer.'}
               </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">Evidence level: S1 simulation / heuristic</p>
             </div>
           </div>
         </div>

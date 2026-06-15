@@ -260,6 +260,20 @@ pub fn end_session(app: AppHandle, state: State<'_, SidecarState>) -> Result<Opt
 }
 
 #[tauri::command]
+pub fn start_capture(app: AppHandle, state: State<'_, SidecarState>) -> Result<OptimizationStatePayload, String> {
+    let mut process = state.0.lock().expect("sidecar state poisoned");
+    ensure_sidecar(&app, &mut process)?;
+    send_command(&mut process, "start_capture", json!({}))
+}
+
+#[tauri::command]
+pub fn stop_capture(app: AppHandle, state: State<'_, SidecarState>) -> Result<OptimizationStatePayload, String> {
+    let mut process = state.0.lock().expect("sidecar state poisoned");
+    ensure_sidecar(&app, &mut process)?;
+    send_command(&mut process, "stop_capture", json!({}))
+}
+
+#[tauri::command]
 pub fn rollback_tweak(
     app: AppHandle,
     state: State<'_, SidecarState>,

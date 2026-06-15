@@ -32,6 +32,37 @@ def latest_action(session_id: str | None) -> ActivityEntry | None:
     return candidates[0] if candidates else None
 
 
+def evidence_actions(session_id: str | None, captured_after: str) -> list[ActivityEntry]:
+    normalized = captured_after.replace("Z", "+00:00")
+    try:
+        cutoff = datetime.fromisoformat(normalized)
+    except ValueError:
+        return []
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+
+    candidates = []
+    for entry in _read_all():
+        if (
+            entry.category not in {"tweak", "registry"}
+            or not entry.can_undo
+            or entry.blocked_by_policy
+            or (session_id is not None and entry.session_id != session_id)
+        ):
+            continue
+        try:
+            timestamp = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        if timestamp > cutoff:
+            candidates.append(entry)
+
+    candidates.sort(key=lambda entry: entry.timestamp)
+    return candidates
+
+
 def link_proof(action_id: str | None, proof_link: str) -> None:
     if not action_id:
         return
@@ -58,6 +89,7 @@ def append_proof_event(report: BenchmarkReport) -> ActivityEntry:
         snapshot_id=report.snapshot_id,
         session_id=report.session_id,
         action_id=report.action_id,
+        action_key=report.action_key,
         can_undo=False,
         proof_link=report.id,
         blocked_by_policy=False,
